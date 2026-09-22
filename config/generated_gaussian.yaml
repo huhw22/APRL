@@ -10,6 +10,8 @@ runtime:
   stop_check_interval_steps: 16
 
 mesh:
+  # z-priority Cowan/CKC stencil; use yee only for regression runs.
+  field_solver: cowan-z
   lengths: [40.0, 40.0, 12.0]
   resolution: [1.0, 1.0, 0.2]
   center: [0.0, 0.0, 0.0]

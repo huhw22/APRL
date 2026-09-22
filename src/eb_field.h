@@ -21,6 +21,26 @@ namespace fel
     extern const Double electronMass;
   }
 
+  enum class EBMaxwellSolver
+  {
+    Yee,
+    CowanZ
+  };
+
+  struct EBCowanCoefficients
+  {
+    Double alpha[3];
+    Double beta[3];
+    Double deltaXY;
+    Double deltaYZ;
+    Double deltaZX;
+    Double ratio[3];
+
+    EBCowanCoefficients();
+    static EBCowanCoefficients forZDispersion(Double dx, Double dy,
+                                               Double dz);
+  };
+
   struct EBGridGeometry
   {
     std::size_t nx;
@@ -30,11 +50,29 @@ namespace fel
     Double dy;
     Double dz;
     Double dt;
+    EBMaxwellSolver solver;
 
     EBGridGeometry();
     EBGridGeometry(std::size_t nxValue, std::size_t nyValue,
                    std::size_t nzValue, Double dxValue, Double dyValue,
-                   Double dzValue, Double dtValue);
+                   Double dzValue, Double dtValue,
+                   EBMaxwellSolver solverValue = EBMaxwellSolver::Yee);
+  };
+
+  /* A non-owning pair of one-cell electric-field halos.  Cowan's modified
+   * Faraday operator smooths transverse to each derivative, so z-slab MPI
+   * needs one E plane beyond each local slab.  Null pointers denote a
+   * physical boundary, where the PEC parity extension is used. */
+  struct EBElectricHaloView
+  {
+    const Double* lowerEx;
+    const Double* lowerEy;
+    const Double* lowerEz;
+    const Double* upperEx;
+    const Double* upperEy;
+    const Double* upperEz;
+
+    EBElectricHaloView();
   };
 
   /* A compact scalar component on a rectangular Yee lattice.  Components are
@@ -161,11 +199,17 @@ namespace fel
      *   E^(n+1)   = E^n + dt (curl(B^(n+1/2))/epsilon0 - J/epsilon0)
      * No A/phi value is stored or reconstructed anywhere in this path. */
     void advanceMagnetic();
+    void advanceMagnetic(const EBElectricHaloView& halo);
     void advanceElectric();
     void advance();
 
     Double courantNumber() const;
     Double courantLimit() const;
+    const EBCowanCoefficients& cowanCoefficients() const;
+    static Double axisPhaseVelocityRatio(Double courantAxis,
+                                         Double cellsPerWavelength);
+    static Double axisGroupVelocityRatio(Double courantAxis,
+                                         Double cellsPerWavelength);
     EBMemoryFootprint memoryFootprint() const;
 
     /* Return E and B at a cell centre.  The interpolation reconciles the Yee
@@ -195,6 +239,19 @@ namespace fel
 
   private:
     void validateGeometry() const;
+    void advanceMagneticYee();
+    void advanceMagneticCowan(const EBElectricHaloView& halo);
+    Double electricValue(const YeeComponent& component,
+                         unsigned int componentAxis,
+                         std::ptrdiff_t i, std::ptrdiff_t j,
+                         std::ptrdiff_t k,
+                         const EBElectricHaloView& halo) const;
+    Double smoothedElectric(const YeeComponent& component,
+                            unsigned int componentAxis,
+                            unsigned int derivativeAxis,
+                            std::ptrdiff_t i, std::ptrdiff_t j,
+                            std::ptrdiff_t k,
+                            const EBElectricHaloView& halo) const;
     RadiationFieldSample makeRadiationSample(
         const FieldVector<Double>& electric,
         const FieldVector<Double>& magnetic) const;
@@ -205,6 +262,7 @@ namespace fel
                            Double offsetZ) const;
 
     EBGridGeometry geometry_;
+    EBCowanCoefficients cowan_;
 
     YeeComponent ex_;
     YeeComponent ey_;

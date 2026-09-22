@@ -14,13 +14,17 @@ namespace fel
     const int CURRENT_LOWER_Y = 313;
     const int MAGNETIC_UPPER = 320;
     const int MAGNETIC_LOWER = 321;
+    const int ELECTRIC_UPPER = 322;
+    const int ELECTRIC_LOWER = 323;
   }
 
   EBZSlabHaloExchange::EBZSlabHaloExchange(MPI_Comm communicator)
     : communicator_(communicator), rank_(0), size_(1),
       lowerRank_(MPI_PROC_NULL), upperRank_(MPI_PROC_NULL),
       lowerMagnetic_(), upperMagnetic_(), sendLowerMagnetic_(),
-      sendUpperMagnetic_(), receiveLowerPlane_(), receiveUpperPlane_()
+      sendUpperMagnetic_(), receiveLowerPlane_(), receiveUpperPlane_(),
+      lowerElectric_(), upperElectric_(), sendLowerElectric_(),
+      sendUpperElectric_()
   {
     if (communicator_ == MPI_COMM_NULL)
       throw std::invalid_argument("E/B halo communicator cannot be null");
@@ -51,6 +55,35 @@ namespace fel
     exchangeCurrentPlane(fields.jy(), CURRENT_UPPER_Y, CURRENT_LOWER_Y);
   }
 
+  void EBZSlabHaloExchange::advanceMagnetic(EBFieldGrid& fields)
+  {
+    verifyGeometry(fields);
+    if (size_ == 1 ||
+        fields.geometry().solver == EBMaxwellSolver::Yee)
+      {
+        fields.advanceMagnetic();
+        return;
+      }
+
+    exchangeElectricPlanes(fields);
+    const std::size_t exValues = fields.ex().nx() * fields.ex().ny();
+    const std::size_t eyValues = fields.ey().nx() * fields.ey().ny();
+    EBElectricHaloView halo;
+    if (lowerRank_ != MPI_PROC_NULL)
+      {
+        halo.lowerEx = &lowerElectric_[0];
+        halo.lowerEy = &lowerElectric_[exValues];
+        halo.lowerEz = &lowerElectric_[exValues + eyValues];
+      }
+    if (upperRank_ != MPI_PROC_NULL)
+      {
+        halo.upperEx = &upperElectric_[0];
+        halo.upperEy = &upperElectric_[exValues];
+        halo.upperEz = &upperElectric_[exValues + eyValues];
+      }
+    fields.advanceMagnetic(halo);
+  }
+
   void EBZSlabHaloExchange::advanceElectric(EBFieldGrid& fields)
   {
     verifyGeometry(fields);
@@ -69,7 +102,7 @@ namespace fel
 
   void EBZSlabHaloExchange::advance(EBFieldGrid& fields)
   {
-    fields.advanceMagnetic();
+    advanceMagnetic(fields);
     advanceElectric(fields);
   }
 
@@ -84,7 +117,7 @@ namespace fel
     /* The magnetic TF/SF correction must cross MPI with B.  The electric
      * correction must instead wait until both copies of a shared E plane have
      * received the same interface curl update. */
-    fields.advanceMagnetic();
+    advanceMagnetic(fields);
     injector.correctAfterMagneticUpdate(
       fields, sources, localGridOriginBox, timeEBox, frame);
     advanceElectric(fields);
@@ -97,7 +130,9 @@ namespace fel
     return sizeof(Double) * (lowerMagnetic_.capacity() +
       upperMagnetic_.capacity() + sendLowerMagnetic_.capacity() +
       sendUpperMagnetic_.capacity() + receiveLowerPlane_.capacity() +
-      receiveUpperPlane_.capacity());
+      receiveUpperPlane_.capacity() + lowerElectric_.capacity() +
+      upperElectric_.capacity() + sendLowerElectric_.capacity() +
+      sendUpperElectric_.capacity());
   }
 
   void EBZSlabHaloExchange::verifyGeometry(const EBFieldGrid& fields) const
@@ -162,6 +197,37 @@ namespace fel
                  MPI_DOUBLE, lowerRank_, MAGNETIC_LOWER,
                  upperMagnetic_.data(), static_cast<int>(planeValues),
                  MPI_DOUBLE, upperRank_, MAGNETIC_LOWER,
+                 communicator_, MPI_STATUS_IGNORE);
+  }
+
+  void EBZSlabHaloExchange::exchangeElectricPlanes(
+      const EBFieldGrid& fields)
+  {
+    const std::size_t planeValues =
+      fields.ex().nx() * fields.ex().ny() +
+      fields.ey().nx() * fields.ey().ny() +
+      fields.ez().nx() * fields.ez().ny();
+    if (planeValues > static_cast<std::size_t>(INT_MAX))
+      throw std::overflow_error("E/B electric halo exceeds MPI int count");
+    lowerElectric_.resize(planeValues);
+    upperElectric_.resize(planeValues);
+    sendLowerElectric_.resize(planeValues);
+    sendUpperElectric_.resize(planeValues);
+    const std::size_t cells = fields.geometry().nz;
+    packElectricPlane(fields, std::min<std::size_t>(1, cells), 0,
+                      sendLowerElectric_);
+    packElectricPlane(fields, cells - 1, cells - 1,
+                      sendUpperElectric_);
+
+    MPI_Sendrecv(sendUpperElectric_.data(), static_cast<int>(planeValues),
+                 MPI_DOUBLE, upperRank_, ELECTRIC_UPPER,
+                 lowerElectric_.data(), static_cast<int>(planeValues),
+                 MPI_DOUBLE, lowerRank_, ELECTRIC_UPPER,
+                 communicator_, MPI_STATUS_IGNORE);
+    MPI_Sendrecv(sendLowerElectric_.data(), static_cast<int>(planeValues),
+                 MPI_DOUBLE, lowerRank_, ELECTRIC_LOWER,
+                 upperElectric_.data(), static_cast<int>(planeValues),
+                 MPI_DOUBLE, upperRank_, ELECTRIC_LOWER,
                  communicator_, MPI_STATUS_IGNORE);
   }
 
@@ -247,5 +313,24 @@ namespace fel
     std::copy(fields.by().data() + k * byValues,
               fields.by().data() + (k + 1) * byValues,
               buffer.begin() + bxValues);
+  }
+
+  void EBZSlabHaloExchange::packElectricPlane(
+      const EBFieldGrid& fields, std::size_t nodeK, std::size_t cellK,
+      std::vector<Double>& buffer) const
+  {
+    const std::size_t exValues = fields.ex().nx() * fields.ex().ny();
+    const std::size_t eyValues = fields.ey().nx() * fields.ey().ny();
+    const std::size_t ezValues = fields.ez().nx() * fields.ez().ny();
+    buffer.resize(exValues + eyValues + ezValues);
+    std::copy(fields.ex().data() + nodeK * exValues,
+              fields.ex().data() + (nodeK + 1) * exValues,
+              buffer.begin());
+    std::copy(fields.ey().data() + nodeK * eyValues,
+              fields.ey().data() + (nodeK + 1) * eyValues,
+              buffer.begin() + exValues);
+    std::copy(fields.ez().data() + cellK * ezValues,
+              fields.ez().data() + (cellK + 1) * ezValues,
+              buffer.begin() + exValues + eyValues);
   }
 }

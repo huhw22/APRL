@@ -89,6 +89,34 @@ namespace fel
       return cells;
     }
 
+    std::string transverseGridRecommendation(
+        const char* axis, Double length, Double dz, Double inputLengthUnit)
+    {
+      const Double cellsReal = length / dz;
+      const Double tolerance = 64.0 *
+        std::numeric_limits<Double>::epsilon() *
+        std::max(1.0, std::abs(cellsReal));
+      const std::size_t maximumCells = cellsReal >= 1.0 ?
+        static_cast<std::size_t>(std::floor(cellsReal + tolerance)) : 0;
+      std::ostringstream message;
+      message << axis << " spacing must be >= dz=" << dz << " m";
+      if (maximumCells >= 3)
+        {
+          const Double recommended = length /
+            static_cast<Double>(maximumCells);
+          message << "; for the configured " << axis
+                  << " length use at most " << maximumCells
+                  << " cells, for example resolution="
+                  << recommended << " m ("
+                  << recommended / inputLengthUnit
+                  << " in the configured length unit)";
+        }
+      else
+        message << "; this transverse length cannot contain three valid cells, so increase it to at least "
+                << 3.0 * dz << " m";
+      return message.str();
+    }
+
     int checkedBytes(std::size_t records, std::size_t recordBytes)
     {
       if (records > static_cast<std::size_t>(INT_MAX) / recordBytes)
@@ -195,7 +223,7 @@ namespace fel
           break;
 
         fields_->clearCurrent();
-        fields_->advanceMagnetic();
+        halo_->advanceMagnetic(*fields_);
         if (incident_)
           incident_->correctAfterMagneticUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
@@ -243,9 +271,14 @@ namespace fel
         "Direct E/B solver requires boost_gamma >= 1");
 
     initializeGeometry();
-    initializeParticles();
     initializeSources();
 
+    if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ &&
+        sources_.maxwellIncidentWaveCount() > 0)
+      throw std::runtime_error(
+        "Cowan-z field advance is active, but the present TF/SF incident-wave correction is still Yee-specific. Select mesh.field_solver: yee for this run until the generalized Cowan TF/SF stencil is connected; refusing to inject a numerically inconsistent seed field.");
+
+    initializeParticles();
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
     halo_->installPhysicalBoundaryMask(*fields_);
@@ -271,6 +304,55 @@ namespace fel
           "Runtime strategy: HPC throughput mode; no signal polling or periodic durability flushes.");
         logRoot(communicator_,
           "Direct SI E/B simulation active; no A/phi state is allocated.");
+        if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
+          {
+            const EBCowanCoefficients& coefficient =
+              fields_->cowanCoefficients();
+            const Double sx = SI::c * globalGeometry_.dt /
+                              globalGeometry_.dx;
+            const Double sy = SI::c * globalGeometry_.dt /
+                              globalGeometry_.dy;
+            const Double sz = SI::c * globalGeometry_.dt /
+                              globalGeometry_.dz;
+            const Double samples = 16.0;
+            std::ostringstream solverMessage;
+            solverMessage << std::setprecision(10)
+              << "Maxwell solver: Cowan-z controlled-dispersion FDTD; "
+              << "axis Courant S=(" << sx << ", " << sy << ", "
+              << sz << "), squared aspect r=(" << coefficient.ratio[0]
+              << ", " << coefficient.ratio[1] << ", 1), where "
+              << "r=((dz/dx)^2, (dz/dy)^2, 1).";
+            logRoot(communicator_, solverMessage.str());
+            std::ostringstream dispersionMessage;
+            dispersionMessage << std::setprecision(10)
+              << "Transverse vacuum dispersion at " << samples
+              << " cells/wavelength: x vp/c="
+              << EBFieldGrid::axisPhaseVelocityRatio(sx, samples)
+              << ", vg/c="
+              << EBFieldGrid::axisGroupVelocityRatio(sx, samples)
+              << "; y vp/c="
+              << EBFieldGrid::axisPhaseVelocityRatio(sy, samples)
+              << ", vg/c="
+              << EBFieldGrid::axisGroupVelocityRatio(sy, samples)
+              << ". The z-axis values are exactly 1 for resolved vacuum modes.";
+            logRoot(communicator_, dispersionMessage.str());
+            std::ostringstream coefficientMessage;
+            coefficientMessage << std::setprecision(10)
+              << "Cowan smoothing coefficients: alpha=("
+              << coefficient.alpha[0] << ", "
+              << coefficient.alpha[1] << ", "
+              << coefficient.alpha[2] << "), beta=("
+              << coefficient.beta[0] << ", "
+              << coefficient.beta[1] << ", "
+              << coefficient.beta[2] << "), delta_xy="
+              << coefficient.deltaXY << ", delta_yz="
+              << coefficient.deltaYZ << ", delta_zx="
+              << coefficient.deltaZX << ".";
+            logRoot(communicator_, coefficientMessage.str());
+          }
+        else
+          logRoot(communicator_,
+            "Maxwell solver: standard Yee FDTD regression mode.");
         logRoot(communicator_,
           "WARNING: the initial Gauss-consistent particle field and CPML are not implemented; this is not yet a final radiation-production solver.");
         logRoot(communicator_,
@@ -286,19 +368,47 @@ namespace fel
     const std::size_t nx = exactCells(config_.mesh.lengths[0], dx, "x");
     const std::size_t ny = exactCells(config_.mesh.lengths[1], dy, "y");
     const std::size_t nz = exactCells(config_.mesh.lengths[2], dz, "z");
-    if (nz < static_cast<std::size_t>(size_))
+    if (nz < 2 * static_cast<std::size_t>(size_))
       throw std::invalid_argument(
-        "Direct E/B grid requires at least one z cell per MPI rank");
+        "Direct E/B grid requires at least two z cells per MPI rank");
 
-    const Double inverseSpacingSquared =
-      1.0 / (dx * dx) + 1.0 / (dy * dy) + 1.0 / (dz * dz);
-    const Double dt = 0.95 /
-      (SI::c * std::sqrt(inverseSpacingSquared));
-    globalGeometry_ = EBGridGeometry(nx, ny, nz, dx, dy, dz, dt);
+    if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
+      {
+        const Double tolerance = 64.0 *
+          std::numeric_limits<Double>::epsilon() *
+          std::max(dx, std::max(dy, dz));
+        if (dx + tolerance < dz || dy + tolerance < dz)
+          {
+            std::ostringstream message;
+            message << "Cowan-z requires z to have the smallest grid spacing so that c*dt=dz is stable and dispersion-free. ";
+            if (dx + tolerance < dz)
+              message << transverseGridRecommendation(
+                "x", config_.mesh.lengths[0], dz,
+                config_.inputUnits.length) << ". ";
+            if (dy + tolerance < dz)
+              message << transverseGridRecommendation(
+                "y", config_.mesh.lengths[1], dz,
+                config_.inputUnits.length) << ".";
+            throw std::invalid_argument(message.str());
+          }
+      }
+
+    Double dt = 0.0;
+    if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
+      dt = dz / SI::c;
+    else
+      {
+        const Double inverseSpacingSquared =
+          1.0 / (dx * dx) + 1.0 / (dy * dy) + 1.0 / (dz * dz);
+        dt = 0.95 / (SI::c * std::sqrt(inverseSpacingSquared));
+      }
+    globalGeometry_ = EBGridGeometry(
+      nx, ny, nz, dx, dy, dz, dt, config_.mesh.fieldSolver);
     const Slab local = slabForRank(rank_);
     localZOffset_ = local.offset;
     localGeometry_ = EBGridGeometry(nx, ny, local.cells,
-                                    dx, dy, dz, dt);
+                                    dx, dy, dz, dt,
+                                    config_.mesh.fieldSolver);
 
     for (unsigned int axis = 0; axis < 3; ++axis)
       globalOriginBox_[axis] =

@@ -7,10 +7,12 @@ temporary executable name.
 
 This is a lightweight C++/MPI code for free-electron-laser and related
 relativistic beam simulations. Electric and magnetic fields are advanced
-directly in SI units on a Yee mesh; particles are advanced self-consistently
-with those fields while laboratory seed fields and magnetic devices are
-converted through an explicit Lorentz boost. A/phi is not part of the
-evolution state.
+directly in SI units on a staggered Yee lattice. The primary Maxwell kernel is
+a Cowan/CKC controlled-dispersion stencil with exact axial vacuum propagation
+for the configured z direction; the standard Yee update remains as a
+regression option. Particles are advanced self-consistently with those fields
+while laboratory seed fields and magnetic devices are converted through an
+explicit Lorentz boost. A/phi is not part of the evolution state.
 
 The main reusable result is a compact, laboratory-frame particle history.
 Optional fixed laboratory field and particle detector planes provide focused
@@ -37,9 +39,10 @@ small-server test path with coordinated clean signal stopping, while
 `throughput` removes signal polling and periodic durability flushes for
 scheduled supercomputer runs.
 
-The implementation is still a development solver. CPML, a Gauss-consistent
-initial particle self-field, and particle subcycling remain planned work, so
-production radiation results require further validation.
+The implementation is still a development solver. CPML, the generalized
+Cowan TF/SF seed-wave correction, a Gauss-consistent initial particle
+self-field, and particle subcycling remain planned work, so production
+radiation results require further validation.
 
 ## Documentation
 

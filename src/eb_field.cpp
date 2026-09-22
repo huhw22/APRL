@@ -17,17 +17,78 @@ namespace fel
     const Double electronMass = 9.1093837139e-31;
   }
 
+  EBCowanCoefficients::EBCowanCoefficients()
+    : deltaXY(0.0), deltaYZ(0.0), deltaZX(0.0)
+  {
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        alpha[axis] = 1.0;
+        beta[axis] = 0.0;
+        ratio[axis] = 1.0;
+      }
+  }
+
+  EBCowanCoefficients EBCowanCoefficients::forZDispersion(
+      Double dx, Double dy, Double dz)
+  {
+    if (!(dx > 0.0) || !(dy > 0.0) || !(dz > 0.0) ||
+        !std::isfinite(dx) || !std::isfinite(dy) || !std::isfinite(dz))
+      throw std::invalid_argument(
+        "Cowan-z grid spacing must be positive and finite");
+    const Double tolerance = 64.0 * std::numeric_limits<Double>::epsilon() *
+      std::max(dx, std::max(dy, dz));
+    if (dx + tolerance < dz || dy + tolerance < dz)
+      throw std::invalid_argument(
+        "Cowan-z requires dz to be the smallest grid spacing");
+
+    EBCowanCoefficients result;
+    result.ratio[0] = (dz / dx) * (dz / dx);
+    result.ratio[1] = (dz / dy) * (dz / dy);
+    result.ratio[2] = 1.0;
+    const Double rx = result.ratio[0];
+    const Double ry = result.ratio[1];
+    const Double rz = result.ratio[2];
+    const Double denominator = rx * ry + ry * rz + rz * rx;
+    if (!(denominator > 0.0) || !std::isfinite(denominator))
+      throw std::invalid_argument("Invalid Cowan-z aspect ratios");
+    const Double productFraction = rx * ry * rz / denominator;
+    result.beta[0] = rx * (1.0 - productFraction) / 8.0;
+    result.beta[1] = ry * (1.0 - productFraction) / 8.0;
+    result.beta[2] = rz * (1.0 - productFraction) / 8.0;
+    result.deltaXY = rx * ry *
+      (1.0 / 16.0 - rx * ry / (8.0 * denominator));
+    result.deltaYZ = ry * rz *
+      (1.0 / 16.0 - ry * rz / (8.0 * denominator));
+    result.deltaZX = rz * rx *
+      (1.0 / 16.0 - rz * rx / (8.0 * denominator));
+    result.alpha[0] = 1.0 - 2.0 * result.beta[1] -
+      2.0 * result.beta[2] - 4.0 * result.deltaYZ;
+    result.alpha[1] = 1.0 - 2.0 * result.beta[2] -
+      2.0 * result.beta[0] - 4.0 * result.deltaZX;
+    result.alpha[2] = 1.0 - 2.0 * result.beta[0] -
+      2.0 * result.beta[1] - 4.0 * result.deltaXY;
+    return result;
+  }
+
   EBGridGeometry::EBGridGeometry()
-    : nx(0), ny(0), nz(0), dx(0.0), dy(0.0), dz(0.0), dt(0.0)
+    : nx(0), ny(0), nz(0), dx(0.0), dy(0.0), dz(0.0), dt(0.0),
+      solver(EBMaxwellSolver::Yee)
   {}
 
   EBGridGeometry::EBGridGeometry(std::size_t nxValue,
                                  std::size_t nyValue,
                                  std::size_t nzValue,
                                  Double dxValue, Double dyValue,
-                                 Double dzValue, Double dtValue)
+                                 Double dzValue, Double dtValue,
+                                 EBMaxwellSolver solverValue)
     : nx(nxValue), ny(nyValue), nz(nzValue),
-      dx(dxValue), dy(dyValue), dz(dzValue), dt(dtValue)
+      dx(dxValue), dy(dyValue), dz(dzValue), dt(dtValue),
+      solver(solverValue)
+  {}
+
+  EBElectricHaloView::EBElectricHaloView()
+    : lowerEx(0), lowerEy(0), lowerEz(0),
+      upperEx(0), upperEy(0), upperEz(0)
   {}
 
   YeeComponent::YeeComponent() : nx_(0), ny_(0), nz_(0), values_()
@@ -172,6 +233,10 @@ namespace fel
 
   EBFieldGrid::EBFieldGrid(const EBGridGeometry& geometry)
     : geometry_(geometry),
+      cowan_(geometry.solver == EBMaxwellSolver::CowanZ ?
+        EBCowanCoefficients::forZDispersion(
+          geometry.dx, geometry.dy, geometry.dz) :
+        EBCowanCoefficients()),
       ex_(geometry.nx, geometry.ny + 1, geometry.nz + 1),
       ey_(geometry.nx + 1, geometry.ny, geometry.nz + 1),
       ez_(geometry.nx + 1, geometry.ny + 1, geometry.nz),
@@ -229,6 +294,20 @@ namespace fel
 
   void EBFieldGrid::advanceMagnetic()
   {
+    advanceMagnetic(EBElectricHaloView());
+  }
+
+  void EBFieldGrid::advanceMagnetic(const EBElectricHaloView& halo)
+  {
+    if (geometry_.solver == EBMaxwellSolver::CowanZ)
+      advanceMagneticCowan(halo);
+    else
+      advanceMagneticYee();
+    boundary_->afterMagneticUpdate(*this);
+  }
+
+  void EBFieldGrid::advanceMagneticYee()
+  {
     const Double dtdx = geometry_.dt / geometry_.dx;
     const Double dtdy = geometry_.dt / geometry_.dy;
     const Double dtdz = geometry_.dt / geometry_.dz;
@@ -251,7 +330,157 @@ namespace fel
           bz_(i, j, k) -= dtdx * (ey_(i + 1, j, k) - ey_(i, j, k))
                         - dtdy * (ex_(i, j + 1, k) - ex_(i, j, k));
 
-    boundary_->afterMagneticUpdate(*this);
+  }
+
+  Double EBFieldGrid::electricValue(
+      const YeeComponent& component, unsigned int componentAxis,
+      std::ptrdiff_t i, std::ptrdiff_t j, std::ptrdiff_t k,
+      const EBElectricHaloView& halo) const
+  {
+    std::ptrdiff_t coordinate[3] = {i, j, k};
+    const std::ptrdiff_t size[3] = {
+      static_cast<std::ptrdiff_t>(component.nx()),
+      static_cast<std::ptrdiff_t>(component.ny()),
+      static_cast<std::ptrdiff_t>(component.nz())
+    };
+    Double sign = 1.0;
+
+    for (unsigned int axis = 0; axis < 2; ++axis)
+      {
+        if (coordinate[axis] < 0)
+          {
+            if (componentAxis == axis)
+              coordinate[axis] = 0;
+            else
+              {
+                coordinate[axis] = -coordinate[axis];
+                sign = -sign;
+              }
+          }
+        else if (coordinate[axis] >= size[axis])
+          {
+            if (componentAxis == axis)
+              coordinate[axis] = size[axis] - 1;
+            else
+              {
+                coordinate[axis] = 2 * (size[axis] - 1) -
+                                   coordinate[axis];
+                sign = -sign;
+              }
+          }
+      }
+
+    if (coordinate[2] < 0 || coordinate[2] >= size[2])
+      {
+        const bool lower = coordinate[2] < 0;
+        const Double* plane = 0;
+        if (&component == &ex_)
+          plane = lower ? halo.lowerEx : halo.upperEx;
+        else if (&component == &ey_)
+          plane = lower ? halo.lowerEy : halo.upperEy;
+        else if (&component == &ez_)
+          plane = lower ? halo.lowerEz : halo.upperEz;
+        if (plane)
+          return sign * plane[
+            static_cast<std::size_t>(coordinate[1]) * component.nx() +
+            static_cast<std::size_t>(coordinate[0])];
+
+        if (componentAxis == 2)
+          coordinate[2] = lower ? 0 : size[2] - 1;
+        else
+          {
+            coordinate[2] = lower ? -coordinate[2] :
+              2 * (size[2] - 1) - coordinate[2];
+            sign = -sign;
+          }
+      }
+
+    return sign * component(
+      static_cast<std::size_t>(coordinate[0]),
+      static_cast<std::size_t>(coordinate[1]),
+      static_cast<std::size_t>(coordinate[2]));
+  }
+
+  Double EBFieldGrid::smoothedElectric(
+      const YeeComponent& component, unsigned int componentAxis,
+      unsigned int derivativeAxis, std::ptrdiff_t i,
+      std::ptrdiff_t j, std::ptrdiff_t k,
+      const EBElectricHaloView& halo) const
+  {
+    const unsigned int transverseA = (derivativeAxis + 1) % 3;
+    const unsigned int transverseB = (derivativeAxis + 2) % 3;
+    const Double delta = derivativeAxis == 0 ? cowan_.deltaYZ :
+      (derivativeAxis == 1 ? cowan_.deltaZX : cowan_.deltaXY);
+    std::ptrdiff_t base[3] = {i, j, k};
+    Double result = cowan_.alpha[derivativeAxis] *
+      electricValue(component, componentAxis, i, j, k, halo);
+    for (int direction = -1; direction <= 1; direction += 2)
+      {
+        std::ptrdiff_t pointA[3] = {base[0], base[1], base[2]};
+        std::ptrdiff_t pointB[3] = {base[0], base[1], base[2]};
+        pointA[transverseA] += direction;
+        pointB[transverseB] += direction;
+        result += cowan_.beta[transverseA] * electricValue(
+          component, componentAxis, pointA[0], pointA[1], pointA[2], halo);
+        result += cowan_.beta[transverseB] * electricValue(
+          component, componentAxis, pointB[0], pointB[1], pointB[2], halo);
+      }
+    for (int directionA = -1; directionA <= 1; directionA += 2)
+      for (int directionB = -1; directionB <= 1; directionB += 2)
+        {
+          std::ptrdiff_t point[3] = {base[0], base[1], base[2]};
+          point[transverseA] += directionA;
+          point[transverseB] += directionB;
+          result += delta * electricValue(
+            component, componentAxis, point[0], point[1], point[2], halo);
+        }
+    return result;
+  }
+
+  void EBFieldGrid::advanceMagneticCowan(const EBElectricHaloView& halo)
+  {
+    const Double dtdx = geometry_.dt / geometry_.dx;
+    const Double dtdy = geometry_.dt / geometry_.dy;
+    const Double dtdz = geometry_.dt / geometry_.dz;
+
+    for (std::size_t k = 0; k < geometry_.nz; ++k)
+      for (std::size_t j = 0; j < geometry_.ny; ++j)
+        for (std::size_t i = 0; i <= geometry_.nx; ++i)
+          {
+            const Double dEzDy = smoothedElectric(
+              ez_, 2, 1, i, j + 1, k, halo) -
+              smoothedElectric(ez_, 2, 1, i, j, k, halo);
+            const Double dEyDz = smoothedElectric(
+              ey_, 1, 2, i, j, k + 1, halo) -
+              smoothedElectric(ey_, 1, 2, i, j, k, halo);
+            bx_(i, j, k) -= dtdy * dEzDy - dtdz * dEyDz;
+          }
+
+    for (std::size_t k = 0; k < geometry_.nz; ++k)
+      for (std::size_t j = 0; j <= geometry_.ny; ++j)
+        for (std::size_t i = 0; i < geometry_.nx; ++i)
+          {
+            const Double dExDz = smoothedElectric(
+              ex_, 0, 2, i, j, k + 1, halo) -
+              smoothedElectric(ex_, 0, 2, i, j, k, halo);
+            const Double dEzDx = smoothedElectric(
+              ez_, 2, 0, i + 1, j, k, halo) -
+              smoothedElectric(ez_, 2, 0, i, j, k, halo);
+            by_(i, j, k) -= dtdz * dExDz - dtdx * dEzDx;
+          }
+
+    for (std::size_t k = 0; k <= geometry_.nz; ++k)
+      for (std::size_t j = 0; j < geometry_.ny; ++j)
+        for (std::size_t i = 0; i < geometry_.nx; ++i)
+          {
+            const Double dEyDx = smoothedElectric(
+              ey_, 1, 0, i + 1, j, k, halo) -
+              smoothedElectric(ey_, 1, 0, i, j, k, halo);
+            const Double dExDy = smoothedElectric(
+              ex_, 0, 1, i, j + 1, k, halo) -
+              smoothedElectric(ex_, 0, 1, i, j, k, halo);
+            bz_(i, j, k) -= dtdx * dEyDx - dtdy * dExDy;
+          }
   }
 
   void EBFieldGrid::advanceElectric()
@@ -307,6 +536,38 @@ namespace fel
       std::sqrt(1.0 / (geometry_.dx * geometry_.dx) +
                 1.0 / (geometry_.dy * geometry_.dy) +
                 1.0 / (geometry_.dz * geometry_.dz)));
+  }
+
+  const EBCowanCoefficients& EBFieldGrid::cowanCoefficients() const
+  {
+    return cowan_;
+  }
+
+  Double EBFieldGrid::axisPhaseVelocityRatio(
+      Double courantAxis, Double cellsPerWavelength)
+  {
+    if (!(courantAxis > 0.0) || !(courantAxis <= 1.0) ||
+        !(cellsPerWavelength > 2.0))
+      throw std::invalid_argument(
+        "Dispersion diagnostic requires 0 < Courant <= 1 and more than two cells per wavelength");
+    const Double pi = 3.1415926535897932384626433832795;
+    const Double angle = pi / cellsPerWavelength;
+    return cellsPerWavelength /
+      (pi * courantAxis) * std::asin(courantAxis * std::sin(angle));
+  }
+
+  Double EBFieldGrid::axisGroupVelocityRatio(
+      Double courantAxis, Double cellsPerWavelength)
+  {
+    if (!(courantAxis > 0.0) || !(courantAxis <= 1.0) ||
+        !(cellsPerWavelength > 2.0))
+      throw std::invalid_argument(
+        "Dispersion diagnostic requires 0 < Courant <= 1 and more than two cells per wavelength");
+    const Double pi = 3.1415926535897932384626433832795;
+    const Double angle = pi / cellsPerWavelength;
+    const Double sine = std::sin(angle);
+    return std::cos(angle) /
+      std::sqrt(1.0 - courantAxis * courantAxis * sine * sine);
   }
 
   EBMemoryFootprint EBFieldGrid::memoryFootprint() const
@@ -387,16 +648,48 @@ namespace fel
   {
     if (geometry_.nx < 2 || geometry_.ny < 2 || geometry_.nz < 2)
       throw std::invalid_argument(
-          "E/B Yee grid needs at least two cells in every direction");
+          "E/B staggered grid needs at least two cells in every direction");
     if (!(geometry_.dx > 0.0) || !(geometry_.dy > 0.0) ||
         !(geometry_.dz > 0.0) || !(geometry_.dt > 0.0) ||
         !std::isfinite(geometry_.dx) || !std::isfinite(geometry_.dy) ||
         !std::isfinite(geometry_.dz) || !std::isfinite(geometry_.dt))
       throw std::invalid_argument(
           "E/B grid spacing and time step must be positive finite SI values");
-    if (courantNumber() > 1.0 + 16.0 * std::numeric_limits<Double>::epsilon())
-      throw std::invalid_argument(
-          "E/B time step violates the three-dimensional Yee CFL limit");
+    if (geometry_.solver == EBMaxwellSolver::Yee)
+      {
+        if (courantNumber() >
+            1.0 + 16.0 * std::numeric_limits<Double>::epsilon())
+          throw std::invalid_argument(
+            "E/B time step violates the three-dimensional Yee CFL limit");
+      }
+    else
+      {
+        const Double spacingTolerance = 64.0 *
+          std::numeric_limits<Double>::epsilon() *
+          std::max(geometry_.dx, std::max(geometry_.dy, geometry_.dz));
+        if (geometry_.dx + spacingTolerance < geometry_.dz ||
+            geometry_.dy + spacingTolerance < geometry_.dz)
+          throw std::invalid_argument(
+            "Cowan-z requires dz to be the smallest grid spacing");
+        const Double axialCourant = SI::c * geometry_.dt / geometry_.dz;
+        if (std::abs(axialCourant - 1.0) >
+            64.0 * std::numeric_limits<Double>::epsilon())
+          throw std::invalid_argument(
+            "Cowan-z requires the dispersion-matched step c*dt=dz");
+        const Double normalization[3] = {
+          cowan_.alpha[0] + 2.0 * cowan_.beta[1] +
+            2.0 * cowan_.beta[2] + 4.0 * cowan_.deltaYZ,
+          cowan_.alpha[1] + 2.0 * cowan_.beta[2] +
+            2.0 * cowan_.beta[0] + 4.0 * cowan_.deltaZX,
+          cowan_.alpha[2] + 2.0 * cowan_.beta[0] +
+            2.0 * cowan_.beta[1] + 4.0 * cowan_.deltaXY
+        };
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          if (!std::isfinite(normalization[axis]) ||
+              std::abs(normalization[axis] - 1.0) > 1.0e-12)
+            throw std::invalid_argument(
+              "Cowan-z smoothing coefficients are not normalized");
+      }
   }
 
   RadiationFieldSample EBFieldGrid::makeRadiationSample(

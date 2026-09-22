@@ -103,10 +103,14 @@ namespace fel
       const EBFieldGrid& grid) const
   {
     const EBGridGeometry& actual = grid.geometry();
+    if (actual.solver != EBMaxwellSolver::Yee ||
+        geometry_.solver != EBMaxwellSolver::Yee)
+      throw std::invalid_argument(
+        "TF/SF incident injection currently supports only the Yee solver; Cowan-z requires a generalized boundary correction");
     if (actual.nx != geometry_.nx || actual.ny != geometry_.ny ||
         actual.nz != geometry_.nz || actual.dx != geometry_.dx ||
         actual.dy != geometry_.dy || actual.dz != geometry_.dz ||
-        actual.dt != geometry_.dt)
+        actual.dt != geometry_.dt || actual.solver != geometry_.solver)
       throw std::invalid_argument(
         "TF/SF injector geometry does not match the E/B grid");
   }

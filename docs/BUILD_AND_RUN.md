@@ -68,3 +68,10 @@ The current solver stops with an explicit error if its boosted initial bunch
 does not fit the longitudinal box or overlaps the finite interaction region of
 the first element. Increase the box or move `initial_center_z` upstream only
 after checking the reported physical and interaction boundaries.
+
+The examples select `mesh.field_solver: cowan-z`. This requires `dx >= dz`
+and `dy >= dz`; an invalid card exits before field allocation and particle
+input and prints a transverse-grid recommendation. The startup log records the
+Cowan coefficients and transverse vacuum dispersion diagnostics. CPML is not
+yet connected. A nonempty TF/SF `incident_waves` list currently requires
+`mesh.field_solver: yee` until the incident-boundary stencil is generalized.

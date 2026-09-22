@@ -192,6 +192,16 @@ namespace fel
         "runtime mode must be interactive or throughput");
     }
 
+    EBMaxwellSolver fieldSolver(const YAML::Node& node)
+    {
+      const std::string value = lower(node.as<std::string>());
+      if (value == "yee") return EBMaxwellSolver::Yee;
+      if (value == "cowan-z" || value == "ckc-z" || value == "ckc")
+        return EBMaxwellSolver::CowanZ;
+      throw configError(node,
+        "field_solver must be yee or cowan-z");
+    }
+
     bool validDetectorName(const std::string& name)
     {
       if (name.empty()) return false;
@@ -211,7 +221,8 @@ namespace fel
 
   MeshConfig::MeshConfig()
     : lengths(0.0), resolution(0.0), center(0.0), duration(0.0),
-      boostGamma(1.0), particleStepsPerUndulatorPeriod(1024)
+      boostGamma(1.0), particleStepsPerUndulatorPeriod(1024),
+      fieldSolver(EBMaxwellSolver::CowanZ)
   {}
 
   BeamInputConfig::BeamInputConfig()
@@ -314,6 +325,7 @@ namespace fel
       "mesh duration") * result.inputUnits.time;
     result.mesh.boostGamma = finiteDouble(required(mesh, "boost_gamma"),
       "boost gamma");
+    result.mesh.fieldSolver = fieldSolver(required(mesh, "field_solver"));
     if (mesh["particle_steps_per_undulator_period"])
       result.mesh.particleStepsPerUndulatorPeriod =
         mesh["particle_steps_per_undulator_period"].as<unsigned int>();

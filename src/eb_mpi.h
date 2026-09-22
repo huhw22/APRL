@@ -29,6 +29,7 @@ namespace fel
 
     void installPhysicalBoundaryMask(EBFieldGrid& fields) const;
     void sumSharedTangentialCurrent(EBFieldGrid& fields);
+    void advanceMagnetic(EBFieldGrid& fields);
     void advanceElectric(EBFieldGrid& fields);
     void advance(EBFieldGrid& fields);
     void advanceWithIncident(
@@ -45,10 +46,14 @@ namespace fel
     void verifyGeometry(const EBFieldGrid& fields) const;
     void exchangeCurrentPlane(YeeComponent& component,
                               int tagUpper, int tagLower);
+    void exchangeElectricPlanes(const EBFieldGrid& fields);
     void exchangeMagneticPlanes(const EBFieldGrid& fields);
     void updateLowerInterface(EBFieldGrid& fields);
     void updateUpperInterface(EBFieldGrid& fields);
     void packMagneticPlane(const EBFieldGrid& fields, std::size_t k,
+                           std::vector<Double>& buffer) const;
+    void packElectricPlane(const EBFieldGrid& fields,
+                           std::size_t nodeK, std::size_t cellK,
                            std::vector<Double>& buffer) const;
 
     MPI_Comm communicator_;
@@ -63,6 +68,10 @@ namespace fel
     std::vector<Double> sendUpperMagnetic_;
     std::vector<Double> receiveLowerPlane_;
     std::vector<Double> receiveUpperPlane_;
+    std::vector<Double> lowerElectric_;
+    std::vector<Double> upperElectric_;
+    std::vector<Double> sendLowerElectric_;
+    std::vector<Double> sendUpperElectric_;
   };
 }
 

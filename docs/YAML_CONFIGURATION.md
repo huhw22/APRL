@@ -21,6 +21,7 @@ Particle HDF5 positions are always metres and do not inherit the YAML unit.
 
 ```yaml
 mesh:
+  field_solver: cowan-z
   lengths: [40.0, 40.0, 12.0]
   resolution: [1.0, 1.0, 0.2]
   center: [0.0, 0.0, 0.0]
@@ -29,9 +30,30 @@ mesh:
   particle_steps_per_undulator_period: 32
 ```
 
+`field_solver` is required. Use `cowan-z` for the z-priority controlled-
+dispersion stencil or `yee` for the original regression path. Both operate on
+the same staggered E/B lattice; neither allocates A/phi. The Cowan path applies
+the transverse smoothing directly while evaluating Faraday's law, rather than
+storing three extra smoothed-field volumes.
+
+For `cowan-z`, z must have the smallest mesh spacing: `dx >= dz` and
+`dy >= dz`. The program checks this before allocating fields or reading the
+particle file, exits on violation, and reports a valid transverse cell-count
+and spacing suggestion derived from the configured `dz`. Its time step is
+`dt = dz/c`, which makes resolved vacuum propagation exactly dispersion-free
+on the z axis. Startup logging reports the squared aspect ratios, all Cowan
+stencil coefficients, and transverse-axis phase/group velocity ratios at 16
+cells per wavelength. Those transverse figures are diagnostics, not a claim
+that an arbitrary oblique mode is dispersion-free.
+
+The present TF/SF seed-wave boundary correction is still the Yee form, so a
+configuration that combines `cowan-z` with a nonempty `incident_waves` list is
+rejected before particle input. Use `yee` for seed-injection regression until
+the generalized Cowan TF/SF correction is implemented.
+
 `lengths`, `resolution`, and `center` describe the boosted computational box.
 Each length must be an integral number of cells, every dimension needs at
-least three cells, and z needs at least one cell per MPI rank. `duration` is
+least three cells, and z needs at least two cells per MPI rank. `duration` is
 boosted-frame time. The particle-step setting is reserved for the future
 subcycling implementation.
 

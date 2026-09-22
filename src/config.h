@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "eb_field.h"
 #include "eb_sources.h"
 #include "fieldvector.h"
 
@@ -26,6 +27,7 @@ namespace fel
     Double duration;
     Double boostGamma;
     unsigned int particleStepsPerUndulatorPeriod;
+    EBMaxwellSolver fieldSolver;
 
     MeshConfig();
   };
