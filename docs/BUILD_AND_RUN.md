@@ -55,6 +55,13 @@ Use `config/generated_gaussian.yaml` for the file-free test input. For a local
 debug run choose trajectory `mode: interactive`; for an uninterrupted batch
 run choose `mode: throughput`.
 
+The production example also enables one laboratory field plane and one
+particle plane. Their two HDF5 files appear under
+`output/example/detectors/`; MPI rank zero is their only writer. Remove the
+`detectors` block or set `detectors.enabled: false` for runs that need no
+detector allocation or communication. Detector datasets are described in
+[DETECTOR_OUTPUT_HDF5.md](DETECTOR_OUTPUT_HDF5.md).
+
 The current solver stops with an explicit error if its boosted initial bunch
 does not fit the longitudinal box or overlaps the finite interaction region of
 the first element. Increase the box or move `initial_center_z` upstream only

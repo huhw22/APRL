@@ -186,11 +186,59 @@ the boost-frame origin worldline. The target must lie strictly beyond every
 current element interaction region, allowing deliberate observation after the
 last device.
 
-Stopping operates on generic beamline-element extents. Magnetic devices are
-the only parsed elements today; future laboratory field-detector and
-particle-detector planes have reserved element roles and will therefore enter
-the same first/last-boundary logic without reviving the predecessor's
-boost-frame tracking diagnostics.
+Stopping operates on generic beamline-element extents. Magnetic devices and
+both laboratory detector-plane types participate in the same first/last
+boundary logic.
+
+## Laboratory detector planes
+
+The only detector mechanisms in this program are fixed laboratory-frame
+field planes and particle-crossing planes. The predecessor's boosted-frame
+tracking and moving diagnostic surfaces are deliberately not accepted.
+
+```yaml
+detectors:
+  enabled: true
+  directory: output/example/detectors
+  field_planes:
+    - name: exit-fields
+      z: 2.5
+      rhythm: 0.002
+      buffer_samples: 2
+      compression: 0
+  particle_planes:
+    - name: exit-particles
+      z: 2.5
+      buffer_records: 4096
+      compression: 0
+```
+
+Every plane is a zero-length beamline element at lab `z`. It can therefore be
+the last element used by `after-last-element`, and a `reference-center-z` stop
+must lie downstream of it. Detector names are unique and may contain letters,
+digits, `.`, `-`, and `_`.
+
+A field plane stores laboratory E and B over all x-y cell centres. `rhythm` is
+a laboratory-time minimum interval; actual sample times are stored because
+they are quantized to completed Maxwell steps. `buffer_samples` controls the
+rank-zero HDF5 batch and should normally stay small because one sample is a
+full x-y plane. The stored Yee B value remains half a Maxwell step staggered
+from E; that fact is recorded in file metadata rather than hidden by a second
+full-domain field copy.
+
+A particle plane stores a record only when a particle segment actually
+crosses its fixed lab z, including downstream/upstream direction. It does not
+change the normal trajectory cadence or records. `buffer_records` controls
+only the separate detector writer.
+
+Omitting `detectors`, using empty plane lists, or setting `enabled: false`
+constructs no detector manager, allocates no detector buffers, opens no
+detector files, and enters no detector MPI communication. When enabled, only
+the rank owning a field plane samples it; particle crossings are sent in
+bounded batches. MPI rank zero alone opens and appends detector HDF5 files, so
+ranks never compete for a shared detector file. Detector output uses
+throughput buffering and is finalized after trajectory files, keeping the two
+I/O paths independent. See [DETECTOR_OUTPUT_HDF5.md](DETECTOR_OUTPUT_HDF5.md).
 
 ## Trajectory output
 

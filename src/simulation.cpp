@@ -167,7 +167,8 @@ namespace fel
     : config_(config), communicator_(communicator), rank_(0), size_(1),
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0), frame_(), sources_(),
-      fields_(), halo_(), incident_(), particles_(), trajectoryWriter_(),
+      fields_(), halo_(), incident_(), particles_(), detectors_(),
+      trajectoryWriter_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), timeBoxSI_(0.0),
       totalTimeBoxSI_(0.0), step_(0), interrupted_(false),
@@ -184,6 +185,8 @@ namespace fel
     initialize();
     if (config_.trajectory.enabled)
       sampleTrajectory();
+    if (detectors_)
+      detectors_->sampleFieldPlanes(*fields_, timeBoxSI_);
 
     while (timeBoxSI_ < totalTimeBoxSI_)
       {
@@ -206,6 +209,8 @@ namespace fel
         if (config_.trajectory.enabled &&
             timeBoxSI_ >= nextTrajectorySampleTime_)
           sampleTrajectory();
+        if (detectors_)
+          detectors_->sampleFieldPlanes(*fields_, timeBoxSI_);
         if (configuredStopReached())
           {
             configuredStopReached_ = true;
@@ -216,15 +221,16 @@ namespace fel
     if (!interrupted_) synchronizedStopRequested();
     const bool completed = !interrupted_ && configuredStopReached_;
     finalizeTrajectoryOutput(completed);
+    if (detectors_) detectors_->close(completed);
     if (configuredStopReached_ && rank_ == 0)
       logRoot(communicator_, "Configured stop reached: " + stopReason_);
     if (interrupted_ && rank_ == 0)
       logRoot(communicator_,
-        "Direct E/B run stopped after a complete field step; committed trajectories remain readable.");
+        "Direct E/B run stopped after a complete field step; committed trajectory and detector outputs remain readable.");
     if (!interrupted_ && !configuredStopReached_ &&
         timeBoxSI_ >= totalTimeBoxSI_)
       throw std::runtime_error(
-        "mesh.duration was exhausted before the configured physical stop; trajectory output is readable but marked incomplete");
+        "mesh.duration was exhausted before the configured physical stop; trajectory and detector outputs are readable but marked incomplete");
   }
 
   void Simulation::initialize()
@@ -255,6 +261,7 @@ namespace fel
       }
 
     initializeTrajectoryOutput();
+    initializeDetectorOutput();
     if (rank_ == 0)
       {
         logRoot(communicator_,
@@ -436,6 +443,24 @@ namespace fel
       config_.trajectory.interactive);
     nextTrajectorySampleTime_ = 0.0;
     trajectorySamplesSinceFlush_ = 0;
+  }
+
+  void Simulation::initializeDetectorOutput()
+  {
+    if (!config_.detectors.enabled()) return;
+    detectors_.reset(new LabDetectorManager(
+      config_.detectors, globalGeometry_,
+      globalOriginBox_, localOriginBox_, frame_, communicator_));
+    if (rank_ == 0)
+      {
+        std::ostringstream message;
+        message << "Laboratory detector planes active: fields="
+                << config_.detectors.fieldPlanes.size()
+                << ", particles="
+                << config_.detectors.particlePlanes.size()
+                << "; detector HDF5 is written only by MPI rank zero.";
+        logRoot(communicator_, message.str());
+      }
   }
 
   void Simulation::sampleTrajectory()
@@ -622,6 +647,10 @@ namespace fel
         RelativisticBorisPusher::pushFromGridAndPrescribedLab(
           particle, *fields_, localOriginBox_, sources_, frame_,
           timeBoxSI_, globalGeometry_.dt);
+        if (detectors_)
+          detectors_->captureParticleStep(
+            particles_[index], particle, timeBoxSI_,
+            timeBoxSI_ + globalGeometry_.dt);
 
         const bool crossLower = rank_ > 0 &&
           particle.position[2] < lowerZ;
@@ -720,6 +749,7 @@ namespace fel
     MPI_Allreduce(&localLost, &globalLost, 1, MPI_UNSIGNED_LONG_LONG,
                   MPI_SUM, communicator_);
     lostParticles_ += globalLost;
+    if (detectors_) detectors_->collectParticleCrossings();
   }
 
   bool Simulation::synchronizedStopRequested()

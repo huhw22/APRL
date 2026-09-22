@@ -22,6 +22,7 @@ set(DIRECT_EB_SOURCES
   src/eb_mpi.cpp
   src/eb_particles.cpp
   src/eb_sources.cpp
+  src/lab_detectors.cpp
   src/particle_file.cpp
   src/particle_initializer.cpp
   src/runtime_control.cpp

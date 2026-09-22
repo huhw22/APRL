@@ -15,6 +15,7 @@
 #include "eb_mpi.h"
 #include "eb_particles.h"
 #include "eb_sources.h"
+#include "lab_detectors.h"
 #include "trajectory_writer.h"
 
 namespace fel
@@ -39,6 +40,7 @@ namespace fel
     void initializeParticles();
     void initializeSources();
     void initializeTrajectoryOutput();
+    void initializeDetectorOutput();
     void sampleTrajectory();
     void finalizeTrajectoryOutput(bool completed);
 
@@ -70,6 +72,7 @@ namespace fel
     std::unique_ptr<EBZSlabHaloExchange> halo_;
     std::unique_ptr<EBMaxwellIncidentInjector> incident_;
     std::vector<RelativisticParticleSI> particles_;
+    std::unique_ptr<LabDetectorManager> detectors_;
 
     TrajectoryWriter trajectoryWriter_;
     Double trajectoryRhythmSI_;

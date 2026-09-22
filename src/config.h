@@ -113,6 +113,40 @@ namespace fel
     TrajectoryConfig();
   };
 
+  struct FieldDetectorPlaneConfig
+  {
+    std::string name;
+    Double z;
+    Double rhythm;
+    std::size_t bufferSamples;
+    unsigned int compression;
+
+    FieldDetectorPlaneConfig();
+  };
+
+  struct ParticleDetectorPlaneConfig
+  {
+    std::string name;
+    Double z;
+    std::size_t bufferRecords;
+    unsigned int compression;
+
+    ParticleDetectorPlaneConfig();
+  };
+
+  /* Detector lists are empty by default.  The simulation uses that fact to
+   * avoid constructing a manager, allocating buffers, or entering detector
+   * MPI collectives when laboratory detector planes are not requested. */
+  struct DetectorConfig
+  {
+    std::string directory;
+    std::vector<FieldDetectorPlaneConfig> fieldPlanes;
+    std::vector<ParticleDetectorPlaneConfig> particlePlanes;
+
+    DetectorConfig();
+    bool enabled() const;
+  };
+
   struct WaveConfig
   {
     SIWaveSource source;
@@ -132,6 +166,7 @@ namespace fel
     std::vector<BeamlineElementExtent> beamlineElements;
     StopConfig stop;
     TrajectoryConfig trajectory;
+    DetectorConfig detectors;
   };
 
   class YamlConfigLoader

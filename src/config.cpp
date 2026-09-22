@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 
@@ -179,6 +180,20 @@ namespace fel
       throw configError(node,
         "beam input type must be hdf5 or generated-gaussian");
     }
+
+    bool validDetectorName(const std::string& name)
+    {
+      if (name.empty()) return false;
+      for (std::size_t i = 0; i < name.size(); ++i)
+        {
+          const unsigned char character =
+            static_cast<unsigned char>(name[i]);
+          if (!std::isalnum(character) && character != '-' &&
+              character != '_' && character != '.')
+            return false;
+        }
+      return name != "." && name != "..";
+    }
   }
 
   UnitSystem::UnitSystem() : length(1.0), time(1.0) {}
@@ -214,6 +229,23 @@ namespace fel
       interactive(true), bufferRecords(16384), flushEverySamples(8),
       compression(0)
   {}
+
+  FieldDetectorPlaneConfig::FieldDetectorPlaneConfig()
+    : name(), z(0.0), rhythm(0.0), bufferSamples(1), compression(0)
+  {}
+
+  ParticleDetectorPlaneConfig::ParticleDetectorPlaneConfig()
+    : name(), z(0.0), bufferRecords(16384), compression(0)
+  {}
+
+  DetectorConfig::DetectorConfig()
+    : directory("output/detectors"), fieldPlanes(), particlePlanes()
+  {}
+
+  bool DetectorConfig::enabled() const
+  {
+    return !fieldPlanes.empty() || !particlePlanes.empty();
+  }
 
   WaveConfig::WaveConfig()
     : source(), evolution(SIFieldEvolution::MaxwellIncident)
@@ -438,6 +470,101 @@ namespace fel
             extent.interactionEntrance = magnet.interactionEntranceLab();
             extent.interactionExit = magnet.interactionExitLab();
             result.beamlineElements.push_back(extent);
+          }
+      }
+
+    const YAML::Node detectors = root["detectors"];
+    std::set<std::string> detectorNames;
+    if (detectors)
+      {
+        if (!detectors.IsMap())
+          throw configError(detectors, "detectors must be a map");
+        const bool detectorsEnabled = detectors["enabled"] ?
+          detectors["enabled"].as<bool>() : true;
+        if (detectorsEnabled && detectors["directory"])
+          result.detectors.directory =
+            detectors["directory"].as<std::string>();
+        if (detectorsEnabled && result.detectors.directory.empty())
+          throw configError(detectors, "detector directory cannot be empty");
+
+        const YAML::Node fieldPlanes = detectors["field_planes"];
+        if (detectorsEnabled && fieldPlanes)
+          {
+            if (!fieldPlanes.IsSequence())
+              throw configError(fieldPlanes,
+                "field_planes must be a sequence");
+            for (std::size_t i = 0; i < fieldPlanes.size(); ++i)
+              {
+                const YAML::Node node = fieldPlanes[i];
+                FieldDetectorPlaneConfig plane;
+                plane.name = required(node, "name").as<std::string>();
+                if (!validDetectorName(plane.name))
+                  throw configError(node["name"],
+                    "detector name may contain only letters, digits, '.', '-' and '_'");
+                if (!detectorNames.insert(plane.name).second)
+                  throw configError(node["name"],
+                    "detector names must be unique");
+                plane.z = finiteDouble(required(node, "z"),
+                  "field detector z") * result.inputUnits.length;
+                plane.rhythm = finiteDouble(required(node, "rhythm"),
+                  "field detector rhythm") * result.inputUnits.time;
+                if (!(plane.rhythm > 0.0))
+                  throw configError(node["rhythm"],
+                    "field detector rhythm must be positive");
+                if (node["buffer_samples"])
+                  plane.bufferSamples = positiveSize(
+                    node["buffer_samples"], "field detector buffer_samples");
+                if (node["compression"])
+                  plane.compression = node["compression"].as<unsigned int>();
+                if (plane.compression > 9)
+                  throw configError(node,
+                    "field detector compression must be in [0,9]");
+                result.detectors.fieldPlanes.push_back(plane);
+
+                BeamlineElementExtent extent;
+                extent.role = BeamlineElementRole::FieldDetectorPlane;
+                extent.physicalEntrance = extent.physicalExit = plane.z;
+                extent.interactionEntrance = extent.interactionExit = plane.z;
+                result.beamlineElements.push_back(extent);
+              }
+          }
+
+        const YAML::Node particlePlanes = detectors["particle_planes"];
+        if (detectorsEnabled && particlePlanes)
+          {
+            if (!particlePlanes.IsSequence())
+              throw configError(particlePlanes,
+                "particle_planes must be a sequence");
+            for (std::size_t i = 0; i < particlePlanes.size(); ++i)
+              {
+                const YAML::Node node = particlePlanes[i];
+                ParticleDetectorPlaneConfig plane;
+                plane.name = required(node, "name").as<std::string>();
+                if (!validDetectorName(plane.name))
+                  throw configError(node["name"],
+                    "detector name may contain only letters, digits, '.', '-' and '_'");
+                if (!detectorNames.insert(plane.name).second)
+                  throw configError(node["name"],
+                    "detector names must be unique");
+                plane.z = finiteDouble(required(node, "z"),
+                  "particle detector z") * result.inputUnits.length;
+                if (node["buffer_records"])
+                  plane.bufferRecords = positiveSize(
+                    node["buffer_records"],
+                    "particle detector buffer_records");
+                if (node["compression"])
+                  plane.compression = node["compression"].as<unsigned int>();
+                if (plane.compression > 9)
+                  throw configError(node,
+                    "particle detector compression must be in [0,9]");
+                result.detectors.particlePlanes.push_back(plane);
+
+                BeamlineElementExtent extent;
+                extent.role = BeamlineElementRole::ParticleDetectorPlane;
+                extent.physicalEntrance = extent.physicalExit = plane.z;
+                extent.interactionEntrance = extent.interactionExit = plane.z;
+                result.beamlineElements.push_back(extent);
+              }
           }
       }
 

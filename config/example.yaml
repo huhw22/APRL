@@ -34,6 +34,23 @@ sources:
       gaussian_fringe: true
       fringe_relative_cutoff: 1.0e-9
 
+# Both planes are zero-length laboratory-frame beamline elements.  Omit this
+# block (or set enabled: false) to allocate no detector buffers or file handles.
+detectors:
+  enabled: true
+  directory: output/example/detectors
+  field_planes:
+    - name: exit-fields
+      z: 2.5
+      rhythm: 0.002
+      buffer_samples: 2
+      compression: 0
+  particle_planes:
+    - name: exit-particles
+      z: 2.5
+      buffer_records: 4096
+      compression: 0
+
 stop:
   mode: after-last-element
 

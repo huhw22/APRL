@@ -12,10 +12,11 @@ with those fields while laboratory seed fields and magnetic devices are
 converted through an explicit Lorentz boost. A/phi is not part of the
 evolution state.
 
-The main reusable result is a compact, laboratory-frame particle history. It
-is intended to retain enough information for radiation reconstruction and
-other analysis on a separate, less expensive machine, rather than forcing a
-large multidimensional field dump during every supercomputer run.
+The main reusable result is a compact, laboratory-frame particle history.
+Optional fixed laboratory field and particle detector planes provide focused
+measurements without forcing a large multidimensional field dump during every
+supercomputer run.  The outputs are intended for radiation reconstruction and
+other analysis on a separate, less expensive machine.
 
 ## Intended applications
 
@@ -26,9 +27,10 @@ large multidimensional field dump during every supercomputer run.
 
 Runs can end either after all still-valid particles pass the final element's
 finite interaction region, or when the laboratory boost-reference centre
-reaches a configured downstream z coordinate. Future laboratory field and
-particle detector planes are reserved as beamline elements in this same
-ordering model.
+reaches a configured downstream z coordinate. Laboratory field and particle
+detector planes are zero-length elements in this same ordering model. Only
+MPI rank zero writes their HDF5 files; disabling detectors constructs no
+detector object and enters no detector communication.
 
 The implementation is still a development solver. CPML, a Gauss-consistent
 initial particle self-field, and particle subcycling remain planned work, so
@@ -39,5 +41,6 @@ production radiation results require further validation.
 - [Build, conversion, and execution](docs/BUILD_AND_RUN.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
 - [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)
+- [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [HDF5 input example](config/example.yaml)
 - [Generated Gaussian test example](config/generated_gaussian.yaml)
