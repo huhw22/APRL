@@ -32,6 +32,11 @@ detector planes are zero-length elements in this same ordering model. Only
 MPI rank zero writes their HDF5 files; disabling detectors constructs no
 detector object and enters no detector communication.
 
+The runtime policy is selected independently of outputs: `interactive` is the
+small-server test path with coordinated clean signal stopping, while
+`throughput` removes signal polling and periodic durability flushes for
+scheduled supercomputer runs.
+
 The implementation is still a development solver. CPML, a Gauss-consistent
 initial particle self-field, and particle subcycling remain planned work, so
 production radiation results require further validation.

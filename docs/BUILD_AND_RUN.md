@@ -52,8 +52,10 @@ mpirun -n 4 ./build/simulator config/example.yaml
 ```
 
 Use `config/generated_gaussian.yaml` for the file-free test input. For a local
-debug run choose trajectory `mode: interactive`; for an uninterrupted batch
-run choose `mode: throughput`.
+debug run choose global `runtime.mode: interactive`; for an uninterrupted
+batch run choose `runtime.mode: throughput`. The choice is global, so local
+signal stopping still works when trajectory output is disabled and only a
+detector plane is active.
 
 The production example also enables one laboratory field plane and one
 particle plane. Their two HDF5 files appear under

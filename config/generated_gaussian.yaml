@@ -4,6 +4,11 @@ units:
   length: micrometer
   time: picosecond
 
+# Small-server test path: Ctrl-C/SIGTERM closes readable partial outputs.
+runtime:
+  mode: interactive
+  stop_check_interval_steps: 16
+
 mesh:
   lengths: [40.0, 40.0, 12.0]
   resolution: [1.0, 1.0, 0.2]
@@ -47,7 +52,6 @@ trajectory:
   directory: output/generated-gaussian
   basename: particles
   rhythm: 0.002
-  mode: interactive
   buffer_records: 64
   flush_every_samples: 1
   compression: 0

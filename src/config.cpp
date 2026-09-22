@@ -181,6 +181,17 @@ namespace fel
         "beam input type must be hdf5 or generated-gaussian");
     }
 
+    RuntimeMode runtimeMode(const YAML::Node& node)
+    {
+      const std::string value = lower(node.as<std::string>());
+      if (value == "interactive" || value == "local-test")
+        return RuntimeMode::Interactive;
+      if (value == "throughput" || value == "hpc")
+        return RuntimeMode::Throughput;
+      throw configError(node,
+        "runtime mode must be interactive or throughput");
+    }
+
     bool validDetectorName(const std::string& name)
     {
       if (name.empty()) return false;
@@ -224,10 +235,18 @@ namespace fel
     : mode(StopMode::AfterLastElement), referenceZ(0.0)
   {}
 
+  RuntimeConfig::RuntimeConfig()
+    : mode(RuntimeMode::Throughput), stopCheckIntervalSteps(16)
+  {}
+
+  bool RuntimeConfig::interactive() const
+  {
+    return mode == RuntimeMode::Interactive;
+  }
+
   TrajectoryConfig::TrajectoryConfig()
     : enabled(false), directory("./"), basename("trajectory"), rhythm(0.0),
-      interactive(true), bufferRecords(16384), flushEverySamples(8),
-      compression(0)
+      bufferRecords(16384), flushEverySamples(8), compression(0)
   {}
 
   FieldDetectorPlaneConfig::FieldDetectorPlaneConfig()
@@ -267,6 +286,20 @@ namespace fel
       {
         result.inputUnits.length = lengthScale(required(units, "length"));
         result.inputUnits.time = timeScale(required(units, "time"));
+      }
+
+    const YAML::Node runtime = root["runtime"];
+    bool runtimeModeExplicit = false;
+    if (runtime)
+      {
+        if (!runtime.IsMap())
+          throw configError(runtime, "runtime must be a map");
+        result.runtime.mode = runtimeMode(required(runtime, "mode"));
+        runtimeModeExplicit = true;
+        if (runtime["stop_check_interval_steps"])
+          result.runtime.stopCheckIntervalSteps = positiveSize(
+            runtime["stop_check_interval_steps"],
+            "runtime stop_check_interval_steps");
       }
 
     const YAML::Node mesh = required(root, "mesh");
@@ -598,12 +631,11 @@ namespace fel
             "trajectory rhythm") * result.inputUnits.time;
         if (trajectory["mode"])
           {
-            const std::string mode = lower(
-              trajectory["mode"].as<std::string>());
-            if (mode == "interactive") result.trajectory.interactive = true;
-            else if (mode == "throughput") result.trajectory.interactive = false;
-            else throw configError(trajectory["mode"],
-              "trajectory mode must be interactive or throughput");
+            const RuntimeMode legacyMode = runtimeMode(trajectory["mode"]);
+            if (runtimeModeExplicit && legacyMode != result.runtime.mode)
+              throw configError(trajectory["mode"],
+                "trajectory.mode conflicts with global runtime.mode");
+            if (!runtimeModeExplicit) result.runtime.mode = legacyMode;
           }
         if (trajectory["buffer_records"])
           result.trajectory.bufferRecords = positiveSize(
@@ -648,6 +680,10 @@ namespace fel
         "enabled trajectory output requires positive rhythm");
     if (result.trajectory.compression > 9)
       throw configError(trajectory, "trajectory compression must be in [0,9]");
+    if (result.runtime.interactive() && result.trajectory.enabled &&
+        result.trajectory.flushEverySamples == 0)
+      throw configError(trajectory,
+        "interactive trajectory flush_every_samples must be positive");
     return result;
   }
 }

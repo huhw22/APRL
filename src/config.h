@@ -99,13 +99,30 @@ namespace fel
     StopConfig();
   };
 
+  enum class RuntimeMode
+  {
+    Interactive,
+    Throughput
+  };
+
+  /* Runtime policy is global rather than belonging to one output.  This lets
+   * a local field-only or detector-only test stop cleanly while the HPC path
+   * avoids signal polling and durability flushes altogether. */
+  struct RuntimeConfig
+  {
+    RuntimeMode mode;
+    std::size_t stopCheckIntervalSteps;
+
+    RuntimeConfig();
+    bool interactive() const;
+  };
+
   struct TrajectoryConfig
   {
     bool enabled;
     std::string directory;
     std::string basename;
     Double rhythm;
-    bool interactive;
     std::size_t bufferRecords;
     unsigned int flushEverySamples;
     unsigned int compression;
@@ -164,6 +181,7 @@ namespace fel
     std::vector<WaveConfig> waves;
     std::vector<SIMagneticElement> magnets;
     std::vector<BeamlineElementExtent> beamlineElements;
+    RuntimeConfig runtime;
     StopConfig stop;
     TrajectoryConfig trajectory;
     DetectorConfig detectors;

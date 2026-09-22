@@ -190,7 +190,9 @@ namespace fel
 
     while (timeBoxSI_ < totalTimeBoxSI_)
       {
-        if ((step_ % 16 == 0) && synchronizedStopRequested()) break;
+        if ((step_ % config_.runtime.stopCheckIntervalSteps == 0) &&
+            synchronizedStopRequested())
+          break;
 
         fields_->clearCurrent();
         fields_->advanceMagnetic();
@@ -264,6 +266,9 @@ namespace fel
     initializeDetectorOutput();
     if (rank_ == 0)
       {
+        logRoot(communicator_, config_.runtime.interactive() ?
+          "Runtime strategy: interactive local-test mode; SIGINT/SIGTERM stops at a complete field step." :
+          "Runtime strategy: HPC throughput mode; no signal polling or periodic durability flushes.");
         logRoot(communicator_,
           "Direct SI E/B simulation active; no A/phi state is allocated.");
         logRoot(communicator_,
@@ -440,7 +445,7 @@ namespace fel
              << std::setw(5) << rank_ << ".h5";
     trajectoryWriter_.open(filename.str(), rank_, size_,
       config_.trajectory.bufferRecords, config_.trajectory.compression,
-      config_.trajectory.interactive);
+      config_.runtime.interactive());
     nextTrajectorySampleTime_ = 0.0;
     trajectorySamplesSinceFlush_ = 0;
   }
@@ -487,7 +492,7 @@ namespace fel
         record.weight = particle.weight;
         trajectoryWriter_.append(record);
       }
-    if (config_.trajectory.interactive)
+    if (config_.runtime.interactive())
       {
         ++trajectorySamplesSinceFlush_;
         if (trajectorySamplesSinceFlush_ >=
@@ -754,8 +759,7 @@ namespace fel
 
   bool Simulation::synchronizedStopRequested()
   {
-    if (!config_.trajectory.enabled || !config_.trajectory.interactive)
-      return false;
+    if (!config_.runtime.interactive()) return false;
     int local = RuntimeControl::stopRequested() ? 1 : 0;
     int global = 0;
     MPI_Allreduce(&local, &global, 1, MPI_INT, MPI_MAX, communicator_);

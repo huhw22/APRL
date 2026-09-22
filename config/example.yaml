@@ -4,6 +4,10 @@ units:
   length: micrometer
   time: picosecond
 
+# Supercomputer path: no signal polling and no periodic durability flushes.
+runtime:
+  mode: throughput
+
 mesh:
   lengths: [40.0, 40.0, 12.0]
   resolution: [1.0, 1.0, 0.2]
@@ -59,7 +63,6 @@ trajectory:
   directory: output/example
   basename: particles
   rhythm: 0.002
-  mode: throughput
   buffer_records: 64
   flush_every_samples: 1
   compression: 0

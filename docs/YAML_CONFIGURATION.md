@@ -152,6 +152,44 @@ and exit. `fringe_relative_cutoff` defines the raw Gaussian value used to place
 the compact edge and must lie in `(0,1)`. With `gaussian_fringe: false`, the
 interaction and physical ranges coincide.
 
+## Runtime strategy
+
+The runtime strategy is global and independent of trajectory or detector
+selection. Use the small-server test path when a run must be stoppable at any
+time:
+
+```yaml
+runtime:
+  mode: interactive
+  stop_check_interval_steps: 16
+```
+
+`interactive` installs minimal SIGINT/SIGTERM handlers. Every configured
+number of completed field steps, ranks coordinate one stop flag. A requested
+stop never interrupts a Maxwell or particle update: the program leaves the
+loop at a complete step, commits and closes every enabled trajectory and
+detector file, and marks the files incomplete but readable. Interactive
+trajectory output also makes committed prefixes durable every
+`flush_every_samples`. This remains available with trajectory output disabled.
+
+For scheduled supercomputer production use:
+
+```yaml
+runtime:
+  mode: throughput
+```
+
+`throughput` is the default. It installs no signal handlers, performs no
+stop-signal MPI polling, and disables periodic trajectory durability flushes;
+normal physical-stop shutdown still closes every output. This avoids the
+testing path's synchronization and filesystem costs. `local-test` and `hpc`
+are accepted aliases for `interactive` and `throughput`, respectively.
+
+For compatibility with input cards from the preceding commits,
+`trajectory.mode` is still accepted as a global runtime-mode alias when
+`runtime.mode` is absent. New cards should use `runtime.mode`; specifying both
+with different values is an error.
+
 ## Stop strategy
 
 Exactly one physical stop strategy is selected in addition to `mesh.duration`,
@@ -248,14 +286,13 @@ trajectory:
   directory: output/example
   basename: particles
   rhythm: 0.002
-  mode: throughput
   buffer_records: 64
   flush_every_samples: 1
   compression: 0
 ```
 
-Each MPI rank writes one HDF5 file. `rhythm` uses the YAML time unit.
-`interactive` mode periodically commits a readable prefix and coordinates
-SIGINT/SIGTERM at a complete field step. `throughput` avoids those durability
-flushes for scheduled HPC runs. `compression` is 0-9; zero minimizes CPU cost.
-When `enabled` is false, `rhythm` may be omitted.
+Each MPI rank writes one HDF5 file. `rhythm` uses the YAML time unit. In global
+interactive runtime mode, `flush_every_samples` periodically commits a
+readable prefix. Global throughput mode buffers normally until a full batch or
+clean close. `compression` is 0-9; zero minimizes CPU cost. When `enabled` is
+false, `rhythm` may be omitted.

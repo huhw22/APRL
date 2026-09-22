@@ -28,7 +28,7 @@ int main(int argc, char** argv)
     {
       const fel::SimulationConfig config =
         fel::YamlConfigLoader::loadFile(argv[1]);
-      if (config.trajectory.enabled && config.trajectory.interactive)
+      if (config.runtime.interactive())
         fel::RuntimeControl::installSignalHandlers();
 
       fel::logRoot(MPI_COMM_WORLD,

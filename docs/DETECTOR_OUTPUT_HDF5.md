@@ -6,8 +6,9 @@ file handle is shared between ranks.
 
 All numeric values use SI and all events are transformed to the laboratory
 frame before writing. A clean configured stop sets `complete` to 1. A clean
-interrupt or maximum-duration exhaustion leaves it 0. Readers must use only
-the prefix named by the corresponding `committed_*` scalar.
+interrupt in interactive runtime mode or maximum-duration exhaustion leaves
+it 0. Readers must use only the prefix named by the corresponding
+`committed_*` scalar.
 
 ## Field plane
 
