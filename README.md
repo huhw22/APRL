@@ -1,71 +1,37 @@
-# Unnamed direct E/B FEL simulator
+# Unnamed boosted-frame FEL program
 
-The program deliberately has no final public name yet. `simulator` is only a
-temporary executable name and may be replaced without defining the project's
-identity.
+The program intentionally has no final public name yet. `simulator` is only a
+temporary executable name.
 
-This is a standalone C++/MPI program for boosted-frame free-electron-laser
-simulation. It advances electric and magnetic fields directly on a Yee lattice
-in SI units, pushes relativistic particles with the Boris method, deposits
-charge-conserving trajectory current, and writes compact laboratory-frame
-particle histories for radiation post-processing.
+## Basic idea
 
-The repository is independent: it has its own Git history and contains no
-A/phi solver, predecessor solver selector, predecessor input parser,
-compatibility output path, or compatibility adapter. The retained physical
-idea is the explicit Lorentz
-boost between the laboratory frame and the moving computational box.
+This is a lightweight C++/MPI code for free-electron-laser and related
+relativistic beam simulations. Electric and magnetic fields are advanced
+directly in SI units on a Yee mesh; particles are advanced self-consistently
+with those fields while laboratory seed fields and magnetic devices are
+converted through an explicit Lorentz boost. A/phi is not part of the
+evolution state.
 
-## Current scope
+The main reusable result is a compact, laboratory-frame particle history. It
+is intended to retain enough information for radiation reconstruction and
+other analysis on a separate, less expensive machine, rather than forcing a
+large multidimensional field dump during every supercomputer run.
 
-- direct SI E/B leapfrog Maxwell update;
-- z-slab MPI field exchange and particle migration;
-- relativistic Boris particle push;
-- charge-conserving current deposition;
-- TF/SF injection for seed, modulation, and other incident waves;
-- prescribed laboratory-frame undulators and dipoles;
-- explicit bunch placement followed by free-drift simultaneity conversion;
-- per-rank buffered HDF5 particle trajectories;
-- interactive recoverable output and low-overhead HPC throughput output.
+## Intended applications
 
-The current boundary is PEC. A Gauss-consistent initial particle self-field,
-particle subcycling, and CPML remain future work. Until those are implemented
-and benchmarked, results should be treated as integration/validation results,
-not final radiation-production data.
+- seeded FEL and laser-modulation studies;
+- boosted-frame electron motion through undulators and other magnetic devices;
+- scalable trajectory production for radiation post-processing;
+- numerical experiments on a direct SI E/B Maxwell-particle formulation.
 
-## Dependencies
+The implementation is still a development solver. CPML, a Gauss-consistent
+initial particle self-field, and particle subcycling remain planned work, so
+production radiation results require further validation.
 
-- CMake 3.16 or newer
-- C++11 compiler
-- MPI
-- HDF5 development files
-- yaml-cpp development files
+## Documentation
 
-On Ubuntu/Debian, the YAML dependency is `libyaml-cpp-dev`.
-
-## Build
-
-```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_CXX_COMPILER=mpic++
-cmake --build build -j
-```
-
-## Run
-
-Single process:
-
-```bash
-./build/simulator config/example.yaml
-```
-
-MPI:
-
-```bash
-mpirun -n 4 ./build/simulator config/example.yaml
-```
-
-The complete input schema and source roles are described in
-`docs/YAML_CONFIGURATION.md`. Generated HDF5 files, build trees, scheduler
-logs, development tests, probes, benchmarks, and helper tools are excluded by
-`.gitignore` and are not part of the source history.
+- [Build, conversion, and execution](docs/BUILD_AND_RUN.md)
+- [YAML input-card specification](docs/YAML_CONFIGURATION.md)
+- [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)
+- [HDF5 input example](config/example.yaml)
+- [Generated Gaussian test example](config/generated_gaussian.yaml)

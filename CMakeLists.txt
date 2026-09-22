@@ -22,6 +22,7 @@ set(DIRECT_EB_SOURCES
   src/eb_mpi.cpp
   src/eb_particles.cpp
   src/eb_sources.cpp
+  src/particle_file.cpp
   src/particle_initializer.cpp
   src/runtime_control.cpp
   src/runtime_util.cpp
@@ -51,4 +52,13 @@ target_compile_options(direct_eb_core PRIVATE
 add_executable(simulator src/main.cpp)
 target_link_libraries(simulator PRIVATE direct_eb_core)
 
-install(TARGETS simulator RUNTIME DESTINATION bin)
+add_executable(particle_text_to_hdf5
+  utilities/particle_text_to_hdf5.cpp
+)
+target_include_directories(particle_text_to_hdf5 PRIVATE ${HDF5_INCLUDE_DIRS})
+target_link_libraries(particle_text_to_hdf5 PRIVATE ${HDF5_LIBRARIES})
+target_compile_options(particle_text_to_hdf5 PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
+)
+
+install(TARGETS simulator particle_text_to_hdf5 RUNTIME DESTINATION bin)

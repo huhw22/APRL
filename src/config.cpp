@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
-#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -49,6 +48,19 @@ namespace fel
       }
       if (!std::isfinite(value))
         throw configError(node, name + " must be finite");
+      return value;
+    }
+
+    std::size_t positiveSize(const YAML::Node& node,
+                             const std::string& name)
+    {
+      std::size_t value = 0;
+      try { value = node.as<std::size_t>(); }
+      catch (const YAML::Exception&) {
+        throw configError(node, name + " must be a positive integer");
+      }
+      if (value == 0)
+        throw configError(node, name + " must be a positive integer");
       return value;
     }
 
@@ -105,6 +117,21 @@ namespace fel
       throw configError(node, "unsupported time unit '" + unit + "'");
     }
 
+    bool absolutePath(const std::string& path)
+    {
+      return !path.empty() && path[0] == '/';
+    }
+
+    std::string resolveRelativeToConfig(const std::string& configFilename,
+                                        const std::string& value)
+    {
+      if (value.empty() || absolutePath(value)) return value;
+      const std::string::size_type separator =
+        configFilename.find_last_of("/\\");
+      if (separator == std::string::npos) return value;
+      return configFilename.substr(0, separator + 1) + value;
+    }
+
     SIWaveProfile waveProfile(const YAML::Node& node)
     {
       const std::string value = lower(node.as<std::string>());
@@ -142,38 +169,14 @@ namespace fel
              SI::elementaryCharge;
     }
 
-    BeamDistributionType beamType(const YAML::Node& node)
+    BeamInputType beamInputType(const YAML::Node& node)
     {
       const std::string value = lower(node.as<std::string>());
-      if (value == "ellipsoid") return BeamDistributionType::Ellipsoid;
-      if (value == "file") return BeamDistributionType::File;
-      if (value == "manual") return BeamDistributionType::Manual;
-      if (value == "3d-crystal" || value == "crystal-3d")
-        return BeamDistributionType::Crystal3D;
-      throw configError(node, "unsupported beam distribution type '" + value + "'");
-    }
-
-    std::vector<FieldVector<Double> > positions(
-        const YAML::Node& node, Double scale)
-    {
-      std::vector<FieldVector<Double> > result;
-      if (!node)
-        {
-          result.push_back(FieldVector<Double>(0.0));
-          return result;
-        }
-      if (!node.IsSequence())
-        throw configError(node, "positions must be a sequence");
-      if (node.size() == 3 && node[0].IsScalar())
-        {
-          result.push_back(finiteVector3(node, "position", scale));
-          return result;
-        }
-      for (std::size_t i = 0; i < node.size(); ++i)
-        result.push_back(finiteVector3(node[i], "position", scale));
-      if (result.empty())
-        throw configError(node, "positions cannot be empty");
-      return result;
+      if (value == "hdf5") return BeamInputType::Hdf5;
+      if (value == "generated-gaussian")
+        return BeamInputType::GeneratedGaussian;
+      throw configError(node,
+        "beam input type must be hdf5 or generated-gaussian");
     }
   }
 
@@ -184,23 +187,16 @@ namespace fel
       boostGamma(1.0), particleStepsPerUndulatorPeriod(1024)
   {}
 
-  BeamDistributionConfig::BeamDistributionConfig()
-    : type(BeamDistributionType::Ellipsoid), profile("gaussian"),
-      generator("halton"), randomSeed(1), macroparticles(0), electrons(0.0),
-      gamma(1.0), direction(0.0), positions(), sigmaPosition(0.0),
-      sigmaProperVelocity(0.0),
-      transverseCutoff(std::numeric_limits<Double>::max()),
-      longitudinalCutoff(std::numeric_limits<Double>::max()),
-      file(), latticeCounts(1),
-      latticeConstants(0.0), bunchingFactor(0.0), bunchingPhase(0.0),
-      shotNoise(false)
+  BeamInputConfig::BeamInputConfig()
+    : type(BeamInputType::Hdf5), file(), electrons(0.0), positionOffset(0.0),
+      macroparticles(0), gamma(1.0), direction(0.0), center(0.0),
+      sigmaPosition(0.0), sigmaProperVelocity(0.0), randomSeed(1)
   {
     direction[2] = 1.0;
-    positions.push_back(FieldVector<Double>(0.0));
   }
 
-  BeamPlacementConfig::BeamPlacementConfig()
-    : mode(SIBunchPlacementMode::AbsoluteLab), headDistance(0.0)
+  BeamReferenceConfig::BeamReferenceConfig()
+    : distanceToFirstMagnet(0.0)
   {}
 
   TrajectoryConfig::TrajectoryConfig()
@@ -233,87 +229,75 @@ namespace fel
 
     const YAML::Node mesh = required(root, "mesh");
     result.mesh.lengths = finiteVector3(required(mesh, "lengths"),
-                                        "mesh lengths", result.inputUnits.length);
+      "mesh lengths", result.inputUnits.length);
     result.mesh.resolution = finiteVector3(required(mesh, "resolution"),
-                                           "mesh resolution", result.inputUnits.length);
+      "mesh resolution", result.inputUnits.length);
     result.mesh.center = mesh["center"] ?
       finiteVector3(mesh["center"], "mesh center", result.inputUnits.length) :
       FieldVector<Double>(0.0);
     result.mesh.duration = finiteDouble(required(mesh, "duration"),
-                                        "mesh duration") * result.inputUnits.time;
+      "mesh duration") * result.inputUnits.time;
     result.mesh.boostGamma = finiteDouble(required(mesh, "boost_gamma"),
-                                          "boost gamma");
+      "boost gamma");
     if (mesh["particle_steps_per_undulator_period"])
       result.mesh.particleStepsPerUndulatorPeriod =
         mesh["particle_steps_per_undulator_period"].as<unsigned int>();
 
     const YAML::Node beam = required(root, "beam");
-    const YAML::Node placement = required(beam, "placement");
-    const std::string placementMode = lower(
-      required(placement, "mode").as<std::string>());
-    if (placementMode == "absolute-lab")
-      result.placement.mode = SIBunchPlacementMode::AbsoluteLab;
-    else if (placementMode == "head-to-first-element")
+    const YAML::Node reference = required(beam, "reference");
+    result.reference.distanceToFirstMagnet = finiteDouble(
+      required(reference, "distance_to_first_magnet"),
+      "beam reference distance") * result.inputUnits.length;
+    if (result.reference.distanceToFirstMagnet < 0.0)
+      throw configError(reference["distance_to_first_magnet"],
+        "distance_to_first_magnet cannot be negative");
+
+    const YAML::Node input = required(beam, "input");
+    result.beam.type = beamInputType(required(input, "type"));
+    result.beam.electrons = finiteDouble(required(input, "electrons"),
+                                         "electron count");
+    if (!(result.beam.electrons > 0.0))
+      throw configError(input["electrons"], "electron count must be positive");
+    if (input["position_offset"])
+      result.beam.positionOffset = finiteVector3(input["position_offset"],
+        "beam position offset", result.inputUnits.length);
+
+    if (result.beam.type == BeamInputType::Hdf5)
       {
-        result.placement.mode = SIBunchPlacementMode::HeadToFirstElement;
-        result.placement.headDistance = finiteDouble(
-          required(placement, "distance"), "beam head distance") *
-          result.inputUnits.length;
+        result.beam.file = resolveRelativeToConfig(filename,
+          required(input, "file").as<std::string>());
+        if (result.beam.file.empty())
+          throw configError(input["file"], "particle HDF5 file cannot be empty");
       }
     else
-      throw configError(placement["mode"], "unsupported placement mode");
-
-    const YAML::Node distributions = required(beam, "distributions");
-    if (!distributions.IsSequence() || distributions.size() == 0)
-      throw configError(distributions,
-                        "beam distributions must be a nonempty sequence");
-    for (std::size_t i = 0; i < distributions.size(); ++i)
       {
-        const YAML::Node node = distributions[i];
-        BeamDistributionConfig distribution;
-        distribution.type = beamType(required(node, "type"));
-        distribution.electrons = finiteDouble(required(node, "electrons"),
-                                              "electron count");
-        distribution.macroparticles = required(node, "macroparticles").as<std::size_t>();
-        distribution.gamma = finiteDouble(required(node, "gamma"), "beam gamma");
-        distribution.direction = finiteVector3(required(node, "direction"),
+        result.beam.macroparticles = positiveSize(
+          required(input, "macroparticles"), "macroparticles");
+        result.beam.gamma = finiteDouble(required(input, "gamma"),
+                                         "beam gamma");
+        result.beam.direction = finiteVector3(required(input, "direction"),
                                                "beam direction");
-        distribution.positions = positions(node["positions"],
-                                           result.inputUnits.length);
-        if (node["profile"]) distribution.profile = lower(node["profile"].as<std::string>());
-        if (node["generator"]) distribution.generator = lower(node["generator"].as<std::string>());
-        if (node["random_seed"]) distribution.randomSeed = node["random_seed"].as<unsigned int>();
-        if (node["sigma_position"])
-          distribution.sigmaPosition = finiteVector3(node["sigma_position"],
-            "beam position spread", result.inputUnits.length);
-        if (node["sigma_proper_velocity"])
-          distribution.sigmaProperVelocity = finiteVector3(
-            node["sigma_proper_velocity"], "beam proper-velocity spread");
-        if (node["transverse_cutoff"])
-          distribution.transverseCutoff = finiteDouble(
-            node["transverse_cutoff"], "transverse cutoff") *
-            result.inputUnits.length;
-        if (node["longitudinal_cutoff"])
-          distribution.longitudinalCutoff = finiteDouble(
-            node["longitudinal_cutoff"], "longitudinal cutoff") *
-            result.inputUnits.length;
-        if (node["file"]) distribution.file = node["file"].as<std::string>();
-        if (node["lattice_counts"])
-          distribution.latticeCounts = vector3<unsigned int>(
-            node["lattice_counts"], "lattice counts");
-        if (node["lattice_constants"])
-          distribution.latticeConstants = finiteVector3(
-            node["lattice_constants"], "lattice constants",
-            result.inputUnits.length);
-        if (node["bunching_factor"])
-          distribution.bunchingFactor = finiteDouble(
-            node["bunching_factor"], "bunching factor");
-        if (node["bunching_phase_rad"])
-          distribution.bunchingPhase = finiteDouble(
-            node["bunching_phase_rad"], "bunching phase");
-        if (node["shot_noise"])
-          distribution.shotNoise = node["shot_noise"].as<bool>();
-        result.beam.push_back(distribution);
+        result.beam.center = input["center"] ?
+          finiteVector3(input["center"], "beam center",
+                        result.inputUnits.length) :
+          FieldVector<Double>(0.0);
+        result.beam.sigmaPosition = finiteVector3(
+          required(input, "sigma_position"), "beam position spread",
+          result.inputUnits.length);
+        result.beam.sigmaProperVelocity = finiteVector3(
+          required(input, "sigma_proper_velocity"),
+          "beam proper-velocity spread");
+        if (input["random_seed"])
+          result.beam.randomSeed = input["random_seed"].as<unsigned int>();
+        if (!(result.beam.gamma >= 1.0))
+          throw configError(input["gamma"], "beam gamma must be at least one");
+        if (!(result.beam.direction.norm() > 0.0))
+          throw configError(input["direction"], "beam direction must be nonzero");
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          if (result.beam.sigmaPosition[axis] < 0.0 ||
+              result.beam.sigmaProperVelocity[axis] < 0.0)
+            throw configError(input,
+              "Gaussian standard deviations cannot be negative");
       }
 
     const YAML::Node sources = root["sources"];
@@ -330,7 +314,7 @@ namespace fel
             wave.source.position = finiteVector3(required(node, "position"),
               "wave position", result.inputUnits.length);
             wave.source.direction = finiteVector3(required(node, "direction"),
-                                                  "wave direction");
+                                                   "wave direction");
             wave.source.polarization = finiteVector3(
               required(node, "polarization"), "wave polarization");
             wave.source.wavelength = finiteDouble(
@@ -343,7 +327,8 @@ namespace fel
               {
                 const YAML::Node radius = node["radius"];
                 if (!radius.IsSequence() || radius.size() != 2)
-                  throw configError(radius, "wave radius must contain two values");
+                  throw configError(radius,
+                    "wave radius must contain two values");
                 wave.source.radius[0] = finiteDouble(radius[0], "wave radius") * result.inputUnits.length;
                 wave.source.radius[1] = finiteDouble(radius[1], "wave radius") * result.inputUnits.length;
               }
@@ -351,12 +336,14 @@ namespace fel
               {
                 const YAML::Node order = node["order"];
                 if (!order.IsSequence() || order.size() != 2)
-                  throw configError(order, "wave order must contain two values");
+                  throw configError(order,
+                    "wave order must contain two values");
                 wave.source.order[0] = order[0].as<int>();
                 wave.source.order[1] = order[1].as<int>();
               }
             const YAML::Node envelope = required(node, "envelope");
-            wave.source.envelope.type = envelopeType(required(envelope, "type"));
+            wave.source.envelope.type = envelopeType(
+              required(envelope, "type"));
             wave.source.envelope.centerTime = finiteDouble(
               required(envelope, "center_time"), "envelope center time") *
               result.inputUnits.time;
@@ -367,14 +354,20 @@ namespace fel
               wave.source.envelope.carrierPhase = finiteDouble(
                 envelope["carrier_phase_rad"], "carrier phase");
             if (envelope["rising_cycles"])
-              wave.source.envelope.risingCycles = envelope["rising_cycles"].as<unsigned int>();
+              wave.source.envelope.risingCycles =
+                envelope["rising_cycles"].as<unsigned int>();
             if (envelope["inverse_gaussian_sigma"])
               {
                 const YAML::Node sigma = envelope["inverse_gaussian_sigma"];
                 if (!sigma.IsSequence() || sigma.size() != 2)
-                  throw configError(sigma, "inverse Gaussian sigma must contain two values");
-                wave.source.envelope.inverseGaussianSigma[0] = finiteDouble(sigma[0], "inverse Gaussian sigma") * result.inputUnits.time;
-                wave.source.envelope.inverseGaussianSigma[1] = finiteDouble(sigma[1], "inverse Gaussian sigma") * result.inputUnits.time;
+                  throw configError(sigma,
+                    "inverse Gaussian sigma must contain two values");
+                wave.source.envelope.inverseGaussianSigma[0] =
+                  finiteDouble(sigma[0], "inverse Gaussian sigma") *
+                  result.inputUnits.time;
+                wave.source.envelope.inverseGaussianSigma[1] =
+                  finiteDouble(sigma[1], "inverse Gaussian sigma") *
+                  result.inputUnits.time;
               }
             wave.source.prepare();
             result.waves.push_back(wave);
@@ -389,18 +382,24 @@ namespace fel
         for (std::size_t i = 0; i < magnets.size(); ++i)
           {
             const YAML::Node node = magnets[i];
-            const std::string type = lower(required(node, "type").as<std::string>());
+            const std::string type = lower(
+              required(node, "type").as<std::string>());
             SIMagneticElement magnet;
-            const Double entrance = finiteDouble(required(node, "entrance_z"),
-                                                 "magnet entrance") * result.inputUnits.length;
+            const Double entrance = finiteDouble(
+              required(node, "entrance_z"), "magnet entrance") *
+              result.inputUnits.length;
             const Double angle = node["polarization_angle_rad"] ?
-              finiteDouble(node["polarization_angle_rad"], "magnet polarization angle") : 0.0;
+              finiteDouble(node["polarization_angle_rad"],
+                           "magnet polarization angle") : 0.0;
             if (type == "planar-undulator")
               {
                 magnet = SIMagneticElement::planarUndulatorFromK(
-                  finiteDouble(required(node, "strength_parameter"), "undulator strength"),
-                  finiteDouble(required(node, "period"), "undulator period") * result.inputUnits.length,
-                  entrance, required(node, "periods").as<unsigned int>(), angle);
+                  finiteDouble(required(node, "strength_parameter"),
+                               "undulator strength"),
+                  finiteDouble(required(node, "period"),
+                               "undulator period") * result.inputUnits.length,
+                  entrance, required(node, "periods").as<unsigned int>(),
+                  angle);
                 if (node["gaussian_fringe"])
                   {
                     magnet.gaussianFringe = node["gaussian_fringe"].as<bool>();
@@ -411,14 +410,17 @@ namespace fel
               {
                 magnet.type = SIMagnetType::UniformDipole;
                 magnet.center[2] = entrance;
-                magnet.length = finiteDouble(required(node, "length"), "dipole length") * result.inputUnits.length;
-                magnet.peakMagneticField = finiteDouble(required(node, "field_T"), "dipole field");
+                magnet.length = finiteDouble(required(node, "length"),
+                  "dipole length") * result.inputUnits.length;
+                magnet.peakMagneticField = finiteDouble(
+                  required(node, "field_T"), "dipole field");
                 magnet.polarizationAngle = angle;
                 magnet.gaussianFringe = false;
                 magnet.prepare();
               }
             else
-              throw configError(node["type"], "unsupported magnetic element type");
+              throw configError(node["type"],
+                "unsupported magnetic element type");
             result.magnets.push_back(magnet);
           }
       }
@@ -428,35 +430,48 @@ namespace fel
       {
         result.trajectory.enabled = trajectory["enabled"] ?
           trajectory["enabled"].as<bool>() : true;
-        if (trajectory["directory"]) result.trajectory.directory = trajectory["directory"].as<std::string>();
-        if (trajectory["basename"]) result.trajectory.basename = trajectory["basename"].as<std::string>();
-        result.trajectory.rhythm = finiteDouble(required(trajectory, "rhythm"),
-                                                "trajectory rhythm") * result.inputUnits.time;
+        if (trajectory["directory"])
+          result.trajectory.directory =
+            trajectory["directory"].as<std::string>();
+        if (trajectory["basename"])
+          result.trajectory.basename =
+            trajectory["basename"].as<std::string>();
+        if (trajectory["rhythm"])
+          result.trajectory.rhythm = finiteDouble(trajectory["rhythm"],
+            "trajectory rhythm") * result.inputUnits.time;
         if (trajectory["mode"])
           {
-            const std::string mode = lower(trajectory["mode"].as<std::string>());
+            const std::string mode = lower(
+              trajectory["mode"].as<std::string>());
             if (mode == "interactive") result.trajectory.interactive = true;
             else if (mode == "throughput") result.trajectory.interactive = false;
-            else throw configError(trajectory["mode"], "trajectory mode must be interactive or throughput");
+            else throw configError(trajectory["mode"],
+              "trajectory mode must be interactive or throughput");
           }
         if (trajectory["buffer_records"])
-          result.trajectory.bufferRecords = trajectory["buffer_records"].as<std::size_t>();
+          result.trajectory.bufferRecords = positiveSize(
+            trajectory["buffer_records"], "trajectory buffer_records");
         if (trajectory["flush_every_samples"])
-          result.trajectory.flushEverySamples = trajectory["flush_every_samples"].as<unsigned int>();
+          result.trajectory.flushEverySamples =
+            trajectory["flush_every_samples"].as<unsigned int>();
         if (trajectory["compression"])
-          result.trajectory.compression = trajectory["compression"].as<unsigned int>();
+          result.trajectory.compression =
+            trajectory["compression"].as<unsigned int>();
       }
 
     if (!(result.mesh.boostGamma >= 1.0))
-      throw configError(mesh["boost_gamma"], "boost_gamma must be at least one");
+      throw configError(mesh["boost_gamma"],
+        "boost_gamma must be at least one");
     if (!(result.mesh.duration > 0.0))
       throw configError(mesh["duration"], "duration must be positive");
-    if (result.placement.mode == SIBunchPlacementMode::HeadToFirstElement &&
-        result.magnets.empty())
-      throw configError(placement,
-        "head-to-first-element placement requires a magnetic element");
+    if (result.magnets.empty())
+      throw configError(sources,
+        "beam reference placement requires at least one magnetic element");
     if (result.trajectory.enabled && !(result.trajectory.rhythm > 0.0))
-      throw configError(trajectory, "enabled trajectory output requires positive rhythm");
+      throw configError(trajectory,
+        "enabled trajectory output requires positive rhythm");
+    if (result.trajectory.compression > 9)
+      throw configError(trajectory, "trajectory compression must be in [0,9]");
     return result;
   }
 }

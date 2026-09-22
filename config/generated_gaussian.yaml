@@ -1,5 +1,5 @@
-# HDF5 production-input example. Lengths and times below use the global units;
-# the particle HDF5 file itself always stores positions in SI metres.
+# Deterministic Gaussian beam for smoke tests; do not use it as a production
+# beam-preparation replacement.
 units:
   length: micrometer
   time: picosecond
@@ -14,13 +14,17 @@ mesh:
 
 beam:
   reference:
-    # Lab-frame distance from particle relative z=0 to the first magnet entry.
     distance_to_first_magnet: 0.45
   input:
-    type: hdf5
-    file: ../examples/particles/example_particles.h5
-    electrons: 4.0
-    position_offset: [0.0, 0.0, 0.0]
+    type: generated-gaussian
+    electrons: 8.0
+    macroparticles: 8
+    gamma: 4.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.025]
+    sigma_position: [0.02, 0.02, 0.01]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 17
 
 sources:
   incident_waves: []
@@ -35,10 +39,10 @@ sources:
 
 trajectory:
   enabled: true
-  directory: output/example
+  directory: output/generated-gaussian
   basename: particles
   rhythm: 0.002
-  mode: throughput
+  mode: interactive
   buffer_records: 64
   flush_every_samples: 1
   compression: 0

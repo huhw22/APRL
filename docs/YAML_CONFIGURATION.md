@@ -1,18 +1,23 @@
-# YAML configuration
+# YAML input-card specification
 
-The program accepts one YAML document. Underscore-separated keys are used
-consistently; the parser reports missing keys and YAML line numbers instead of
-silently inventing physical parameters.
+The simulator accepts one ordinary YAML document. Unknown physical defaults
+are deliberately avoided: required quantities are reported with their YAML
+line when missing or invalid.
 
 ## Units
 
-`units.length` accepts `m`, `mm`, `um`/`micrometer`, and `nm`.
-`units.time` accepts `s`, `ms`, `us`, `ns`, `ps`, `fs`, and `as`. All numeric
-length and time values are converted once at input. The simulation core stores
-only metres and seconds. Magnetic field values marked `_T` are tesla and
-electric field values marked `_V_per_m` are V/m.
+```yaml
+units:
+  length: micrometer
+  time: picosecond
+```
 
-## Mesh and boosted frame
+Length accepts `m`, `mm`, `um`/`micrometer`, and `nm`. Time accepts `s`, `ms`,
+`us`, `ns`, `ps`, `fs`, and `as`. These units apply to numeric length and time
+values in the YAML document. The core converts them once and then uses SI.
+Particle HDF5 positions are always metres and do not inherit the YAML unit.
+
+## Mesh and boost
 
 ```yaml
 mesh:
@@ -24,34 +29,74 @@ mesh:
   particle_steps_per_undulator_period: 32
 ```
 
-The mesh values describe the computational box directly. There is no hidden
-longitudinal rescaling. Cell counts must be integral, every axis needs at least
-three cells, and z needs at least one cell per MPI rank. `duration` is boosted-
-frame time. The particle-steps setting is retained in the configuration but is
-not enforced until particle subcycling is implemented.
+`lengths`, `resolution`, and `center` describe the boosted computational box.
+Each length must be an integral number of cells, every dimension needs at
+least three cells, and z needs at least one cell per MPI rank. `duration` is
+boosted-frame time. The particle-step setting is reserved for the future
+subcycling implementation.
 
-## Beam
+## Beam reference and input
 
-Placement is mandatory. `absolute-lab` preserves input z coordinates.
-`head-to-first-element` translates the complete MPI-distributed bunch so that
-the global maximum particle z is exactly `distance` before the first magnetic
-element entrance.
+Every particle position is relative to a laboratory-frame beam reference:
 
-The `distributions` list supports `ellipsoid`, `file`, `manual`, and
-`3d-crystal`. Every distribution specifies electron count, macro-particle
-count, gamma, direction, and one or more laboratory-frame positions. Proper
-velocity is stored as `gamma*v/c`. File input contains six whitespace-separated
-columns per record: x, y, z, ux, uy, uz; positions use `units.length`.
+```yaml
+beam:
+  reference:
+    distance_to_first_magnet: 0.45
+```
+
+If the first magnetic entrance is at `z_entry`, particle relative z=0 is
+placed at `z_entry - distance_to_first_magnet`. Positive particle z points
+towards/into the first magnet. The simulator then performs the free-drift
+Lorentz simultaneity transform to boosted time zero and checks the transformed
+bunch front in the laboratory frame. If it reaches or passes the entrance,
+the run stops before field allocation and prints a recommended minimum
+distance. The recommendation includes one boosted longitudinal cell expressed
+in laboratory length as a safety margin.
+
+Production input uses HDF5:
+
+```yaml
+  input:
+    type: hdf5
+    file: ../examples/particles/example_particles.h5
+    electrons: 4.0
+    position_offset: [0.0, 0.0, 0.0]
+```
+
+Relative `file` paths are resolved from the YAML file directory. `electrons`
+is the total physical electron count represented by all records; equal macro
+charge and mass are assigned to each. `position_offset` is optional, uses the
+YAML length unit, and is added before reference placement. The binary schema is
+defined in [PARTICLE_INPUT_HDF5.md](PARTICLE_INPUT_HDF5.md).
+
+For small integration tests only, a deterministic Gaussian can be generated
+without an input file:
+
+```yaml
+  input:
+    type: generated-gaussian
+    electrons: 8.0
+    macroparticles: 8
+    gamma: 4.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.025]
+    sigma_position: [0.02, 0.02, 0.01]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 17
+```
+
+`proper_velocity` means the dimensionless vector gamma*v/c. Generation is
+counter-based and therefore gives the same global particles for different MPI
+rank counts. This path is intentionally limited to one uncorrelated Gaussian
+and is not a beam-preparation model.
 
 ## Sources
 
-`incident_waves` are injected through a closed TF/SF surface and subsequently
-advanced by Maxwell's equations. Profiles are `plane`, `truncated-plane`,
-`gaussian`, `super-gaussian`, and their `standing-*` forms. An amplitude can be
-given either as `normalized_amplitude` or as
-`peak_electric_field_V_per_m`.
-
-Example wave:
+Incident waves are injected through a closed TF/SF surface and then advanced
+by Maxwell's equations. Available profiles are `plane`, `truncated-plane`,
+`gaussian`, `super-gaussian`, and their `standing-*` forms. Amplitude is either
+`peak_electric_field_V_per_m` or `normalized_amplitude`.
 
 ```yaml
 sources:
@@ -71,15 +116,44 @@ sources:
         carrier_phase_rad: 0.0
 ```
 
-`magnetic_elements` are laboratory-frame device fields used only by the
-particle pusher. Supported types are `planar-undulator` and `uniform-dipole`.
-This keeps incident Maxwell fields and externally maintained device fields
-non-overlapping.
+Envelope types are `neumann`, `gaussian`, `secant`, `flat-top`, and
+`inverse-gaussian`. `rising_cycles` and two-value `inverse_gaussian_sigma` are
+available where relevant.
 
-## Trajectories
+Magnetic devices remain prescribed laboratory-frame fields, transformed only
+at particle events; they are not duplicated on the Maxwell grid. At least one
+element is required because beam placement is defined from the first entrance.
 
-Each MPI rank owns one HDF5 file. `interactive` mode periodically commits a
-readable prefix and coordinates SIGINT/SIGTERM at a complete field step.
-`throughput` avoids that synchronization and is intended for scheduled HPC
-runs. Stored records are in the laboratory frame and retain stable particle
-IDs, source IDs, event time, position, proper velocity, charge, and weight.
+```yaml
+  magnetic_elements:
+    - type: planar-undulator
+      strength_parameter: 0.1
+      period: 10.0
+      periods: 1
+      entrance_z: 0.0
+      polarization_angle_rad: 0.0
+      gaussian_fringe: true
+```
+
+`uniform-dipole` instead uses `length` and `field_T`. The first entrance is the
+minimum `entrance_z` across all elements, independent of YAML ordering.
+
+## Trajectory output
+
+```yaml
+trajectory:
+  enabled: true
+  directory: output/example
+  basename: particles
+  rhythm: 0.002
+  mode: throughput
+  buffer_records: 64
+  flush_every_samples: 1
+  compression: 0
+```
+
+Each MPI rank writes one HDF5 file. `rhythm` uses the YAML time unit.
+`interactive` mode periodically commits a readable prefix and coordinates
+SIGINT/SIGTERM at a complete field step. `throughput` avoids those durability
+flushes for scheduled HPC runs. `compression` is 0-9; zero minimizes CPU cost.
+When `enabled` is false, `rhythm` may be omitted.

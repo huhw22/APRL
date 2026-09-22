@@ -15,6 +15,7 @@ output/
 results/
 *.h5
 *.hdf5
+!examples/particles/*.h5
 *.log
 slurm-*.out
 

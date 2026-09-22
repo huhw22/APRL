@@ -10,27 +10,22 @@
 
 namespace fel
 {
-  enum class SIBunchPlacementMode
-  {
-    AbsoluteLab,
-    HeadToFirstElement
-  };
-
   struct SIBunchPlacement
   {
-    SIBunchPlacementMode mode;
-    Double firstElementEntranceLab; /* m */
-    Double headDistanceLab;         /* m */
+    Double firstElementEntranceLab;    /* m */
+    Double referenceDistanceLab;       /* m */
+    Double recommendationMarginLab;    /* m */
 
     SIBunchPlacement();
   };
 
   struct SIBunchPlacementReport
   {
-    Double headBeforeLab;
+    Double relativeHeadLab;
+    Double referencePositionLab;
     Double headAfterLab;
-    Double longitudinalTranslation;
     Double actualHeadDistance;
+    Double recommendedReferenceDistance;
     unsigned long long particles;
 
     SIBunchPlacementReport();
@@ -45,18 +40,20 @@ namespace fel
     SIBunchBoostReport();
   };
 
-  /* Converts an explicitly defined laboratory snapshot into the common
-   * t_box=0 hypersurface. Particles are freely drifted from the lab snapshot
-   * to their individual Lorentz-simultaneous events before coordinates and
-   * proper velocities are transformed. */
   class SIBunchPreprocessor
   {
   public:
-    static SIBunchPlacementReport placeLabSnapshot(
+    /* Input z coordinates are relative to a user-defined laboratory reference
+     * point. referenceDistanceLab places that point upstream of the first
+     * magnetic-element entrance. */
+    static SIBunchPlacementReport placeRelativeLabSnapshot(
         std::vector<RelativisticParticleSI>& particles,
         const SIBunchPlacement& placement,
         MPI_Comm communicator);
 
+    /* Free-drift every particle from the common lab snapshot to its event on
+     * the common t_box=0 simultaneity plane, then transform coordinates and
+     * proper velocity. */
     static SIBunchBoostReport boostLabSnapshotToBoxTimeZero(
         std::vector<RelativisticParticleSI>& particles,
         const BoostFrameTransform& frame,

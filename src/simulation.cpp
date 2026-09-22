@@ -271,11 +271,15 @@ namespace fel
 
     SIBunchPlacement placement;
     placement.firstElementEntranceLab = firstEntrance;
-    placement.mode = config_.placement.mode;
-    placement.headDistanceLab = config_.placement.headDistance;
+    placement.referenceDistanceLab =
+      config_.reference.distanceToFirstMagnet;
+    /* A box-frame z cell spans gamma*dz at fixed box time in the lab.  Keep
+     * that as the minimum recommended clearance beyond the relative head. */
+    placement.recommendationMarginLab =
+      config_.mesh.boostGamma * globalGeometry_.dz;
 
     const SIBunchPlacementReport placementReport =
-      SIBunchPreprocessor::placeLabSnapshot(
+      SIBunchPreprocessor::placeRelativeLabSnapshot(
         particles_, placement, communicator_);
     const SIBunchBoostReport localBoostReport =
       SIBunchPreprocessor::boostLabSnapshotToBoxTimeZero(
@@ -294,6 +298,37 @@ namespace fel
     MPI_Allreduce(&localBoostReport.maximumAbsoluteDriftTime,
                   &boostReport.maximumAbsoluteDriftTime,
                   1, MPI_DOUBLE, MPI_MAX, communicator_);
+
+    Double localEventHead = -std::numeric_limits<Double>::infinity();
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      {
+        Double eventTimeLab = 0.0;
+        Double eventZLab = 0.0;
+        frame_.boxToLab(0.0, particles_[index].position[2],
+                        eventTimeLab, eventZLab);
+        localEventHead = std::max(localEventHead, eventZLab);
+      }
+    Double eventHead = 0.0;
+    MPI_Allreduce(&localEventHead, &eventHead, 1, MPI_DOUBLE, MPI_MAX,
+                  communicator_);
+    const Double entranceTolerance = 64.0 *
+      std::numeric_limits<Double>::epsilon() *
+      std::max(1.0, std::max(std::abs(firstEntrance),
+                             std::abs(eventHead)));
+    if (eventHead >= firstEntrance - entranceTolerance)
+      {
+        std::ostringstream message;
+        message << "Initial Lorentz transform places the bunch front at or "
+          "inside the first magnetic element: entrance_z=" << firstEntrance
+          << " m, transformed_front_z=" << eventHead
+          << " m. Increase beam.reference.distance_to_first_magnet to at "
+          "least " << placementReport.recommendedReferenceDistance
+          << " m ("
+          << placementReport.recommendedReferenceDistance /
+               config_.inputUnits.length
+          << " in the configured length unit).";
+        throw std::runtime_error(message.str());
+      }
     redistributeParticles();
     validateParticlesInsideGlobalBox();
 
@@ -301,10 +336,13 @@ namespace fel
       {
         std::ostringstream placementMessage;
         placementMessage << "E/B bunch placement: particles="
-          << placementReport.particles << ", z translation [m]="
-          << placementReport.longitudinalTranslation
-          << ", verified head gap [m]="
-          << placementReport.actualHeadDistance;
+          << placementReport.particles << ", reference z [m]="
+          << placementReport.referencePositionLab
+          << ", relative head z [m]=" << placementReport.relativeHeadLab
+          << ", initial head gap [m]="
+          << placementReport.actualHeadDistance
+          << ", transformed head gap [m]="
+          << firstEntrance - eventHead;
         logRoot(communicator_, placementMessage.str());
         std::ostringstream boostMessage;
         boostMessage << "Free-drift Lorentz events [s]: "

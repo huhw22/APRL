@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-#include "eb_bunch.h"
 #include "eb_sources.h"
 #include "fieldvector.h"
 
@@ -31,45 +30,38 @@ namespace fel
     MeshConfig();
   };
 
-  enum class BeamDistributionType
+  enum class BeamInputType
   {
-    Ellipsoid,
-    File,
-    Manual,
-    Crystal3D
+    Hdf5,
+    GeneratedGaussian
   };
 
-  struct BeamDistributionConfig
+  struct BeamInputConfig
   {
-    BeamDistributionType type;
-    std::string profile;
-    std::string generator;
-    unsigned int randomSeed;
-    std::size_t macroparticles;
+    BeamInputType type;
+    std::string file;
     Double electrons;
+    FieldVector<Double> positionOffset;
+
+    /* generated-gaussian is intentionally a small, deterministic test path. */
+    std::size_t macroparticles;
     Double gamma;
     FieldVector<Double> direction;
-    std::vector<FieldVector<Double> > positions;
+    FieldVector<Double> center;
     FieldVector<Double> sigmaPosition;
     FieldVector<Double> sigmaProperVelocity;
-    Double transverseCutoff;
-    Double longitudinalCutoff;
-    std::string file;
-    FieldVector<unsigned int> latticeCounts;
-    FieldVector<Double> latticeConstants;
-    Double bunchingFactor;
-    Double bunchingPhase;
-    bool shotNoise;
+    unsigned int randomSeed;
 
-    BeamDistributionConfig();
+    BeamInputConfig();
   };
 
-  struct BeamPlacementConfig
+  struct BeamReferenceConfig
   {
-    SIBunchPlacementMode mode;
-    Double headDistance;
+    /* Distance from the particle file's relative z=0 reference to the first
+     * magnetic-element entrance, measured in the laboratory frame. */
+    Double distanceToFirstMagnet;
 
-    BeamPlacementConfig();
+    BeamReferenceConfig();
   };
 
   struct TrajectoryConfig
@@ -98,8 +90,8 @@ namespace fel
   {
     UnitSystem inputUnits;
     MeshConfig mesh;
-    BeamPlacementConfig placement;
-    std::vector<BeamDistributionConfig> beam;
+    BeamReferenceConfig reference;
+    BeamInputConfig beam;
     std::vector<WaveConfig> waves;
     std::vector<SIMagneticElement> magnets;
     TrajectoryConfig trajectory;

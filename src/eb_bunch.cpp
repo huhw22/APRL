@@ -8,14 +8,14 @@
 namespace fel
 {
   SIBunchPlacement::SIBunchPlacement()
-    : mode(SIBunchPlacementMode::AbsoluteLab),
-      firstElementEntranceLab(std::numeric_limits<Double>::quiet_NaN()),
-      headDistanceLab(0.0)
+    : firstElementEntranceLab(std::numeric_limits<Double>::quiet_NaN()),
+      referenceDistanceLab(std::numeric_limits<Double>::quiet_NaN()),
+      recommendationMarginLab(0.0)
   {}
 
   SIBunchPlacementReport::SIBunchPlacementReport()
-    : headBeforeLab(0.0), headAfterLab(0.0),
-      longitudinalTranslation(0.0), actualHeadDistance(0.0),
+    : relativeHeadLab(0.0), referencePositionLab(0.0), headAfterLab(0.0),
+      actualHeadDistance(0.0), recommendedReferenceDistance(0.0),
       particles(0)
   {}
 
@@ -24,18 +24,19 @@ namespace fel
       maximumAbsoluteDriftTime(0.0)
   {}
 
-  SIBunchPlacementReport SIBunchPreprocessor::placeLabSnapshot(
+  SIBunchPlacementReport SIBunchPreprocessor::placeRelativeLabSnapshot(
       std::vector<RelativisticParticleSI>& particles,
       const SIBunchPlacement& placement, MPI_Comm communicator)
   {
     if (communicator == MPI_COMM_NULL)
       throw std::invalid_argument("Bunch placement communicator is null");
-    if (placement.mode == SIBunchPlacementMode::HeadToFirstElement &&
-        (!std::isfinite(placement.firstElementEntranceLab) ||
-         !std::isfinite(placement.headDistanceLab) ||
-         placement.headDistanceLab < 0.0))
+    if (!std::isfinite(placement.firstElementEntranceLab) ||
+        !std::isfinite(placement.referenceDistanceLab) ||
+        placement.referenceDistanceLab < 0.0 ||
+        !std::isfinite(placement.recommendationMarginLab) ||
+        placement.recommendationMarginLab < 0.0)
       throw std::invalid_argument(
-        "Head-to-element placement requires a finite entrance and nonnegative distance");
+        "Relative bunch placement requires a finite entrance and nonnegative distances");
 
     const unsigned long long localCount =
       static_cast<unsigned long long>(particles.size());
@@ -46,33 +47,29 @@ namespace fel
       throw std::invalid_argument("Cannot place an empty particle bunch");
 
     Double localHead = -std::numeric_limits<Double>::infinity();
-    for (std::size_t particle = 0; particle < particles.size(); ++particle)
+    for (std::size_t i = 0; i < particles.size(); ++i)
       {
-        const Double z = particles[particle].position[2];
-        if (!std::isfinite(z))
+        if (!std::isfinite(particles[i].position[2]))
           throw std::invalid_argument("Bunch position must be finite");
-        localHead = std::max(localHead, z);
+        localHead = std::max(localHead, particles[i].position[2]);
       }
-    Double globalHead = 0.0;
-    MPI_Allreduce(&localHead, &globalHead, 1, MPI_DOUBLE, MPI_MAX,
+    Double globalRelativeHead = 0.0;
+    MPI_Allreduce(&localHead, &globalRelativeHead, 1, MPI_DOUBLE, MPI_MAX,
                   communicator);
 
     SIBunchPlacementReport report;
-    report.headBeforeLab = globalHead;
     report.particles = globalCount;
-    if (placement.mode == SIBunchPlacementMode::HeadToFirstElement)
-      report.longitudinalTranslation =
-        placement.firstElementEntranceLab - placement.headDistanceLab -
-        globalHead;
+    report.relativeHeadLab = globalRelativeHead;
+    report.referencePositionLab = placement.firstElementEntranceLab -
+                                  placement.referenceDistanceLab;
+    report.headAfterLab = report.referencePositionLab + globalRelativeHead;
+    report.actualHeadDistance = placement.firstElementEntranceLab -
+                                report.headAfterLab;
+    report.recommendedReferenceDistance = globalRelativeHead +
+                                          placement.recommendationMarginLab;
 
-    for (std::size_t particle = 0; particle < particles.size(); ++particle)
-      particles[particle].position[2] += report.longitudinalTranslation;
-
-    report.headAfterLab = globalHead + report.longitudinalTranslation;
-    report.actualHeadDistance =
-      std::isfinite(placement.firstElementEntranceLab) ?
-      placement.firstElementEntranceLab - report.headAfterLab :
-      std::numeric_limits<Double>::quiet_NaN();
+    for (std::size_t i = 0; i < particles.size(); ++i)
+      particles[i].position[2] += report.referencePositionLab;
     return report;
   }
 
@@ -84,10 +81,8 @@ namespace fel
       throw std::invalid_argument("Bunch snapshot time must be finite");
 
     SIBunchBoostReport report;
-    report.earliestLabEventTime =
-      std::numeric_limits<Double>::infinity();
-    report.latestLabEventTime =
-      -std::numeric_limits<Double>::infinity();
+    report.earliestLabEventTime = std::numeric_limits<Double>::infinity();
+    report.latestLabEventTime = -std::numeric_limits<Double>::infinity();
 
     for (std::size_t index = 0; index < particles.size(); ++index)
       {
