@@ -1,0 +1,59 @@
+# This file uses ordinary YAML. Numeric lengths and times use the global
+# units below; electromagnetic field amplitudes use explicit SI units.
+units:
+  length: micrometer
+  time: picosecond
+
+mesh:
+  # Direct coordinates of the boosted computational box.
+  lengths: [40.0, 40.0, 12.0]
+  resolution: [1.0, 1.0, 0.2]
+  center: [0.0, 0.0, 0.0]
+  duration: 0.01
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 32
+
+beam:
+  placement:
+    mode: head-to-first-element
+    distance: 1.0
+
+  distributions:
+    - type: ellipsoid
+      profile: gaussian
+      generator: halton
+      electrons: 4.0
+      macroparticles: 4
+      gamma: 4.0
+      direction: [0.0, 0.0, 1.0]
+      positions:
+        - [0.0, 0.0, 0.0]
+      sigma_position: [0.1, 0.1, 0.1]
+      sigma_proper_velocity: [0.0, 0.0, 0.0]
+      transverse_cutoff: 1.0
+      longitudinal_cutoff: 1.0
+      bunching_factor: 0.0
+      bunching_phase_rad: 0.0
+      shot_noise: false
+
+sources:
+  incident_waves: []
+
+  magnetic_elements:
+    - type: planar-undulator
+      strength_parameter: 0.1
+      period: 10.0
+      periods: 1
+      entrance_z: 0.0
+      polarization_angle_rad: 0.0
+      gaussian_fringe: true
+
+trajectory:
+  enabled: true
+  directory: output/example
+  basename: particles
+  rhythm: 0.002
+  mode: throughput
+  buffer_records: 64
+  flush_every_samples: 1
+  compression: 0

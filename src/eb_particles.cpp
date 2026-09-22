@@ -1,0 +1,96 @@
+#include "eb_particles.h"
+
+#include <cmath>
+#include <stdexcept>
+
+namespace fel
+{
+  RelativisticParticleSI::RelativisticParticleSI()
+    : position(0.0), properVelocity(0.0), charge(0.0), mass(0.0),
+      weight(1.0), id(0), sourceId(0)
+  {}
+
+  void RelativisticBorisPusher::pushMomentum(
+      FieldVector<Double>& properVelocity,
+      const FieldVector<Double>& electric,
+      const FieldVector<Double>& magnetic,
+      Double charge, Double mass, Double timeStep)
+  {
+    if (!(mass > 0.0) || !std::isfinite(mass) ||
+        !std::isfinite(charge) || !(timeStep > 0.0) ||
+        !std::isfinite(timeStep))
+      throw std::invalid_argument("Invalid SI particle pusher parameters");
+
+    const Double electricKick = charge * timeStep /
+                                (2.0 * mass * SI::c);
+    FieldVector<Double> uMinus(properVelocity);
+    uMinus.pmv(electricKick, electric);
+
+    const Double gammaMinus =
+      BoostFrameTransform::gammaFromProperVelocity(uMinus);
+    FieldVector<Double> rotation(0.0);
+    rotation.mv(charge * timeStep / (2.0 * mass * gammaMinus), magnetic);
+    FieldVector<Double> uPrime = cross(uMinus, rotation);
+    uPrime += uMinus;
+
+    FieldVector<Double> s(rotation);
+    s *= 2.0 / (1.0 + rotation.norm2());
+    FieldVector<Double> uPlus = cross(uPrime, s);
+    uPlus += uMinus;
+
+    properVelocity = uPlus;
+    properVelocity.pmv(electricKick, electric);
+  }
+
+  void RelativisticBorisPusher::pushPosition(
+      FieldVector<Double>& position,
+      const FieldVector<Double>& properVelocity,
+      Double timeStep)
+  {
+    const Double gamma =
+      BoostFrameTransform::gammaFromProperVelocity(properVelocity);
+    position.pmv(SI::c * timeStep / gamma, properVelocity);
+  }
+
+  void RelativisticBorisPusher::push(
+      RelativisticParticleSI& particle,
+      const FieldVector<Double>& electric,
+      const FieldVector<Double>& magnetic,
+      Double timeStep)
+  {
+    pushMomentum(particle.properVelocity, electric, magnetic,
+                 particle.charge, particle.mass, timeStep);
+    pushPosition(particle.position, particle.properVelocity, timeStep);
+  }
+
+  void RelativisticBorisPusher::pushFromGrid(
+      RelativisticParticleSI& particle,
+      const EBFieldGrid& fields,
+      const FieldVector<Double>& gridOriginSI,
+      Double timeStep)
+  {
+    FieldVector<Double> electric(0.0);
+    FieldVector<Double> magnetic(0.0);
+    fields.sampleFieldsPosition(particle.position, gridOriginSI,
+                                electric, magnetic);
+    push(particle, electric, magnetic, timeStep);
+  }
+
+  void RelativisticBorisPusher::pushFromGridAndPrescribedLab(
+      RelativisticParticleSI& particle,
+      const EBFieldGrid& fields,
+      const FieldVector<Double>& gridOriginSI,
+      const SIFieldSourceSet& sources,
+      const BoostFrameTransform& frame,
+      Double timeBoxSI,
+      Double timeStep)
+  {
+    FieldVector<Double> electric(0.0);
+    FieldVector<Double> magnetic(0.0);
+    fields.sampleFieldsPosition(particle.position, gridOriginSI,
+                                electric, magnetic);
+    sources.addPrescribedBox(particle.position, timeBoxSI, frame,
+                             electric, magnetic);
+    push(particle, electric, magnetic, timeStep);
+  }
+}

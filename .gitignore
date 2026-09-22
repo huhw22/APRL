@@ -1,0 +1,38 @@
+# Out-of-source builds and generated binaries
+build/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+compile_commands.json
+simulator
+*.o
+*.a
+*.so
+
+# Simulation output and scheduler logs
+output/
+results/
+*.h5
+*.hdf5
+*.log
+slurm-*.out
+
+# Local dependency/cache directories
+.deps/
+.cache/
+.vscode/
+.idea/
+
+# Development-only tests, probes, and helper tools are intentionally local
+tests/
+test/
+tools/
+scripts/
+benchmarks/
+scratch/
+
+# Editor and operating-system files
+*~
+*.swp
+.DS_Store
