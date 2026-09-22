@@ -278,7 +278,8 @@ namespace fel
   SIMagneticElement::SIMagneticElement()
     : type(SIMagnetType::PlanarUndulator), center(0.0), length(0.0),
       period(0.0), peakMagneticField(0.0), polarizationAngle(0.0),
-      gaussianFringe(true), waveNumber_(0.0), cosineAngle_(1.0),
+      gaussianFringe(true), fringeRelativeCutoff(1.0e-9),
+      waveNumber_(0.0), fringeExtent_(0.0), cosineAngle_(1.0),
       sineAngle_(0.0), prepared_(false)
   {}
 
@@ -309,11 +310,20 @@ namespace fel
     if (type == SIMagnetType::PlanarUndulator &&
         (!(period > 0.0) || !std::isfinite(period)))
       throw std::invalid_argument("Undulator period must be positive");
+    if (type == SIMagnetType::PlanarUndulator && gaussianFringe &&
+        (!(fringeRelativeCutoff > 0.0) ||
+         !(fringeRelativeCutoff < 1.0) ||
+         !std::isfinite(fringeRelativeCutoff)))
+      throw std::invalid_argument(
+        "Undulator fringe_relative_cutoff must be in (0,1)");
     if (type == SIMagnetType::UniformDipole && !(length > 0.0))
       throw std::invalid_argument("Dipole length must be positive");
 
     waveNumber_ = type == SIMagnetType::PlanarUndulator
       ? kTwoPi / period : 0.0;
+    fringeExtent_ = type == SIMagnetType::PlanarUndulator && gaussianFringe
+      ? std::sqrt(-2.0 * std::log(fringeRelativeCutoff)) / waveNumber_
+      : 0.0;
     cosineAngle_ = std::cos(polarizationAngle);
     sineAngle_ = std::sin(polarizationAngle);
     prepared_ = true;
@@ -350,10 +360,29 @@ namespace fel
     else if (gaussianFringe)
       {
         const Double fringeCoordinate = z < 0.0 ? z : z - length;
+        const Double distance = std::abs(fringeCoordinate);
+        if (distance >= fringeExtent_) return;
+
+        /* The legacy Gaussian end field had infinite support (and therefore
+         * no usable interaction boundary).  A quintic compact-support taper
+         * makes both g and dg/dz vanish at the declared edge.  Defining the
+         * transverse shape from -g'/k preserves div(B)=0 through the taper. */
+        const Double q = distance / fringeExtent_;
+        const Double q2 = q * q;
+        const Double q3 = q2 * q;
+        const Double q4 = q3 * q;
+        const Double q5 = q4 * q;
+        const Double taper = 1.0 - 10.0 * q3 + 15.0 * q4 - 6.0 * q5;
+        const Double taperDerivative =
+          (-30.0 * q2 + 60.0 * q3 - 30.0 * q4) / fringeExtent_;
         const Double gaussian = std::exp(-0.5 *
-          std::pow(waveNumber_ * fringeCoordinate, 2.0));
-        transverseShape = waveNumber_ * fringeCoordinate * gaussian;
-        longitudinalShape = gaussian;
+          std::pow(waveNumber_ * distance, 2.0));
+        longitudinalShape = gaussian * taper;
+        const Double derivativeByDistance = gaussian *
+          (taperDerivative - waveNumber_ * waveNumber_ * distance * taper);
+        transverseShape = z < 0.0
+          ? derivativeByDistance / waveNumber_
+          : -derivativeByDistance / waveNumber_;
       }
     else
       return;
@@ -366,6 +395,30 @@ namespace fel
     fields.magnetic[1] = transverseField * sineAngle_;
     fields.magnetic[2] = peakMagneticField *
       std::sinh(waveNumber_ * transverseCoordinate) * longitudinalShape;
+  }
+
+  Double SIMagneticElement::physicalEntranceLab() const
+  {
+    if (!prepared_) throw std::logic_error("Magnetic element was not prepared");
+    return center[2];
+  }
+
+  Double SIMagneticElement::physicalExitLab() const
+  {
+    if (!prepared_) throw std::logic_error("Magnetic element was not prepared");
+    return center[2] + length;
+  }
+
+  Double SIMagneticElement::interactionEntranceLab() const
+  {
+    if (!prepared_) throw std::logic_error("Magnetic element was not prepared");
+    return center[2] - fringeExtent_;
+  }
+
+  Double SIMagneticElement::interactionExitLab() const
+  {
+    if (!prepared_) throw std::logic_error("Magnetic element was not prepared");
+    return center[2] + length + fringeExtent_;
   }
 
   void SIFieldSourceSet::addWave(const SIWaveSource& source,

@@ -57,11 +57,46 @@ namespace fel
 
   struct BeamReferenceConfig
   {
-    /* Distance from the particle file's relative z=0 reference to the first
-     * magnetic-element entrance, measured in the laboratory frame. */
-    Double distanceToFirstMagnet;
+    /* Lab coordinate of the particle file's relative z=0 reference at the
+     * input snapshot. The first physical beamline entrance defines z=0. */
+    Double initialCenterZ;
 
     BeamReferenceConfig();
+  };
+
+  enum class BeamlineElementRole
+  {
+    MagneticDevice,
+    FieldDetectorPlane,
+    ParticleDetectorPlane
+  };
+
+  /* Stopping uses this generic laboratory-frame extent instead of the magnet
+   * container. Future field and particle detector planes can therefore join
+   * the beamline as zero-length elements without changing stop semantics. */
+  struct BeamlineElementExtent
+  {
+    BeamlineElementRole role;
+    Double physicalEntrance;
+    Double physicalExit;
+    Double interactionEntrance;
+    Double interactionExit;
+
+    BeamlineElementExtent();
+  };
+
+  enum class StopMode
+  {
+    AfterLastElement,
+    ReferenceCenterZ
+  };
+
+  struct StopConfig
+  {
+    StopMode mode;
+    Double referenceZ;
+
+    StopConfig();
   };
 
   struct TrajectoryConfig
@@ -94,6 +129,8 @@ namespace fel
     BeamInputConfig beam;
     std::vector<WaveConfig> waves;
     std::vector<SIMagneticElement> magnets;
+    std::vector<BeamlineElementExtent> beamlineElements;
+    StopConfig stop;
     TrajectoryConfig trajectory;
   };
 

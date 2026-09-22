@@ -42,17 +42,21 @@ Every particle position is relative to a laboratory-frame beam reference:
 ```yaml
 beam:
   reference:
-    distance_to_first_magnet: 0.45
+    initial_center_z: -1.8
 ```
 
-If the first magnetic entrance is at `z_entry`, particle relative z=0 is
-placed at `z_entry - distance_to_first_magnet`. Positive particle z points
-towards/into the first magnet. The simulator then performs the free-drift
-Lorentz simultaneity transform to boosted time zero and checks the transformed
-bunch front in the laboratory frame. If it reaches or passes the entrance,
-the run stops before field allocation and prints a recommended minimum
-distance. The recommendation includes one boosted longitudinal cell expressed
-in laboratory length as a safety margin.
+The leftmost physical entrance of the first beamline element defines lab z=0.
+`initial_center_z` is the lab coordinate of the particle file's relative z=0
+reference at the input snapshot, so it is normally negative. It is also the
+initial point of the boost reference-centre worldline used by the fixed-z stop
+mode. Positive particle-relative z points downstream.
+
+The simulator performs the free-drift Lorentz simultaneity transform to
+boosted time zero and checks the transformed bunch front against the first
+element's **interaction** entrance, not merely its physical entrance. If the
+front touches that region, the run stops before field allocation and reports a
+recommended maximum (more negative) `initial_center_z`. The recommendation
+includes one lab-equivalent longitudinal cell as a safety margin.
 
 Production input uses HDF5:
 
@@ -133,10 +137,60 @@ element is required because beam placement is defined from the first entrance.
       entrance_z: 0.0
       polarization_angle_rad: 0.0
       gaussian_fringe: true
+      fringe_relative_cutoff: 1.0e-9
 ```
 
 `uniform-dipole` instead uses `length` and `field_T`. The first entrance is the
-minimum `entrance_z` across all elements, independent of YAML ordering.
+minimum physical `entrance_z` across all elements, independent of YAML
+ordering, and must be zero.
+
+A planar undulator keeps the legacy divergence-compatible analytical end-field
+idea, but fixes its ambiguous infinite support. The Gaussian is multiplied by
+a quintic compact-support taper; the transverse component is derived from the
+longitudinal envelope so `div(B)=0` remains satisfied through both the entrance
+and exit. `fringe_relative_cutoff` defines the raw Gaussian value used to place
+the compact edge and must lie in `(0,1)`. With `gaussian_fringe: false`, the
+interaction and physical ranges coincide.
+
+## Stop strategy
+
+Exactly one physical stop strategy is selected in addition to `mesh.duration`,
+which remains a maximum-runtime guard. Exhausting that guard before the chosen
+physical condition is an error and leaves trajectory output marked incomplete.
+
+Stop after every valid particle has passed the last element's interaction
+exit:
+
+```yaml
+stop:
+  mode: after-last-element
+```
+
+Particles that cross a transverse or longitudinal computational boundary are
+clipped to that boundary for their final current segment, removed from the
+valid set, and excluded from this all-particles predicate. This is an explicit
+domain loss, not the old post-undulator soft deletion. If no valid particles
+remain, this mode stops and reports that fact instead of claiming that the
+bunch crossed the downstream boundary.
+
+Alternatively, stop when the boost reference centre reaches a fixed lab z:
+
+```yaml
+stop:
+  mode: reference-center-z
+  z: 2.5
+```
+
+The reference centre starts at `beam.reference.initial_center_z` and follows
+the boost-frame origin worldline. The target must lie strictly beyond every
+current element interaction region, allowing deliberate observation after the
+last device.
+
+Stopping operates on generic beamline-element extents. Magnetic devices are
+the only parsed elements today; future laboratory field-detector and
+particle-detector planes have reserved element roles and will therefore enter
+the same first/last-boundary logic without reviving the predecessor's
+boost-frame tracking diagnostics.
 
 ## Trajectory output
 

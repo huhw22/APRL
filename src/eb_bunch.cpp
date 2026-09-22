@@ -8,14 +8,14 @@
 namespace fel
 {
   SIBunchPlacement::SIBunchPlacement()
-    : firstElementEntranceLab(std::numeric_limits<Double>::quiet_NaN()),
-      referenceDistanceLab(std::numeric_limits<Double>::quiet_NaN()),
+    : firstInteractionEntranceLab(std::numeric_limits<Double>::quiet_NaN()),
+      referencePositionLab(std::numeric_limits<Double>::quiet_NaN()),
       recommendationMarginLab(0.0)
   {}
 
   SIBunchPlacementReport::SIBunchPlacementReport()
     : relativeHeadLab(0.0), referencePositionLab(0.0), headAfterLab(0.0),
-      actualHeadDistance(0.0), recommendedReferenceDistance(0.0),
+      actualHeadDistance(0.0), recommendedMaximumReferencePosition(0.0),
       particles(0)
   {}
 
@@ -30,13 +30,12 @@ namespace fel
   {
     if (communicator == MPI_COMM_NULL)
       throw std::invalid_argument("Bunch placement communicator is null");
-    if (!std::isfinite(placement.firstElementEntranceLab) ||
-        !std::isfinite(placement.referenceDistanceLab) ||
-        placement.referenceDistanceLab < 0.0 ||
+    if (!std::isfinite(placement.firstInteractionEntranceLab) ||
+        !std::isfinite(placement.referencePositionLab) ||
         !std::isfinite(placement.recommendationMarginLab) ||
         placement.recommendationMarginLab < 0.0)
       throw std::invalid_argument(
-        "Relative bunch placement requires a finite entrance and nonnegative distances");
+        "Relative bunch placement requires finite lab coordinates and a nonnegative margin");
 
     const unsigned long long localCount =
       static_cast<unsigned long long>(particles.size());
@@ -60,13 +59,13 @@ namespace fel
     SIBunchPlacementReport report;
     report.particles = globalCount;
     report.relativeHeadLab = globalRelativeHead;
-    report.referencePositionLab = placement.firstElementEntranceLab -
-                                  placement.referenceDistanceLab;
+    report.referencePositionLab = placement.referencePositionLab;
     report.headAfterLab = report.referencePositionLab + globalRelativeHead;
-    report.actualHeadDistance = placement.firstElementEntranceLab -
+    report.actualHeadDistance = placement.firstInteractionEntranceLab -
                                 report.headAfterLab;
-    report.recommendedReferenceDistance = globalRelativeHead +
-                                          placement.recommendationMarginLab;
+    report.recommendedMaximumReferencePosition =
+      placement.firstInteractionEntranceLab - globalRelativeHead -
+      placement.recommendationMarginLab;
 
     for (std::size_t i = 0; i < particles.size(); ++i)
       particles[i].position[2] += report.referencePositionLab;

@@ -121,6 +121,45 @@ namespace fel
                    MPI_BYTE, source, dataTag, communicator,
                    MPI_STATUS_IGNORE);
     }
+
+    bool clipSegmentToBox(const FieldVector<Double>& start,
+                          const FieldVector<Double>& end,
+                          const Double lower[3], const Double upper[3],
+                          FieldVector<Double>& clipped,
+                          Double& exitFraction)
+    {
+      bool outside = false;
+      exitFraction = 1.0;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          if (end[axis] < lower[axis])
+            {
+              outside = true;
+              exitFraction = std::min(exitFraction,
+                (lower[axis] - start[axis]) /
+                (end[axis] - start[axis]));
+            }
+          else if (end[axis] > upper[axis])
+            {
+              outside = true;
+              exitFraction = std::min(exitFraction,
+                (upper[axis] - start[axis]) /
+                (end[axis] - start[axis]));
+            }
+        }
+      if (!outside) return false;
+      if (!(exitFraction >= 0.0) || !(exitFraction <= 1.0) ||
+          !std::isfinite(exitFraction))
+        throw std::runtime_error("Cannot clip escaped particle trajectory");
+      clipped = start;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          clipped[axis] += exitFraction * (end[axis] - start[axis]);
+          clipped[axis] = std::max(lower[axis],
+                                   std::min(upper[axis], clipped[axis]));
+        }
+      return true;
+    }
   }
 
   Simulation::Simulation(const SimulationConfig& config,
@@ -131,7 +170,8 @@ namespace fel
       fields_(), halo_(), incident_(), particles_(), trajectoryWriter_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), timeBoxSI_(0.0),
-      totalTimeBoxSI_(0.0), step_(0), interrupted_(false)
+      totalTimeBoxSI_(0.0), step_(0), interrupted_(false),
+      configuredStopReached_(false), lostParticles_(0), stopReason_()
   {
     if (communicator_ == MPI_COMM_NULL)
       throw std::invalid_argument("E/B solver communicator cannot be null");
@@ -166,15 +206,25 @@ namespace fel
         if (config_.trajectory.enabled &&
             timeBoxSI_ >= nextTrajectorySampleTime_)
           sampleTrajectory();
+        if (configuredStopReached())
+          {
+            configuredStopReached_ = true;
+            break;
+          }
       }
 
     if (!interrupted_) synchronizedStopRequested();
-    const bool completed = !interrupted_ &&
-      timeBoxSI_ >= totalTimeBoxSI_;
+    const bool completed = !interrupted_ && configuredStopReached_;
     finalizeTrajectoryOutput(completed);
+    if (configuredStopReached_ && rank_ == 0)
+      logRoot(communicator_, "Configured stop reached: " + stopReason_);
     if (interrupted_ && rank_ == 0)
       logRoot(communicator_,
         "Direct E/B run stopped after a complete field step; committed trajectories remain readable.");
+    if (!interrupted_ && !configuredStopReached_ &&
+        timeBoxSI_ >= totalTimeBoxSI_)
+      throw std::runtime_error(
+        "mesh.duration was exhausted before the configured physical stop; trajectory output is readable but marked incomplete");
   }
 
   void Simulation::initialize()
@@ -253,10 +303,13 @@ namespace fel
 
   void Simulation::initializeParticles()
   {
-    const Double firstEntrance = firstMagneticEntranceLab();
+    const Double firstPhysicalEntrance =
+      firstBeamlinePhysicalEntranceLab();
+    const Double firstInteractionEntrance =
+      firstBeamlineInteractionEntranceLab();
     const Double boxReferenceZ = config_.mesh.center[2];
     frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
-      std::isfinite(firstEntrance) ? firstEntrance : 0.0,
+      config_.reference.initialCenterZ,
       boxReferenceZ);
 
     particles_ = ParticleInitializer::create(config_, communicator_);
@@ -270,9 +323,8 @@ namespace fel
       particles_[index].id = idOffset + index + 1;
 
     SIBunchPlacement placement;
-    placement.firstElementEntranceLab = firstEntrance;
-    placement.referenceDistanceLab =
-      config_.reference.distanceToFirstMagnet;
+    placement.firstInteractionEntranceLab = firstInteractionEntrance;
+    placement.referencePositionLab = config_.reference.initialCenterZ;
     /* A box-frame z cell spans gamma*dz at fixed box time in the lab.  Keep
      * that as the minimum recommended clearance beyond the relative head. */
     placement.recommendationMarginLab =
@@ -313,20 +365,24 @@ namespace fel
                   communicator_);
     const Double entranceTolerance = 64.0 *
       std::numeric_limits<Double>::epsilon() *
-      std::max(1.0, std::max(std::abs(firstEntrance),
+      std::max(1.0, std::max(std::abs(firstInteractionEntrance),
                              std::abs(eventHead)));
-    if (eventHead >= firstEntrance - entranceTolerance)
+    if (eventHead >= firstInteractionEntrance - entranceTolerance)
       {
+        const Double transformedHeadOffset = eventHead -
+          config_.reference.initialCenterZ;
+        const Double recommendedCenter = firstInteractionEntrance -
+          transformedHeadOffset - placement.recommendationMarginLab;
         std::ostringstream message;
         message << "Initial Lorentz transform places the bunch front at or "
-          "inside the first magnetic element: entrance_z=" << firstEntrance
+          "inside the first element interaction region: interaction_start_z="
+          << firstInteractionEntrance
           << " m, transformed_front_z=" << eventHead
-          << " m. Increase beam.reference.distance_to_first_magnet to at "
-          "least " << placementReport.recommendedReferenceDistance
-          << " m ("
-          << placementReport.recommendedReferenceDistance /
+          << " m. Set beam.reference.initial_center_z to at most "
+          << recommendedCenter << " m (" << recommendedCenter /
                config_.inputUnits.length
-          << " in the configured length unit).";
+          << " in the configured length unit). The physical first-element "
+          "entrance remains z=" << firstPhysicalEntrance << " m.";
         throw std::runtime_error(message.str());
       }
     redistributeParticles();
@@ -339,10 +395,10 @@ namespace fel
           << placementReport.particles << ", reference z [m]="
           << placementReport.referencePositionLab
           << ", relative head z [m]=" << placementReport.relativeHeadLab
-          << ", initial head gap [m]="
-          << placementReport.actualHeadDistance
-          << ", transformed head gap [m]="
-          << firstEntrance - eventHead;
+          << ", physical first entrance [m]=" << firstPhysicalEntrance
+          << ", interaction start [m]=" << firstInteractionEntrance
+          << ", transformed interaction gap [m]="
+          << firstInteractionEntrance - eventHead;
         logRoot(communicator_, placementMessage.str());
         std::ostringstream boostMessage;
         boostMessage << "Free-drift Lorentz events [s]: "
@@ -549,12 +605,15 @@ namespace fel
     const Double lowerZ = localOriginBox_[2];
     const Double upperZ = lowerZ +
       static_cast<Double>(localGeometry_.nz) * localGeometry_.dz;
+    const Double globalLower[3] = {
+      globalOriginBox_[0], globalOriginBox_[1], globalOriginBox_[2]
+    };
     const Double globalUpper[3] = {
       globalOriginBox_[0] + static_cast<Double>(globalGeometry_.nx) * globalGeometry_.dx,
       globalOriginBox_[1] + static_cast<Double>(globalGeometry_.ny) * globalGeometry_.dy,
       globalOriginBox_[2] + static_cast<Double>(globalGeometry_.nz) * globalGeometry_.dz
     };
-    int localOutside = 0;
+    unsigned long long localLost = 0;
 
     for (std::size_t index = 0; index < particles_.size(); ++index)
       {
@@ -564,37 +623,43 @@ namespace fel
           particle, *fields_, localOriginBox_, sources_, frame_,
           timeBoxSI_, globalGeometry_.dt);
 
-        bool particleOutside = false;
-        for (unsigned int axis = 0; axis < 2; ++axis)
-          if (particle.position[axis] < globalOriginBox_[axis] ||
-              particle.position[axis] > globalUpper[axis])
-            particleOutside = true;
-        if (particle.position[2] < globalOriginBox_[2] ||
-            particle.position[2] > globalUpper[2])
-          particleOutside = true;
-        if (particleOutside)
-          {
-            localOutside = 1;
-            continue;
-          }
-
         const bool crossLower = rank_ > 0 &&
           particle.position[2] < lowerZ;
         const bool crossUpper = rank_ + 1 < size_ &&
           particle.position[2] >= upperZ;
-        if (crossLower || crossUpper)
+        const bool crossesInterface = crossLower || crossUpper;
+        Double interfaceFraction = 1.0;
+        if (crossesInterface)
           {
             const Double boundary = crossLower ? lowerZ : upperZ;
-            const Double fraction = (boundary - start[2]) /
+            interfaceFraction = (boundary - start[2]) /
               (particle.position[2] - start[2]);
-            if (!(fraction >= 0.0 && fraction <= 1.0))
-              {
-                localOutside = 1;
-                continue;
-              }
+            if (!(interfaceFraction >= 0.0 && interfaceFraction <= 1.0))
+              throw std::runtime_error(
+                "Invalid MPI-interface particle crossing");
+          }
+
+        FieldVector<Double> clipped(0.0);
+        Double exitFraction = 1.0;
+        const bool particleOutside = clipSegmentToBox(
+          start, particle.position, globalLower, globalUpper,
+          clipped, exitFraction);
+        const Double crossingTolerance = 64.0 *
+          std::numeric_limits<Double>::epsilon();
+        if (particleOutside &&
+            (!crossesInterface ||
+             exitFraction <= interfaceFraction + crossingTolerance))
+          {
+            depositor.depositSegment(start, clipped, particle.charge);
+            ++localLost;
+            continue;
+          }
+
+        if (crossLower || crossUpper)
+          {
             FieldVector<Double> interfacePosition(start);
             for (unsigned int axis = 0; axis < 3; ++axis)
-              interfacePosition[axis] += fraction *
+              interfacePosition[axis] += interfaceFraction *
                 (particle.position[axis] - start[axis]);
             depositor.depositSegment(start, interfacePosition,
                                      particle.charge);
@@ -611,13 +676,6 @@ namespace fel
             retained.push_back(particle);
           }
       }
-
-    int globalOutside = 0;
-    MPI_Allreduce(&localOutside, &globalOutside, 1, MPI_INT, MPI_MAX,
-                  communicator_);
-    if (globalOutside)
-      throw std::out_of_range(
-        "Particle left the current PEC E/B domain; CPML/open particle boundary is not implemented and no soft deletion was applied");
 
     std::vector<TransferPacket> receiveLower;
     std::vector<TransferPacket> receiveUpper;
@@ -640,11 +698,28 @@ namespace fel
           FieldVector<Double> segmentStart(0.0);
           for (unsigned int axis = 0; axis < 3; ++axis)
             segmentStart[axis] = transfer.segmentStart[axis];
-          depositor.depositSegment(segmentStart, particle.position,
-                                   particle.charge);
-          retained.push_back(particle);
+          FieldVector<Double> clipped(0.0);
+          Double exitFraction = 1.0;
+          if (clipSegmentToBox(segmentStart, particle.position,
+                               globalLower, globalUpper,
+                               clipped, exitFraction))
+            {
+              depositor.depositSegment(segmentStart, clipped,
+                                       particle.charge);
+              ++localLost;
+            }
+          else
+            {
+              depositor.depositSegment(segmentStart, particle.position,
+                                       particle.charge);
+              retained.push_back(particle);
+            }
         }
     particles_.swap(retained);
+    unsigned long long globalLost = 0;
+    MPI_Allreduce(&localLost, &globalLost, 1, MPI_UNSIGNED_LONG_LONG,
+                  MPI_SUM, communicator_);
+    lostParticles_ += globalLost;
   }
 
   bool Simulation::synchronizedStopRequested()
@@ -658,12 +733,94 @@ namespace fel
     return interrupted_;
   }
 
-  Double Simulation::firstMagneticEntranceLab() const
+  bool Simulation::configuredStopReached()
+  {
+    const unsigned long long localCount =
+      static_cast<unsigned long long>(particles_.size());
+    unsigned long long globalCount = 0;
+    MPI_Allreduce(&localCount, &globalCount, 1, MPI_UNSIGNED_LONG_LONG,
+                  MPI_SUM, communicator_);
+
+    if (config_.stop.mode == StopMode::ReferenceCenterZ)
+      {
+        const Double referenceZ = frame_.labZFromBoxZT(
+          config_.mesh.center[2], timeBoxSI_);
+        const Double tolerance = 64.0 *
+          std::numeric_limits<Double>::epsilon() *
+          std::max(1.0, std::max(std::abs(referenceZ),
+                                 std::abs(config_.stop.referenceZ)));
+        if (referenceZ < config_.stop.referenceZ - tolerance) return false;
+        std::ostringstream message;
+        message << "boost reference centre reached lab z=" << referenceZ
+                << " m (target " << config_.stop.referenceZ << " m)";
+        if (lostParticles_ > 0)
+          message << "; excluded escaped particles=" << lostParticles_;
+        stopReason_ = message.str();
+        return true;
+      }
+
+    const Double interactionExit = lastBeamlineInteractionExitLab();
+    int localNotPast = 0;
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      {
+        Double eventTimeLab = 0.0;
+        Double eventZLab = 0.0;
+        frame_.boxToLab(timeBoxSI_, particles_[index].position[2],
+                        eventTimeLab, eventZLab);
+        const Double tolerance = 64.0 *
+          std::numeric_limits<Double>::epsilon() *
+          std::max(1.0, std::max(std::abs(eventZLab),
+                                 std::abs(interactionExit)));
+        if (eventZLab <= interactionExit + tolerance)
+          localNotPast = 1;
+      }
+    int globalNotPast = 0;
+    MPI_Allreduce(&localNotPast, &globalNotPast, 1, MPI_INT, MPI_MAX,
+                  communicator_);
+    if (globalNotPast) return false;
+
+    std::ostringstream message;
+    if (globalCount == 0)
+      message << "no valid particles remain before the last interaction "
+              << "boundary at z=" << interactionExit << " m";
+    else
+      message << "all " << globalCount
+              << " valid particles passed the last interaction boundary at z="
+              << interactionExit << " m";
+    if (lostParticles_ > 0)
+      message << "; excluded escaped particles=" << lostParticles_;
+    stopReason_ = message.str();
+    return true;
+  }
+
+  Double Simulation::firstBeamlinePhysicalEntranceLab() const
   {
     Double entrance = std::numeric_limits<Double>::infinity();
-    for (std::size_t element = 0; element < config_.magnets.size(); ++element)
-      entrance = std::min(entrance, config_.magnets[element].center[2]);
+    for (std::size_t element = 0;
+         element < config_.beamlineElements.size(); ++element)
+      entrance = std::min(entrance,
+        config_.beamlineElements[element].physicalEntrance);
     return entrance;
+  }
+
+  Double Simulation::firstBeamlineInteractionEntranceLab() const
+  {
+    Double entrance = std::numeric_limits<Double>::infinity();
+    for (std::size_t element = 0;
+         element < config_.beamlineElements.size(); ++element)
+      entrance = std::min(entrance,
+        config_.beamlineElements[element].interactionEntrance);
+    return entrance;
+  }
+
+  Double Simulation::lastBeamlineInteractionExitLab() const
+  {
+    Double exit = -std::numeric_limits<Double>::infinity();
+    for (std::size_t element = 0;
+         element < config_.beamlineElements.size(); ++element)
+      exit = std::max(exit,
+        config_.beamlineElements[element].interactionExit);
+    return exit;
   }
 
   void Simulation::validateParticlesInsideGlobalBox() const

@@ -12,8 +12,8 @@ namespace fel
 {
   struct SIBunchPlacement
   {
-    Double firstElementEntranceLab;    /* m */
-    Double referenceDistanceLab;       /* m */
+    Double firstInteractionEntranceLab; /* m */
+    Double referencePositionLab;        /* m */
     Double recommendationMarginLab;    /* m */
 
     SIBunchPlacement();
@@ -25,7 +25,7 @@ namespace fel
     Double referencePositionLab;
     Double headAfterLab;
     Double actualHeadDistance;
-    Double recommendedReferenceDistance;
+    Double recommendedMaximumReferencePosition;
     unsigned long long particles;
 
     SIBunchPlacementReport();
@@ -43,9 +43,9 @@ namespace fel
   class SIBunchPreprocessor
   {
   public:
-    /* Input z coordinates are relative to a user-defined laboratory reference
-     * point. referenceDistanceLab places that point upstream of the first
-     * magnetic-element entrance. */
+    /* Input z coordinates are relative to a user-defined laboratory bunch
+     * centre. The physical beamline origin remains independent of the finite
+     * interaction entrance created by an element fringe. */
     static SIBunchPlacementReport placeRelativeLabSnapshot(
         std::vector<RelativisticParticleSI>& particles,
         const SIBunchPlacement& placement,

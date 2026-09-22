@@ -56,5 +56,6 @@ debug run choose trajectory `mode: interactive`; for an uninterrupted batch
 run choose `mode: throughput`.
 
 The current solver stops with an explicit error if its boosted initial bunch
-does not fit the longitudinal box. Increase the box or adjust the beam
-reference distance only after checking the reported physical placement.
+does not fit the longitudinal box or overlaps the finite interaction region of
+the first element. Increase the box or move `initial_center_z` upstream only
+after checking the reported physical and interaction boundaries.

@@ -4,9 +4,10 @@
 
 This is the production particle-input contract. It is compact, directly
 sliceable by MPI ranks, and independent of YAML display units. A file describes
-one laboratory-frame bunch snapshot relative to a user-defined z=0 reference.
-The YAML card supplies the total physical electron count and places that
-reference relative to the first magnetic element.
+one laboratory-frame bunch snapshot relative to a user-defined bunch-centre
+reference. The YAML card supplies the total physical electron count and gives
+that reference an initial lab z coordinate; the first physical beamline
+entrance defines global z=0.
 
 ## Required layout
 

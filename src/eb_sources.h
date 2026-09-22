@@ -115,10 +115,16 @@ namespace fel
     Double peakMagneticField;   /* T */
     Double polarizationAngle;   /* rad from +x */
     bool gaussianFringe;
+    Double fringeRelativeCutoff; /* raw Gaussian at compact-support edge */
 
     void prepare();
     void fieldsLab(const FieldVector<Double>& positionLab,
                    Double timeLab, SIFieldValue& fields) const;
+
+    Double physicalEntranceLab() const;
+    Double physicalExitLab() const;
+    Double interactionEntranceLab() const;
+    Double interactionExitLab() const;
 
     static SIMagneticElement planarUndulatorFromK(
         Double strengthParameter, Double periodSI,
@@ -127,6 +133,7 @@ namespace fel
 
   private:
     Double waveNumber_;
+    Double fringeExtent_;
     Double cosineAngle_;
     Double sineAngle_;
     bool prepared_;

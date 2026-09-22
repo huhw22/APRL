@@ -24,6 +24,12 @@ large multidimensional field dump during every supercomputer run.
 - scalable trajectory production for radiation post-processing;
 - numerical experiments on a direct SI E/B Maxwell-particle formulation.
 
+Runs can end either after all still-valid particles pass the final element's
+finite interaction region, or when the laboratory boost-reference centre
+reaches a configured downstream z coordinate. Future laboratory field and
+particle detector planes are reserved as beamline elements in this same
+ordering model.
+
 The implementation is still a development solver. CPML, a Gauss-consistent
 initial particle self-field, and particle subcycling remain planned work, so
 production radiation results require further validation.

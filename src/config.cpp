@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 
@@ -196,7 +197,16 @@ namespace fel
   }
 
   BeamReferenceConfig::BeamReferenceConfig()
-    : distanceToFirstMagnet(0.0)
+    : initialCenterZ(0.0)
+  {}
+
+  BeamlineElementExtent::BeamlineElementExtent()
+    : role(BeamlineElementRole::MagneticDevice), physicalEntrance(0.0),
+      physicalExit(0.0), interactionEntrance(0.0), interactionExit(0.0)
+  {}
+
+  StopConfig::StopConfig()
+    : mode(StopMode::AfterLastElement), referenceZ(0.0)
   {}
 
   TrajectoryConfig::TrajectoryConfig()
@@ -245,12 +255,9 @@ namespace fel
 
     const YAML::Node beam = required(root, "beam");
     const YAML::Node reference = required(beam, "reference");
-    result.reference.distanceToFirstMagnet = finiteDouble(
-      required(reference, "distance_to_first_magnet"),
-      "beam reference distance") * result.inputUnits.length;
-    if (result.reference.distanceToFirstMagnet < 0.0)
-      throw configError(reference["distance_to_first_magnet"],
-        "distance_to_first_magnet cannot be negative");
+    result.reference.initialCenterZ = finiteDouble(
+      required(reference, "initial_center_z"),
+      "initial beam-center z") * result.inputUnits.length;
 
     const YAML::Node input = required(beam, "input");
     result.beam.type = beamInputType(required(input, "type"));
@@ -401,10 +408,12 @@ namespace fel
                   entrance, required(node, "periods").as<unsigned int>(),
                   angle);
                 if (node["gaussian_fringe"])
-                  {
-                    magnet.gaussianFringe = node["gaussian_fringe"].as<bool>();
-                    magnet.prepare();
-                  }
+                  magnet.gaussianFringe = node["gaussian_fringe"].as<bool>();
+                if (node["fringe_relative_cutoff"])
+                  magnet.fringeRelativeCutoff = finiteDouble(
+                    node["fringe_relative_cutoff"],
+                    "undulator fringe relative cutoff");
+                magnet.prepare();
               }
             else if (type == "uniform-dipole")
               {
@@ -422,8 +431,29 @@ namespace fel
               throw configError(node["type"],
                 "unsupported magnetic element type");
             result.magnets.push_back(magnet);
+            BeamlineElementExtent extent;
+            extent.role = BeamlineElementRole::MagneticDevice;
+            extent.physicalEntrance = magnet.physicalEntranceLab();
+            extent.physicalExit = magnet.physicalExitLab();
+            extent.interactionEntrance = magnet.interactionEntranceLab();
+            extent.interactionExit = magnet.interactionExitLab();
+            result.beamlineElements.push_back(extent);
           }
       }
+
+    const YAML::Node stop = required(root, "stop");
+    const std::string stopMode = lower(required(stop, "mode").as<std::string>());
+    if (stopMode == "after-last-element")
+      result.stop.mode = StopMode::AfterLastElement;
+    else if (stopMode == "reference-center-z")
+      {
+        result.stop.mode = StopMode::ReferenceCenterZ;
+        result.stop.referenceZ = finiteDouble(required(stop, "z"),
+          "stop reference-center z") * result.inputUnits.length;
+      }
+    else
+      throw configError(stop["mode"],
+        "stop mode must be after-last-element or reference-center-z");
 
     const YAML::Node trajectory = root["trajectory"];
     if (trajectory)
@@ -464,9 +494,28 @@ namespace fel
         "boost_gamma must be at least one");
     if (!(result.mesh.duration > 0.0))
       throw configError(mesh["duration"], "duration must be positive");
-    if (result.magnets.empty())
+    if (result.beamlineElements.empty())
       throw configError(sources,
-        "beam reference placement requires at least one magnetic element");
+        "beam placement and stopping require at least one beamline element");
+    Double firstPhysical = result.beamlineElements[0].physicalEntrance;
+    Double lastInteraction = result.beamlineElements[0].interactionExit;
+    for (std::size_t i = 1; i < result.beamlineElements.size(); ++i)
+      {
+        firstPhysical = std::min(firstPhysical,
+          result.beamlineElements[i].physicalEntrance);
+        lastInteraction = std::max(lastInteraction,
+          result.beamlineElements[i].interactionExit);
+      }
+    const Double originTolerance = 64.0 *
+      std::numeric_limits<Double>::epsilon() *
+      std::max(1.0, std::abs(firstPhysical));
+    if (std::abs(firstPhysical) > originTolerance)
+      throw configError(sources,
+        "the first physical beamline entrance must define lab z=0");
+    if (result.stop.mode == StopMode::ReferenceCenterZ &&
+        !(result.stop.referenceZ > lastInteraction))
+      throw configError(stop["z"],
+        "reference-center stop z must lie beyond every element interaction region");
     if (result.trajectory.enabled && !(result.trajectory.rhythm > 0.0))
       throw configError(trajectory,
         "enabled trajectory output requires positive rhythm");

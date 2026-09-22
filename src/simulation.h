@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <string>
 #include <vector>
 
 #include <mpi.h>
@@ -44,10 +45,13 @@ namespace fel
     void redistributeParticles();
     void pushDepositAndMigrate();
     bool synchronizedStopRequested();
+    bool configuredStopReached();
 
     Slab slabForRank(int rank) const;
     int ownerRank(Double boxZ) const;
-    Double firstMagneticEntranceLab() const;
+    Double firstBeamlinePhysicalEntranceLab() const;
+    Double firstBeamlineInteractionEntranceLab() const;
+    Double lastBeamlineInteractionExitLab() const;
     void validateParticlesInsideGlobalBox() const;
 
     const SimulationConfig& config_;
@@ -76,6 +80,9 @@ namespace fel
     Double totalTimeBoxSI_;
     std::size_t step_;
     bool interrupted_;
+    bool configuredStopReached_;
+    unsigned long long lostParticles_;
+    std::string stopReason_;
   };
 }
 
