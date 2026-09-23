@@ -8,6 +8,7 @@
 #include <iomanip>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <sys/stat.h>
@@ -99,6 +100,7 @@ namespace
   {
     std::string signalFile;
     std::string baselineFile;
+    std::string analyticReconstructionFile;
     std::string trajectoryFile;
     bool requireComplete;
     double minimumPhotonEnergyEV;
@@ -123,6 +125,11 @@ namespace
       required(input, "signal_field").as<std::string>());
     config.baselineFile = resolvePath(filename,
       required(input, "zero_radiation_baseline").as<std::string>());
+    config.analyticReconstructionFile =
+      input["analytic_electron_reconstruction"] ?
+      resolvePath(filename,
+        input["analytic_electron_reconstruction"].as<std::string>()) :
+      std::string();
     config.trajectoryFile = input["trajectory_far_field"] ?
       resolvePath(filename,
         input["trajectory_far_field"].as<std::string>()) : std::string();
@@ -151,8 +158,13 @@ namespace
       throw std::runtime_error("output.compression must be in [0,9]");
     if (config.signalFile == config.baselineFile ||
         config.outputFile == config.signalFile ||
-        config.outputFile == config.baselineFile)
-      throw std::runtime_error("Signal, baseline, and output paths must differ");
+        config.outputFile == config.baselineFile ||
+        (!config.analyticReconstructionFile.empty() &&
+         (config.outputFile == config.analyticReconstructionFile ||
+          config.analyticReconstructionFile == config.signalFile ||
+          config.analyticReconstructionFile == config.baselineFile)))
+      throw std::runtime_error(
+        "Signal, baseline, analytic reconstruction, and output paths must differ");
     return config;
   }
 
@@ -341,12 +353,174 @@ namespace
     std::vector<double> times_;
   };
 
+  class ReconstructedFieldFile
+  {
+  public:
+    ReconstructedFieldFile(const std::string& filename, bool requireComplete)
+      : filename_(filename), file_(-1), group_(-1), electric_(-1),
+        magnetic_(-1), samples_(0), nx_(0), ny_(0), planeZ_(0.0),
+        xFirst_(0.0), yFirst_(0.0), dx_(0.0), dy_(0.0), times_()
+    {
+      file_ = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+      requireHandle(file_, "Cannot open reconstructed field file: " +
+        filename);
+      try
+        {
+          group_ = H5Gopen2(file_, "/reconstructed_field", H5P_DEFAULT);
+          requireHandle(group_, "Missing /reconstructed_field in " +
+            filename);
+          if (requireComplete && readByteDataset(group_, "complete") == 0)
+            throw std::runtime_error(
+              "Incomplete reconstructed field file: " + filename);
+          samples_ = static_cast<std::size_t>(
+            readUnsignedAttribute(group_, "samples"));
+          nx_ = static_cast<std::size_t>(
+            readUnsignedAttribute(group_, "nx"));
+          ny_ = static_cast<std::size_t>(
+            readUnsignedAttribute(group_, "ny"));
+          planeZ_ = readDoubleAttribute(group_, "plane_z_m");
+          xFirst_ = readDoubleAttribute(group_, "x_first_m");
+          yFirst_ = readDoubleAttribute(group_, "y_first_m");
+          dx_ = readDoubleAttribute(group_, "dx_m");
+          dy_ = readDoubleAttribute(group_, "dy_m");
+          if (samples_ < 3 || nx_ == 0 || ny_ == 0 ||
+              !(dx_ > 0.0) || !(dy_ > 0.0))
+            throw std::runtime_error(
+              "Invalid reconstructed field geometry: " + filename);
+          hid_t time = H5Dopen2(group_, "time_s", H5P_DEFAULT);
+          requireHandle(time,
+            "Missing reconstructed field time axis: " + filename);
+          times_.resize(samples_);
+          const herr_t timeStatus = H5Dread(time, H5T_NATIVE_DOUBLE,
+            H5S_ALL, H5S_ALL, H5P_DEFAULT, &times_[0]);
+          H5Dclose(time);
+          requireStatus(timeStatus,
+            "Cannot read reconstructed field time axis");
+          electric_ = H5Dopen2(group_, "electric_V_per_m", H5P_DEFAULT);
+          magnetic_ = H5Dopen2(group_, "magnetic_T", H5P_DEFAULT);
+          requireHandle(electric_, "Missing reconstructed electric field");
+          requireHandle(magnetic_, "Missing reconstructed magnetic field");
+        }
+      catch (...)
+        {
+          close();
+          throw;
+        }
+    }
+
+    ~ReconstructedFieldFile() { close(); }
+
+    void readBlock(std::size_t y, std::size_t x, std::size_t count,
+                   std::vector<FieldPoint>& values) const
+    {
+      if (y >= ny_ || x + count > nx_ || count == 0)
+        throw std::out_of_range(
+          "Reconstructed field block is outside detector plane");
+      const std::size_t scalarCount = samples_ * count * 3;
+      std::vector<double> electric(scalarCount);
+      std::vector<double> magnetic(scalarCount);
+      hsize_t start[4] = {0, static_cast<hsize_t>(y),
+                          static_cast<hsize_t>(x), 0};
+      hsize_t size[4] = {static_cast<hsize_t>(samples_), 1,
+                         static_cast<hsize_t>(count), 3};
+      hid_t memorySpace = H5Screate_simple(4, size, NULL);
+      requireHandle(memorySpace,
+        "Cannot create reconstructed field memory space");
+      hid_t electricSpace = H5Dget_space(electric_);
+      hid_t magneticSpace = H5Dget_space(magnetic_);
+      requireHandle(electricSpace,
+        "Cannot inspect reconstructed electric field");
+      requireHandle(magneticSpace,
+        "Cannot inspect reconstructed magnetic field");
+      requireStatus(H5Sselect_hyperslab(electricSpace, H5S_SELECT_SET,
+        start, NULL, size, NULL),
+        "Cannot select reconstructed electric field block");
+      requireStatus(H5Sselect_hyperslab(magneticSpace, H5S_SELECT_SET,
+        start, NULL, size, NULL),
+        "Cannot select reconstructed magnetic field block");
+      const herr_t electricStatus = H5Dread(electric_, H5T_NATIVE_DOUBLE,
+        memorySpace, electricSpace, H5P_DEFAULT, &electric[0]);
+      const herr_t magneticStatus = H5Dread(magnetic_, H5T_NATIVE_DOUBLE,
+        memorySpace, magneticSpace, H5P_DEFAULT, &magnetic[0]);
+      H5Sclose(electricSpace);
+      H5Sclose(magneticSpace);
+      H5Sclose(memorySpace);
+      requireStatus(electricStatus,
+        "Cannot read reconstructed electric field block");
+      requireStatus(magneticStatus,
+        "Cannot read reconstructed magnetic field block");
+      values.resize(samples_ * count);
+      for (std::size_t index = 0; index < values.size(); ++index)
+        for (unsigned int component = 0; component < 3; ++component)
+          {
+            values[index].electric[component] = electric[3 * index + component];
+            values[index].magnetic[component] = magnetic[3 * index + component];
+          }
+    }
+
+    void close()
+    {
+      if (magnetic_ >= 0) H5Dclose(magnetic_);
+      if (electric_ >= 0) H5Dclose(electric_);
+      if (group_ >= 0) H5Gclose(group_);
+      if (file_ >= 0) H5Fclose(file_);
+      magnetic_ = electric_ = group_ = file_ = -1;
+    }
+
+    const std::string& filename() const { return filename_; }
+    std::size_t samples() const { return samples_; }
+    std::size_t nx() const { return nx_; }
+    std::size_t ny() const { return ny_; }
+    double planeZ() const { return planeZ_; }
+    double xFirst() const { return xFirst_; }
+    double yFirst() const { return yFirst_; }
+    double dx() const { return dx_; }
+    double dy() const { return dy_; }
+    const std::vector<double>& times() const { return times_; }
+
+  private:
+    ReconstructedFieldFile(const ReconstructedFieldFile&);
+    ReconstructedFieldFile& operator=(const ReconstructedFieldFile&);
+    std::string filename_;
+    hid_t file_;
+    hid_t group_;
+    hid_t electric_;
+    hid_t magnetic_;
+    std::size_t samples_;
+    std::size_t nx_;
+    std::size_t ny_;
+    double planeZ_;
+    double xFirst_;
+    double yFirst_;
+    double dx_;
+    double dy_;
+    std::vector<double> times_;
+  };
+
   bool nearlyEqual(double left, double right)
   {
     const double scale = std::max(std::numeric_limits<double>::min(),
       std::max(std::abs(left), std::abs(right)));
     return std::abs(left - right) <=
       256.0 * std::numeric_limits<double>::epsilon() * scale;
+  }
+
+  void validateMatchedGeometry(const FieldFile& field,
+                               const ReconstructedFieldFile& reconstructed)
+  {
+    if (field.samples() != reconstructed.samples() ||
+        field.nx() != reconstructed.nx() ||
+        field.ny() != reconstructed.ny() ||
+        !nearlyEqual(field.planeZ(), reconstructed.planeZ()) ||
+        !nearlyEqual(field.xFirst(), reconstructed.xFirst()) ||
+        !nearlyEqual(field.yFirst(), reconstructed.yFirst()) ||
+        !nearlyEqual(field.dx(), reconstructed.dx()) ||
+        !nearlyEqual(field.dy(), reconstructed.dy()) ||
+        !nearlyEqual(field.times().front(), reconstructed.times().front()) ||
+        !nearlyEqual(field.times().back(), reconstructed.times().back()))
+      throw std::runtime_error(
+        "Retirement and analytic-reconstruction fields have different "
+        "detector geometry or time extent");
   }
 
   void validateMatched(const FieldFile& signal, const FieldFile& baseline)
@@ -423,6 +597,47 @@ namespace
         output[sample] = output_[sample] * normalization;
     }
 
+    void applyAnalytic(const std::vector<double>& input,
+                       std::vector<double>& real,
+                       std::vector<double>& quadrature)
+    {
+      if (input.size() != samples_)
+        throw std::invalid_argument("Band-filter series has wrong length");
+      std::copy(input.begin(), input.end(), input_);
+      fftw_execute(forward_);
+      savedReal_.resize(keep_.size());
+      savedImaginary_.resize(keep_.size());
+      for (std::size_t bin = 0; bin < keep_.size(); ++bin)
+        {
+          if (!keep_[bin])
+            spectrum_[bin][0] = spectrum_[bin][1] = 0.0;
+          savedReal_[bin] = spectrum_[bin][0];
+          savedImaginary_[bin] = spectrum_[bin][1];
+        }
+      fftw_execute(inverse_);
+      real.resize(samples_);
+      const double normalization = 1.0 / static_cast<double>(samples_);
+      for (std::size_t sample = 0; sample < samples_; ++sample)
+        real[sample] = output_[sample] * normalization;
+
+      for (std::size_t bin = 0; bin < keep_.size(); ++bin)
+        {
+          const bool selfConjugate = bin == 0 ||
+            (samples_ % 2 == 0 && bin == samples_ / 2);
+          if (selfConjugate)
+            spectrum_[bin][0] = spectrum_[bin][1] = 0.0;
+          else
+            {
+              spectrum_[bin][0] = savedImaginary_[bin];
+              spectrum_[bin][1] = -savedReal_[bin];
+            }
+        }
+      fftw_execute(inverse_);
+      quadrature.resize(samples_);
+      for (std::size_t sample = 0; sample < samples_; ++sample)
+        quadrature[sample] = output_[sample] * normalization;
+    }
+
     std::size_t keptBins() const { return keptBins_; }
 
   private:
@@ -435,6 +650,8 @@ namespace
     fftw_plan forward_;
     fftw_plan inverse_;
     std::vector<bool> keep_;
+    std::vector<double> savedReal_;
+    std::vector<double> savedImaginary_;
     std::size_t keptBins_;
   };
 
@@ -472,6 +689,19 @@ namespace
                           double area)
   {
     const double value = (ex * by - ey * bx) * area / kMu0;
+    power.signedPower[sample] += value;
+    power.forwardPower[sample] += std::max(0.0, value);
+  }
+
+  void accumulateCycleAveragedPoynting(
+      PowerSeries& power, std::size_t sample,
+      double exReal, double eyReal, double bxReal, double byReal,
+      double exQuadrature, double eyQuadrature,
+      double bxQuadrature, double byQuadrature, double area)
+  {
+    const double value = 0.5 *
+      (exReal * byReal + exQuadrature * byQuadrature -
+       eyReal * bxReal - eyQuadrature * bxQuadrature) * area / kMu0;
     power.signedPower[sample] += value;
     power.forwardPower[sample] += std::max(0.0, value);
   }
@@ -835,6 +1065,13 @@ int main(int argc, char** argv)
       FieldFile signal(config.signalFile, config.requireComplete);
       FieldFile baseline(config.baselineFile, config.requireComplete);
       validateMatched(signal, baseline);
+      std::unique_ptr<ReconstructedFieldFile> analytic;
+      if (!config.analyticReconstructionFile.empty())
+        {
+          analytic.reset(new ReconstructedFieldFile(
+            config.analyticReconstructionFile, config.requireComplete));
+          validateMatchedGeometry(signal, *analytic);
+        }
       const std::vector<double>& time = signal.times();
       const double dt = (time.back() - time.front()) /
         static_cast<double>(time.size() - 1);
@@ -844,6 +1081,12 @@ int main(int argc, char** argv)
         if (!(time[sample] > time[sample - 1]))
           throw std::runtime_error(
             "Detector laboratory sample times must be strictly increasing");
+      if (analytic.get())
+        for (std::size_t sample = 1; sample < analytic->times().size();
+             ++sample)
+          if (!(analytic->times()[sample] > analytic->times()[sample - 1]))
+            throw std::runtime_error(
+              "Analytic-reconstruction sample times must be strictly increasing");
       std::vector<double> bandTime(time.size());
       for (std::size_t sample = 0; sample < time.size(); ++sample)
         bandTime[sample] = time.front() + dt * static_cast<double>(sample);
@@ -860,14 +1103,29 @@ int main(int argc, char** argv)
         PowerSeries(time.size()), PowerSeries(time.size()),
         PowerSeries(time.size())
       };
+      PowerSeries bandCycleAverage[3] = {
+        PowerSeries(time.size()), PowerSeries(time.size()),
+        PowerSeries(time.size())
+      };
+      PowerSeries analyticRaw(time.size());
+      PowerSeries analyticBand(time.size());
+      PowerSeries analyticBandCycleAverage(time.size());
+      PowerSeries methodResidualBand(time.size());
+      PowerSeries methodResidualBandCycleAverage(time.size());
       BandFilter filter(time.size(), dt, config.minimumPhotonEnergyEV,
                         config.maximumPhotonEnergyEV);
       const double area = signal.dx() * signal.dy();
       std::vector<FieldPoint> signalBlock;
       std::vector<FieldPoint> baselineBlock;
+      std::vector<FieldPoint> analyticBlock;
       std::vector<double> series(time.size());
       std::vector<double> uniformSeries(time.size());
       std::vector<double> filtered[4];
+      std::vector<double> quadrature[4];
+      std::vector<double> retirementFiltered[4];
+      std::vector<double> retirementQuadrature[4];
+      std::vector<double> analyticFiltered[4];
+      std::vector<double> analyticQuadrature[4];
 
       for (std::size_t y = 0; y < signal.ny(); ++y)
         for (std::size_t x = 0; x < signal.nx();
@@ -877,6 +1135,8 @@ int main(int argc, char** argv)
                                                signal.nx() - x);
             signal.readBlock(y, x, count, signalBlock);
             baseline.readBlock(y, x, count, baselineBlock);
+            if (analytic.get())
+              analytic->readBlock(y, x, count, analyticBlock);
             for (std::size_t point = 0; point < count; ++point)
               {
                 for (std::size_t sample = 0; sample < time.size(); ++sample)
@@ -893,6 +1153,16 @@ int main(int argc, char** argv)
                         scenarioComponent(scenario, signalBlock[index],
                           baselineBlock[index], 3), area);
                   }
+                if (analytic.get())
+                  for (std::size_t sample = 0; sample < time.size(); ++sample)
+                    {
+                      const std::size_t index = sample * count + point;
+                      accumulatePoynting(analyticRaw, sample,
+                        component(analyticBlock[index], 0),
+                        component(analyticBlock[index], 1),
+                        component(analyticBlock[index], 2),
+                        component(analyticBlock[index], 3), area);
+                    }
                 for (unsigned int scenario = 0; scenario < 3; ++scenario)
                   {
                     for (unsigned int componentIndex = 0;
@@ -907,14 +1177,92 @@ int main(int argc, char** argv)
                               componentIndex);
                           }
                         resampleLinear(time, series, bandTime, uniformSeries);
-                        filter.apply(uniformSeries,
-                                     filtered[componentIndex]);
+                        filter.applyAnalytic(uniformSeries,
+                          filtered[componentIndex],
+                          quadrature[componentIndex]);
                       }
                     for (std::size_t sample = 0;
                          sample < time.size(); ++sample)
-                      accumulatePoynting(band[scenario], sample,
-                        filtered[0][sample], filtered[1][sample],
-                        filtered[2][sample], filtered[3][sample], area);
+                      {
+                        accumulatePoynting(band[scenario], sample,
+                          filtered[0][sample], filtered[1][sample],
+                          filtered[2][sample], filtered[3][sample], area);
+                        accumulateCycleAveragedPoynting(
+                          bandCycleAverage[scenario], sample,
+                          filtered[0][sample], filtered[1][sample],
+                          filtered[2][sample], filtered[3][sample],
+                          quadrature[0][sample], quadrature[1][sample],
+                          quadrature[2][sample], quadrature[3][sample], area);
+                      }
+                  }
+                if (analytic.get())
+                  {
+                    for (unsigned int componentIndex = 0;
+                         componentIndex < 4; ++componentIndex)
+                      {
+                        retirementFiltered[componentIndex] =
+                          filtered[componentIndex];
+                        retirementQuadrature[componentIndex] =
+                          quadrature[componentIndex];
+                        for (std::size_t sample = 0;
+                             sample < time.size(); ++sample)
+                          {
+                            const std::size_t index = sample * count + point;
+                            series[sample] = component(
+                              analyticBlock[index], componentIndex);
+                          }
+                        resampleLinear(analytic->times(), series, bandTime,
+                                       uniformSeries);
+                        filter.applyAnalytic(uniformSeries,
+                          analyticFiltered[componentIndex],
+                          analyticQuadrature[componentIndex]);
+                      }
+                    for (std::size_t sample = 0;
+                         sample < time.size(); ++sample)
+                      {
+                        accumulatePoynting(analyticBand, sample,
+                          analyticFiltered[0][sample],
+                          analyticFiltered[1][sample],
+                          analyticFiltered[2][sample],
+                          analyticFiltered[3][sample], area);
+                        accumulateCycleAveragedPoynting(
+                          analyticBandCycleAverage, sample,
+                          analyticFiltered[0][sample],
+                          analyticFiltered[1][sample],
+                          analyticFiltered[2][sample],
+                          analyticFiltered[3][sample],
+                          analyticQuadrature[0][sample],
+                          analyticQuadrature[1][sample],
+                          analyticQuadrature[2][sample],
+                          analyticQuadrature[3][sample], area);
+                        accumulatePoynting(methodResidualBand, sample,
+                          retirementFiltered[0][sample] -
+                            analyticFiltered[0][sample],
+                          retirementFiltered[1][sample] -
+                            analyticFiltered[1][sample],
+                          retirementFiltered[2][sample] -
+                            analyticFiltered[2][sample],
+                          retirementFiltered[3][sample] -
+                            analyticFiltered[3][sample], area);
+                        accumulateCycleAveragedPoynting(
+                          methodResidualBandCycleAverage, sample,
+                          retirementFiltered[0][sample] -
+                            analyticFiltered[0][sample],
+                          retirementFiltered[1][sample] -
+                            analyticFiltered[1][sample],
+                          retirementFiltered[2][sample] -
+                            analyticFiltered[2][sample],
+                          retirementFiltered[3][sample] -
+                            analyticFiltered[3][sample],
+                          retirementQuadrature[0][sample] -
+                            analyticQuadrature[0][sample],
+                          retirementQuadrature[1][sample] -
+                            analyticQuadrature[1][sample],
+                          retirementQuadrature[2][sample] -
+                            analyticQuadrature[2][sample],
+                          retirementQuadrature[3][sample] -
+                            analyticQuadrature[3][sample], area);
+                      }
                   }
               }
           }
@@ -924,6 +1272,8 @@ int main(int argc, char** argv)
       double bandEnergy[3] = {};
       double rawPeak[3] = {};
       double bandPeak[3] = {};
+      double bandCycleAverageEnergy[3] = {};
+      double bandCycleAveragePeak[3] = {};
       for (unsigned int scenario = 0; scenario < 3; ++scenario)
         {
           rawEnergy[scenario] = integrate(time, raw[scenario].forwardPower);
@@ -931,6 +1281,40 @@ int main(int argc, char** argv)
             bandTime, band[scenario].forwardPower);
           rawPeak[scenario] = peak(raw[scenario].forwardPower);
           bandPeak[scenario] = peak(band[scenario].forwardPower);
+          bandCycleAverageEnergy[scenario] = integrate(bandTime,
+            bandCycleAverage[scenario].forwardPower);
+          bandCycleAveragePeak[scenario] = peak(
+            bandCycleAverage[scenario].forwardPower);
+        }
+      double analyticRawEnergy = 0.0;
+      double analyticBandEnergy = 0.0;
+      double analyticRawPeak = 0.0;
+      double analyticBandPeak = 0.0;
+      double analyticBandCycleAverageEnergy = 0.0;
+      double analyticBandCycleAveragePeak = 0.0;
+      double methodResidualBandEnergy = 0.0;
+      double methodResidualBandPeak = 0.0;
+      double methodResidualBandCycleAverageEnergy = 0.0;
+      double methodResidualBandCycleAveragePeak = 0.0;
+      if (analytic.get())
+        {
+          analyticRawEnergy = integrate(analytic->times(),
+            analyticRaw.forwardPower);
+          analyticBandEnergy = integrate(bandTime,
+            analyticBand.forwardPower);
+          analyticRawPeak = peak(analyticRaw.forwardPower);
+          analyticBandPeak = peak(analyticBand.forwardPower);
+          analyticBandCycleAverageEnergy = integrate(bandTime,
+            analyticBandCycleAverage.forwardPower);
+          analyticBandCycleAveragePeak = peak(
+            analyticBandCycleAverage.forwardPower);
+          methodResidualBandEnergy = integrate(bandTime,
+            methodResidualBand.forwardPower);
+          methodResidualBandPeak = peak(methodResidualBand.forwardPower);
+          methodResidualBandCycleAverageEnergy = integrate(bandTime,
+            methodResidualBandCycleAverage.forwardPower);
+          methodResidualBandCycleAveragePeak = peak(
+            methodResidualBandCycleAverage.forwardPower);
         }
 
       TrajectoryPower trajectory;
@@ -964,6 +1348,14 @@ int main(int argc, char** argv)
               writeVector(group,
                 (prefix + "_band_forward_power_W").c_str(),
                 band[scenario].forwardPower, config.compression, "W");
+              writeVector(group,
+                (prefix + "_band_cycle_averaged_signed_power_W").c_str(),
+                bandCycleAverage[scenario].signedPower,
+                config.compression, "W");
+              writeVector(group,
+                (prefix + "_band_cycle_averaged_forward_power_W").c_str(),
+                bandCycleAverage[scenario].forwardPower,
+                config.compression, "W");
               writeDoubleAttribute(group,
                 (prefix + "_forward_energy_J").c_str(),
                 rawEnergy[scenario]);
@@ -976,6 +1368,106 @@ int main(int argc, char** argv)
               writeDoubleAttribute(group,
                 (prefix + "_band_peak_forward_power_W").c_str(),
                 bandPeak[scenario]);
+              writeDoubleAttribute(group,
+                (prefix + "_band_cycle_averaged_forward_energy_J").c_str(),
+                bandCycleAverageEnergy[scenario]);
+              writeDoubleAttribute(group,
+                (prefix +
+                 "_band_cycle_averaged_peak_forward_power_W").c_str(),
+                bandCycleAveragePeak[scenario]);
+            }
+          if (analytic.get())
+            {
+              writeVector(group, "analytic_reconstruction_time_s",
+                analytic->times(), config.compression, "s");
+              writeVector(group, "analytic_reconstruction_signed_power_W",
+                analyticRaw.signedPower, config.compression, "W");
+              writeVector(group, "analytic_reconstruction_forward_power_W",
+                analyticRaw.forwardPower, config.compression, "W");
+              writeVector(group,
+                "analytic_reconstruction_band_signed_power_W",
+                analyticBand.signedPower, config.compression, "W");
+              writeVector(group,
+                "analytic_reconstruction_band_forward_power_W",
+                analyticBand.forwardPower, config.compression, "W");
+              writeVector(group, "method_residual_band_signed_power_W",
+                methodResidualBand.signedPower, config.compression, "W");
+              writeVector(group, "method_residual_band_forward_power_W",
+                methodResidualBand.forwardPower, config.compression, "W");
+              writeVector(group,
+                "analytic_reconstruction_band_cycle_averaged_signed_power_W",
+                analyticBandCycleAverage.signedPower,
+                config.compression, "W");
+              writeVector(group,
+                "analytic_reconstruction_band_cycle_averaged_forward_power_W",
+                analyticBandCycleAverage.forwardPower,
+                config.compression, "W");
+              writeVector(group,
+                "method_residual_band_cycle_averaged_signed_power_W",
+                methodResidualBandCycleAverage.signedPower,
+                config.compression, "W");
+              writeVector(group,
+                "method_residual_band_cycle_averaged_forward_power_W",
+                methodResidualBandCycleAverage.forwardPower,
+                config.compression, "W");
+              writeDoubleAttribute(group,
+                "analytic_reconstruction_forward_energy_J",
+                analyticRawEnergy);
+              writeDoubleAttribute(group,
+                "analytic_reconstruction_band_forward_energy_J",
+                analyticBandEnergy);
+              writeDoubleAttribute(group,
+                "analytic_reconstruction_peak_forward_power_W",
+                analyticRawPeak);
+              writeDoubleAttribute(group,
+                "analytic_reconstruction_band_peak_forward_power_W",
+                analyticBandPeak);
+              writeDoubleAttribute(group,
+                "method_residual_band_forward_energy_J",
+                methodResidualBandEnergy);
+              writeDoubleAttribute(group,
+                "analytic_reconstruction_band_cycle_averaged_forward_energy_J",
+                analyticBandCycleAverageEnergy);
+              writeDoubleAttribute(group,
+                "analytic_reconstruction_band_cycle_averaged_peak_forward_power_W",
+                analyticBandCycleAveragePeak);
+              writeDoubleAttribute(group,
+                "method_residual_band_cycle_averaged_forward_energy_J",
+                methodResidualBandCycleAverageEnergy);
+              writeDoubleAttribute(group,
+                "method_residual_band_cycle_averaged_peak_forward_power_W",
+                methodResidualBandCycleAveragePeak);
+              writeDoubleAttribute(group,
+                "retirement_to_analytic_band_cycle_averaged_energy_ratio",
+                safeRatio(bandCycleAverageEnergy[2],
+                          analyticBandCycleAverageEnergy));
+              writeDoubleAttribute(group,
+                "retirement_to_analytic_band_cycle_averaged_peak_power_ratio",
+                safeRatio(bandCycleAveragePeak[2],
+                          analyticBandCycleAveragePeak));
+              writeDoubleAttribute(group,
+                "method_residual_to_analytic_band_cycle_averaged_energy_ratio",
+                safeRatio(methodResidualBandCycleAverageEnergy,
+                          analyticBandCycleAverageEnergy));
+              writeDoubleAttribute(group,
+                "method_residual_to_analytic_band_cycle_averaged_peak_power_ratio",
+                safeRatio(methodResidualBandCycleAveragePeak,
+                          analyticBandCycleAveragePeak));
+              writeDoubleAttribute(group,
+                "method_residual_band_peak_forward_power_W",
+                methodResidualBandPeak);
+              writeDoubleAttribute(group,
+                "retirement_to_analytic_band_energy_ratio",
+                safeRatio(bandEnergy[2], analyticBandEnergy));
+              writeDoubleAttribute(group,
+                "retirement_to_analytic_band_peak_power_ratio",
+                safeRatio(bandPeak[2], analyticBandPeak));
+              writeDoubleAttribute(group,
+                "method_residual_to_analytic_band_energy_ratio",
+                safeRatio(methodResidualBandEnergy, analyticBandEnergy));
+              writeDoubleAttribute(group,
+                "method_residual_to_analytic_band_peak_power_ratio",
+                safeRatio(methodResidualBandPeak, analyticBandPeak));
             }
           writeDoubleAttribute(group, "photon_energy_min_eV",
             config.minimumPhotonEnergyEV);
@@ -1009,6 +1501,29 @@ int main(int argc, char** argv)
               writeDoubleAttribute(group,
                 "field_to_trajectory_band_peak_power_ratio",
                 safeRatio(bandPeak[2], trajectory.peakPower));
+              writeDoubleAttribute(group,
+                "cycle_averaged_field_to_trajectory_band_energy_ratio",
+                safeRatio(bandCycleAverageEnergy[2], trajectory.energy));
+              writeDoubleAttribute(group,
+                "cycle_averaged_field_to_trajectory_band_peak_power_ratio",
+                safeRatio(bandCycleAveragePeak[2], trajectory.peakPower));
+              if (analytic.get())
+                {
+                  writeDoubleAttribute(group,
+                    "analytic_to_trajectory_band_energy_ratio",
+                    safeRatio(analyticBandEnergy, trajectory.energy));
+                  writeDoubleAttribute(group,
+                    "analytic_to_trajectory_band_peak_power_ratio",
+                    safeRatio(analyticBandPeak, trajectory.peakPower));
+                  writeDoubleAttribute(group,
+                    "cycle_averaged_analytic_to_trajectory_band_energy_ratio",
+                    safeRatio(analyticBandCycleAverageEnergy,
+                              trajectory.energy));
+                  writeDoubleAttribute(group,
+                    "cycle_averaged_analytic_to_trajectory_band_peak_power_ratio",
+                    safeRatio(analyticBandCycleAveragePeak,
+                              trajectory.peakPower));
+                }
               writeStringAttribute(group,
                 "trajectory_comparison_requirement",
                 "trajectory angular grid must represent the same accepted radiation cone as the finite field plane");
@@ -1018,8 +1533,17 @@ int main(int argc, char** argv)
             }
           writeStringAttribute(group, "difference_definition",
             "Poynting flux of E_signal-E_baseline and B_signal-B_baseline; powers are not subtracted");
+          if (analytic.get())
+            {
+              writeStringAttribute(group, "method_residual_definition",
+                "Poynting flux of the band-limited retirement difference field minus the band-limited analytic-electron-reconstruction field; powers are not subtracted");
+              writeStringAttribute(group, "analytic_reconstruction_role",
+                "cleaned field produced by subtracting the old straight-line analytic electron background from a non-retired signal run");
+            }
           writeStringAttribute(group, "band_filter_definition",
             "linear resampling to a uniform time grid followed by rectangular finite-record DFT; bins outside requested photon-energy band are zeroed before inverse transform");
+          writeStringAttribute(group, "cycle_averaged_power_definition",
+            "one-half Re(E_analytic cross conjugate(B_analytic))_z/mu0 integrated over the plane after band filtering; this is the field-side quantity comparable to trajectory_band_power_W");
           writeStringAttribute(group, "forward_power_definition",
             "integral max((E cross B)_z/mu0,0) dx dy over stored cell centres");
           hsize_t scalar[1] = {1};
@@ -1055,17 +1579,51 @@ int main(int argc, char** argv)
                 << " W, energy=" << bandEnergy[1] << " J\n"
                 << "  difference: peak=" << bandPeak[2]
                 << " W, energy=" << bandEnergy[2] << " J\n"
+                << "  difference cycle-average: peak="
+                << bandCycleAveragePeak[2] << " W, energy="
+                << bandCycleAverageEnergy[2] << " J\n"
                 << "  baseline/difference: peak="
                 << safeRatio(bandPeak[1], bandPeak[2])
                 << ", energy=" << safeRatio(bandEnergy[1], bandEnergy[2])
                 << "\n";
+      if (analytic.get())
+        std::cout << "  analytic:   peak=" << analyticBandPeak
+                  << " W, energy=" << analyticBandEnergy << " J\n"
+                  << "  analytic cycle-average: peak="
+                  << analyticBandCycleAveragePeak << " W, energy="
+                  << analyticBandCycleAverageEnergy << " J\n"
+                  << "  retirement/analytic: peak="
+                  << safeRatio(bandPeak[2], analyticBandPeak)
+                  << ", energy="
+                  << safeRatio(bandEnergy[2], analyticBandEnergy) << "\n"
+                  << "  method residual/analytic: peak="
+                  << safeRatio(methodResidualBandPeak, analyticBandPeak)
+                  << ", energy="
+                  << safeRatio(methodResidualBandEnergy, analyticBandEnergy)
+                  << "\n";
       if (!config.trajectoryFile.empty())
         std::cout << "  trajectory: peak=" << trajectory.peakPower
                   << " W, band energy=" << trajectory.energy << " J\n"
                   << "  field/trajectory: peak="
                   << safeRatio(bandPeak[2], trajectory.peakPower)
                   << ", energy="
-                  << safeRatio(bandEnergy[2], trajectory.energy) << "\n";
+                  << safeRatio(bandEnergy[2], trajectory.energy) << "\n"
+                  << "  cycle-averaged field/trajectory: peak="
+                  << safeRatio(bandCycleAveragePeak[2], trajectory.peakPower)
+                  << ", energy="
+                  << safeRatio(bandCycleAverageEnergy[2], trajectory.energy)
+                  << "\n";
+      if (analytic.get() && !config.trajectoryFile.empty())
+        std::cout << "  analytic/trajectory: peak="
+                  << safeRatio(analyticBandPeak, trajectory.peakPower)
+                  << ", energy="
+                  << safeRatio(analyticBandEnergy, trajectory.energy) << "\n"
+                  << "  cycle-averaged analytic/trajectory: peak="
+                  << safeRatio(analyticBandCycleAveragePeak,
+                               trajectory.peakPower)
+                  << ", energy="
+                  << safeRatio(analyticBandCycleAverageEnergy,
+                               trajectory.energy) << "\n";
       return 0;
     }
   catch (const std::exception& error)

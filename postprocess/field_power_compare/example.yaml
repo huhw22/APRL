@@ -3,6 +3,10 @@
 input:
   signal_field: ../../output/retirement-signal/detectors/radiation.h5
   zero_radiation_baseline: ../../output/retirement-baseline/detectors/radiation.h5
+  # Optional cleaned field from field_reconstruction. This is the old route:
+  # run the same radiating case without retirement and subtract the analytic
+  # straight-line electron background offline.
+  analytic_electron_reconstruction: ../../output/analytic/reconstructed-fields.h5
   # Optional trajectory reference produced by trajectory_radiation. Its
   # configured angular grid must represent the same accepted radiation cone.
   trajectory_far_field: ../../output/retirement-signal/radiation-output.h5

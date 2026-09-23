@@ -39,7 +39,8 @@ absolute reference for this low-gamma orbit with the program's smooth fringe
 field and exact longitudinal dynamics. The table therefore supports numerical
 convergence of the implemented orbit/radiation calculation, not a 32% claim
 against a physically matched analytical solution. A matched high-gamma
-benchmark remains required before production use.
+benchmark is reported below. It diagnoses the power-comparison path but does
+not replace a production high-harmonic convergence study.
 
 ## Field reconstruction
 
@@ -89,3 +90,69 @@ These tests establish the power-comparison plumbing, event handling, and MPI
 carrier migration. They do not yet approve retirement for production: taper
 length/gap convergence, a physically representative high-gamma grid, and an
 entrance-state replay baseline remain required.
+
+## High-gamma paraxial power closure
+
+A dedicated diagnostic used laboratory and boost `gamma=1000`, a three-period
+`K=0.5`, 30 mm undulator, a coherent transverse Gaussian sheet, a 200 micrometre
+scale field plane, and the 50--100 eV fundamental band. The trajectory integral
+used the exact direction-dependent formula over a paraxial +/-0.26 mrad angular
+rectangle. Total bunch charge was fixed while the number of macro-particles was
+increased. The ratios below use the field-side cycle-averaged analytic-signal
+power, so their peak definition matches `trajectory_band_power_W`.
+
+| macro-particles | field/trajectory peak | field/trajectory band energy |
+| ---: | ---: | ---: |
+| 2 | 1.0581 | 1.6368 |
+| 8 | 0.9973 | 1.5436 |
+| 32 | 1.0085 | 1.0898 |
+| 128 | 1.0096 | 1.0067 |
+
+The matched `K=0` retirement baseline stayed at roughly `1e-17` or less of the
+radiating peak and at the `1e-18` scale in band energy. The earlier
+apparent peak excess was primarily a definition mismatch: for eight particles,
+the instantaneous real-field peak was 22.83 MW, while its cycle average was
+16.84 MW and the trajectory peak was 16.89 MW. Once identical power definitions
+and sufficient macro-particle sampling were used, both peak and energy closed
+to about one percent.
+
+Changing the paraxial trajectory rectangle from +/-0.18 to +/-0.35 mrad moved
+the accepted trajectory energy, as expected, but no single cutoff repaired the
+sparse eight-particle energy discrepancy. At these angles, exact nonparaxial
+geometric corrections are far too small to explain a 50% error. The observed
+convergence with macro-particle count therefore identifies coherent sampling
+statistics as the dominant energy-error source in this diagnostic; transverse
+FDTD dispersion remains a separate percent-level convergence item.
+
+## Retirement versus analytic electron subtraction
+
+The old non-retired route was retained as an independent check: a second plane
+fits each particle's downstream straight line, and `field_reconstruction`
+subtracts the resulting analytic uniformly moving electron field. In the
+32-particle high-gamma case all particles matched. The maximum transverse
+straight-line error was 0.401 micrometres, the maximum arrival-time error was
+`1.42e-18 s`, and the maximum direction error was `2.13e-6 rad`.
+
+With no transverse core smoothing, the two cleaned field routes agreed in
+cycle-averaged peak to `2.1e-5` relative. Retirement energy was 3.422 nJ and the
+analytic-subtraction result was 3.320 nJ, a 3.1% difference; their field-level
+residual contained 5.0% of the analytic result's instantaneous band energy.
+Increasing the analytic core smoothing to 5 micrometres reduced that residual
+energy ratio to 0.86%, while changing the analytic cycle-averaged energy to
+3.328 nJ. The peak is robust, but the few-percent energy sensitivity shows that
+the old route retains a model-dependent electron-core parameter.
+
+The resulting first-version policy is therefore:
+
+- use retirement minus the matched `K=0` field at the E/B-amplitude level as
+  the primary, model-light estimate after macro-particle convergence;
+- retain analytic electron subtraction as an independent diagnostic and report
+  its smoothing sensitivity rather than tuning it silently;
+- compare either route with trajectory radiation only through the
+  cycle-averaged power definition and a documented angular acceptance.
+
+This benchmark is deliberately a three-period coherent fundamental test, not a
+production approval for high harmonics. Time step, longitudinal and transverse
+resolution, retirement length/gap, aperture, CPML, and long-undulator
+convergence are still required for a physical run. The current simulator also
+warns that a Gauss-consistent initial self-field has not yet been implemented.
