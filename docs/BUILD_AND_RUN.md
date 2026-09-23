@@ -72,6 +72,9 @@ after checking the reported physical and interaction boundaries.
 The examples select `mesh.field_solver: cowan-z`. This requires `dx >= dz`
 and `dy >= dz`; an invalid card exits before field allocation and particle
 input and prints a transverse-grid recommendation. The startup log records the
-Cowan coefficients and transverse vacuum dispersion diagnostics. CPML is not
-yet connected. A nonempty TF/SF `incident_waves` list currently requires
-`mesh.field_solver: yee` until the incident-boundary stencil is generalized.
+Cowan coefficients and transverse vacuum dispersion diagnostics. They also
+select compact CFS-CPML and report its actual auxiliary memory. A nonempty
+TF/SF `incident_waves` list is currently rejected with CPML, and Cowan TF/SF
+remains unavailable until the injection surface is generalized. See
+[MAXWELL_COWAN_CPML.md](MAXWELL_COWAN_CPML.md) for the numerical details and
+current MPI restriction.

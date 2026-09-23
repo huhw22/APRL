@@ -273,6 +273,10 @@ namespace fel
     initializeGeometry();
     initializeSources();
 
+    if (sources_.maxwellIncidentWaveCount() > 0 &&
+        config_.boundary.type == EBBoundaryType::Cpml)
+      throw std::runtime_error(
+        "CPML is active, but TF/SF seed injection has not yet been placed inside the CPML interior. This stage intentionally validates the no-seed absorbing boundary first; refusing an overlapping boundary configuration.");
     if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ &&
         sources_.maxwellIncidentWaveCount() > 0)
       throw std::runtime_error(
@@ -281,7 +285,15 @@ namespace fel
     initializeParticles();
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
-    halo_->installPhysicalBoundaryMask(*fields_);
+    if (config_.boundary.type == EBBoundaryType::Cpml)
+      fields_->setBoundary(std::unique_ptr<EBBoundaryOperator>(
+        new EBConvolutionalPML(
+          localGeometry_, globalGeometry_.nz, localZOffset_,
+          config_.boundary.cpml,
+          halo_->lowerRank() == MPI_PROC_NULL,
+          halo_->upperRank() == MPI_PROC_NULL)));
+    else
+      halo_->installPhysicalBoundaryMask(*fields_);
 
     if (sources_.maxwellIncidentWaveCount() > 0)
       {
@@ -297,6 +309,15 @@ namespace fel
 
     initializeTrajectoryOutput();
     initializeDetectorOutput();
+    const unsigned long long localBoundaryBytes =
+      static_cast<unsigned long long>(
+        fields_->memoryFootprint().boundaryBytes);
+    unsigned long long totalBoundaryBytes = 0;
+    unsigned long long maximumBoundaryBytes = 0;
+    MPI_Reduce(&localBoundaryBytes, &totalBoundaryBytes, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+    MPI_Reduce(&localBoundaryBytes, &maximumBoundaryBytes, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, communicator_);
     if (rank_ == 0)
       {
         logRoot(communicator_, config_.runtime.interactive() ?
@@ -349,12 +370,39 @@ namespace fel
               << coefficient.deltaYZ << ", delta_zx="
               << coefficient.deltaZX << ".";
             logRoot(communicator_, coefficientMessage.str());
+            logRoot(communicator_,
+              "Cowan-z stability guard passed: dz is the smallest spacing, the coefficient factorization is valid, and c*dt=dz. This is the analytic Courant boundary, so problem-scale convergence testing is still required.");
           }
         else
           logRoot(communicator_,
             "Maxwell solver: standard Yee FDTD regression mode.");
+        if (config_.boundary.type == EBBoundaryType::Cpml)
+          {
+            std::ostringstream boundaryMessage;
+            boundaryMessage << std::setprecision(8)
+              << "Boundary: unsplit CFS-CPML, cells=("
+              << config_.boundary.cpml.cells[0] << ", "
+              << config_.boundary.cpml.cells[1] << ", "
+              << config_.boundary.cpml.cells[2] << "), order="
+              << config_.boundary.cpml.polynomialOrder
+              << ", target reflection="
+              << config_.boundary.cpml.targetReflection
+              << ", kappa_max=" << config_.boundary.cpml.kappaMax
+              << ", alpha_fraction="
+              << config_.boundary.cpml.alphaFraction
+              << "; auxiliary memory total="
+              << static_cast<Double>(totalBoundaryBytes) /
+                 (1024.0 * 1024.0)
+              << " MiB, maximum rank="
+              << static_cast<Double>(maximumBoundaryBytes) /
+                 (1024.0 * 1024.0) << " MiB.";
+            logRoot(communicator_, boundaryMessage.str());
+          }
+        else
+          logRoot(communicator_,
+            "Boundary: PEC regression mode; no absorbing-layer state allocated.");
         logRoot(communicator_,
-          "WARNING: the initial Gauss-consistent particle field and CPML are not implemented; this is not yet a final radiation-production solver.");
+          "WARNING: the initial Gauss-consistent particle field is not implemented; this is not yet a final radiation-production solver.");
         logRoot(communicator_,
           "WARNING: particle subcycling is not implemented; the E/B field step must resolve every prescribed device field.");
       }
@@ -371,6 +419,42 @@ namespace fel
     if (nz < 2 * static_cast<std::size_t>(size_))
       throw std::invalid_argument(
         "Direct E/B grid requires at least two z cells per MPI rank");
+
+    if (config_.boundary.type == EBBoundaryType::Cpml)
+      {
+        const std::size_t globalCells[3] = {nx, ny, nz};
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          if (config_.boundary.cpml.cells[axis] > 0 &&
+              2 * config_.boundary.cpml.cells[axis] >= globalCells[axis])
+            {
+              std::ostringstream message;
+              message << "CPML on axis " << "xyz"[axis]
+                      << " uses " << config_.boundary.cpml.cells[axis]
+                      << " cells per face, but the global mesh has only "
+                      << globalCells[axis]
+                      << " cells; opposite layers must leave a non-PML interior";
+              throw std::invalid_argument(message.str());
+            }
+        const std::size_t baseCells = nz /
+          static_cast<std::size_t>(size_);
+        const std::size_t remainder = nz %
+          static_cast<std::size_t>(size_);
+        const std::size_t lowerEndCells = baseCells +
+          (remainder > 0 ? 1 : 0);
+        const std::size_t upperEndCells = baseCells +
+          (static_cast<std::size_t>(size_ - 1) < remainder ? 1 : 0);
+        if (config_.boundary.cpml.cells[2] > lowerEndCells ||
+            config_.boundary.cpml.cells[2] > upperEndCells)
+          {
+            std::ostringstream message;
+            message << "The current z-slab CPML implementation keeps each z absorbing layer on one endpoint MPI rank. cpml cells z="
+                    << config_.boundary.cpml.cells[2]
+                    << ", endpoint slab cells=(" << lowerEndCells
+                    << ", " << upperEndCells
+                    << "); reduce MPI ranks, increase nz, or reduce the z CPML thickness.";
+            throw std::invalid_argument(message.str());
+          }
+      }
 
     if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
       {

@@ -16,6 +16,7 @@ set(DIRECT_EB_SOURCES
   src/boostframe.cpp
   src/config.cpp
   src/eb_bunch.cpp
+  src/eb_cpml.cpp
   src/eb_deposition.cpp
   src/eb_field.cpp
   src/eb_incident.cpp

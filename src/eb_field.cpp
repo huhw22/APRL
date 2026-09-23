@@ -175,7 +175,8 @@ namespace fel
     : lowerZPhysical_(lowerZPhysical), upperZPhysical_(upperZPhysical)
   {}
 
-  void PerfectElectricConductorBoundary::afterMagneticUpdate(EBFieldGrid&)
+  void PerfectElectricConductorBoundary::afterMagneticUpdate(
+      EBFieldGrid&, const EBElectricHaloView&)
   {}
 
   void PerfectElectricConductorBoundary::afterElectricUpdate(
@@ -303,7 +304,7 @@ namespace fel
       advanceMagneticCowan(halo);
     else
       advanceMagneticYee();
-    boundary_->afterMagneticUpdate(*this);
+    boundary_->afterMagneticUpdate(*this, halo);
   }
 
   void EBFieldGrid::advanceMagneticYee()
@@ -689,6 +690,25 @@ namespace fel
               std::abs(normalization[axis] - 1.0) > 1.0e-12)
             throw std::invalid_argument(
               "Cowan-z smoothing coefficients are not normalized");
+        const Double rx = cowan_.ratio[0];
+        const Double ry = cowan_.ratio[1];
+        const Double rz = cowan_.ratio[2];
+        const Double factorization[4] = {
+          4.0 * ((cowan_.beta[2] + 2.0 * cowan_.deltaZX) / rz +
+                 (cowan_.beta[1] + 2.0 * cowan_.deltaXY) / ry),
+          4.0 * ((cowan_.beta[0] + 2.0 * cowan_.deltaXY) / rx +
+                 (cowan_.beta[2] + 2.0 * cowan_.deltaYZ) / rz),
+          4.0 * ((cowan_.beta[1] + 2.0 * cowan_.deltaYZ) / ry +
+                 (cowan_.beta[0] + 2.0 * cowan_.deltaZX) / rx),
+          16.0 * (cowan_.deltaYZ / (ry * rz) +
+                  cowan_.deltaZX / (rz * rx) +
+                  cowan_.deltaXY / (rx * ry))
+        };
+        for (unsigned int condition = 0; condition < 4; ++condition)
+          if (!std::isfinite(factorization[condition]) ||
+              std::abs(factorization[condition] - 1.0) > 1.0e-12)
+            throw std::invalid_argument(
+              "Cowan-z coefficients do not satisfy the stable dispersion factorization");
       }
   }
 

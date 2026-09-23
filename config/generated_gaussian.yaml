@@ -19,6 +19,14 @@ mesh:
   boost_gamma: 2.0
   particle_steps_per_undulator_period: 32
 
+boundary:
+  type: cpml
+  cells: [8, 8, 8]
+  polynomial_order: 3.0
+  target_reflection: 1.0e-8
+  kappa_max: 8.0
+  alpha_fraction: 0.0
+
 beam:
   reference:
     initial_center_z: -1.8

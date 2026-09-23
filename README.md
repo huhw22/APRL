@@ -39,15 +39,17 @@ small-server test path with coordinated clean signal stopping, while
 `throughput` removes signal polling and periodic durability flushes for
 scheduled supercomputer runs.
 
-The implementation is still a development solver. CPML, the generalized
-Cowan TF/SF seed-wave correction, a Gauss-consistent initial particle
-self-field, and particle subcycling remain planned work, so production
-radiation results require further validation.
+The implementation is still a development solver. Compact CFS-CPML is
+available for no-seed Cowan runs, while the generalized Cowan/CPML TF/SF
+seed-wave correction, a Gauss-consistent initial particle self-field, and
+particle subcycling remain planned work. Production radiation results still
+require problem-scale convergence and reflection validation.
 
 ## Documentation
 
 - [Build, conversion, and execution](docs/BUILD_AND_RUN.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
+- [Cowan-z kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
 - [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [HDF5 input example](config/example.yaml)

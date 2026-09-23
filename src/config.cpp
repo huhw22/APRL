@@ -66,6 +66,34 @@ namespace fel
       return value;
     }
 
+    std::size_t nonnegativeSize(const YAML::Node& node,
+                                const std::string& name)
+    {
+      long long value = 0;
+      try { value = node.as<long long>(); }
+      catch (const YAML::Exception&) {
+        throw configError(node, name + " must be a nonnegative integer");
+      }
+      if (value < 0)
+        throw configError(node, name + " must be a nonnegative integer");
+      return static_cast<std::size_t>(value);
+    }
+
+    void cpmlCells(const YAML::Node& node, std::size_t result[3])
+    {
+      if (!node.IsSequence() || node.size() != 3)
+        throw configError(node,
+          "boundary cells must contain exactly three integers");
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          result[axis] = nonnegativeSize(
+            node[axis], "boundary cells");
+          if (result[axis] == 1)
+            throw configError(node[axis],
+              "an enabled CPML direction needs at least two cells");
+        }
+    }
+
     template<typename T>
     FieldVector<T> vector3(const YAML::Node& node, const std::string& name)
     {
@@ -202,6 +230,14 @@ namespace fel
         "field_solver must be yee or cowan-z");
     }
 
+    EBBoundaryType boundaryType(const YAML::Node& node)
+    {
+      const std::string value = lower(node.as<std::string>());
+      if (value == "pec") return EBBoundaryType::Pec;
+      if (value == "cpml") return EBBoundaryType::Cpml;
+      throw configError(node, "boundary type must be pec or cpml");
+    }
+
     bool validDetectorName(const std::string& name)
     {
       if (name.empty()) return false;
@@ -223,6 +259,10 @@ namespace fel
     : lengths(0.0), resolution(0.0), center(0.0), duration(0.0),
       boostGamma(1.0), particleStepsPerUndulatorPeriod(1024),
       fieldSolver(EBMaxwellSolver::CowanZ)
+  {}
+
+  BoundaryConfig::BoundaryConfig()
+    : type(EBBoundaryType::Pec), cpml()
   {}
 
   BeamInputConfig::BeamInputConfig()
@@ -329,6 +369,43 @@ namespace fel
     if (mesh["particle_steps_per_undulator_period"])
       result.mesh.particleStepsPerUndulatorPeriod =
         mesh["particle_steps_per_undulator_period"].as<unsigned int>();
+
+    const YAML::Node boundary = required(root, "boundary");
+    if (!boundary.IsMap())
+      throw configError(boundary, "boundary must be a map");
+    result.boundary.type = boundaryType(required(boundary, "type"));
+    if (result.boundary.type == EBBoundaryType::Cpml)
+      {
+        cpmlCells(required(boundary, "cells"),
+                  result.boundary.cpml.cells);
+        result.boundary.cpml.polynomialOrder = finiteDouble(
+          required(boundary, "polynomial_order"),
+          "CPML polynomial_order");
+        result.boundary.cpml.targetReflection = finiteDouble(
+          required(boundary, "target_reflection"),
+          "CPML target_reflection");
+        result.boundary.cpml.kappaMax = finiteDouble(
+          required(boundary, "kappa_max"), "CPML kappa_max");
+        result.boundary.cpml.alphaFraction = finiteDouble(
+          required(boundary, "alpha_fraction"),
+          "CPML alpha_fraction");
+        if (!result.boundary.cpml.enabled())
+          throw configError(boundary["cells"],
+            "CPML needs at least one nonzero direction");
+        if (!(result.boundary.cpml.polynomialOrder > 0.0))
+          throw configError(boundary["polynomial_order"],
+            "CPML polynomial_order must be positive");
+        if (!(result.boundary.cpml.targetReflection > 0.0 &&
+              result.boundary.cpml.targetReflection < 1.0))
+          throw configError(boundary["target_reflection"],
+            "CPML target_reflection must lie strictly between zero and one");
+        if (!(result.boundary.cpml.kappaMax >= 1.0))
+          throw configError(boundary["kappa_max"],
+            "CPML kappa_max must be at least one");
+        if (!(result.boundary.cpml.alphaFraction >= 0.0))
+          throw configError(boundary["alpha_fraction"],
+            "CPML alpha_fraction cannot be negative");
+      }
 
     const YAML::Node beam = required(root, "beam");
     const YAML::Node reference = required(beam, "reference");

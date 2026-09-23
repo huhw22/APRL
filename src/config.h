@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "eb_field.h"
+#include "eb_cpml.h"
 #include "eb_sources.h"
 #include "fieldvector.h"
 
@@ -30,6 +31,20 @@ namespace fel
     EBMaxwellSolver fieldSolver;
 
     MeshConfig();
+  };
+
+  enum class EBBoundaryType
+  {
+    Pec,
+    Cpml
+  };
+
+  struct BoundaryConfig
+  {
+    EBBoundaryType type;
+    EBCPMLParameters cpml;
+
+    BoundaryConfig();
   };
 
   enum class BeamInputType
@@ -178,6 +193,7 @@ namespace fel
   {
     UnitSystem inputUnits;
     MeshConfig mesh;
+    BoundaryConfig boundary;
     BeamReferenceConfig reference;
     BeamInputConfig beam;
     std::vector<WaveConfig> waves;

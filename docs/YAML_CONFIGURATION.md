@@ -57,6 +57,50 @@ least three cells, and z needs at least two cells per MPI rank. `duration` is
 boosted-frame time. The particle-step setting is reserved for the future
 subcycling implementation.
 
+## Field boundary
+
+The boundary policy is explicit and required. Production-oriented no-seed
+tests use compact unsplit CFS-CPML:
+
+```yaml
+boundary:
+  type: cpml
+  cells: [8, 8, 8]
+  polynomial_order: 3.0
+  target_reflection: 1.0e-8
+  kappa_max: 8.0
+  alpha_fraction: 0.0
+```
+
+`cells` is the thickness per face in x, y and z cells. A zero disables CPML
+on both faces of that axis without allocating histories; a nonzero value must
+be at least two. Opposite layers must leave a non-PML interior. The current z
+slab decomposition additionally requires each complete z layer to fit on its
+endpoint MPI rank; invalid rank counts fail before particle input.
+
+`target_reflection` is used to grade the maximum conductivity and must be in
+`(0,1)`. It is not an assertion that every discrete mode will achieve exactly
+that reflection. `kappa_max>=1`, positive `polynomial_order`, and nonnegative
+`alpha_fraction` control the CFS profile. The example keeps
+`alpha_fraction: 0.0`, which gave the lower reflection for the near-axis
+forward pulse relevant to the current FEL target. A nonzero shift is retained
+as an explicit experimental option for later low-frequency or evanescent-mode
+studies and must be revalidated for that spectrum. Startup logging reports the
+total and maximum-per-rank auxiliary memory actually allocated.
+
+For a boundary regression without absorption use:
+
+```yaml
+boundary:
+  type: pec
+```
+
+PEC allocates no boundary histories. CPML currently rejects all nonempty
+`incident_waves` lists so the no-seed absorbing boundary can be validated
+before the TF/SF surface is redesigned. The numerical construction and Cowan
+stability conditions are detailed in
+[MAXWELL_COWAN_CPML.md](MAXWELL_COWAN_CPML.md).
+
 ## Beam reference and input
 
 Every particle position is relative to a laboratory-frame beam reference:

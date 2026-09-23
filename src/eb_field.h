@@ -132,15 +132,17 @@ namespace fel
   };
 
   class EBFieldGrid;
+  class EBConvolutionalPML;
 
   /* Boundary implementations are deliberately outside the curl kernels.
-   * CPML can therefore add only boundary-slab auxiliary arrays later without
-   * changing the E/B storage or the vacuum update. */
+   * CPML therefore adds only boundary-slab auxiliary arrays without changing
+   * the E/B storage or the vacuum update. */
   class EBBoundaryOperator
   {
   public:
     virtual ~EBBoundaryOperator();
-    virtual void afterMagneticUpdate(EBFieldGrid& fields) = 0;
+    virtual void afterMagneticUpdate(
+        EBFieldGrid& fields, const EBElectricHaloView& halo) = 0;
     virtual void afterElectricUpdate(EBFieldGrid& fields) = 0;
     virtual std::size_t memoryBytes() const = 0;
   };
@@ -150,7 +152,8 @@ namespace fel
   public:
     PerfectElectricConductorBoundary(bool lowerZPhysical = true,
                                      bool upperZPhysical = true);
-    virtual void afterMagneticUpdate(EBFieldGrid& fields);
+    virtual void afterMagneticUpdate(
+        EBFieldGrid& fields, const EBElectricHaloView& halo);
     virtual void afterElectricUpdate(EBFieldGrid& fields);
     virtual std::size_t memoryBytes() const;
 
@@ -238,6 +241,8 @@ namespace fel
         const BoostFrameTransform& frame) const;
 
   private:
+    friend class EBConvolutionalPML;
+
     void validateGeometry() const;
     void advanceMagneticYee();
     void advanceMagneticCowan(const EBElectricHaloView& halo);
