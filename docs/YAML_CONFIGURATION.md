@@ -306,6 +306,56 @@ both laboratory detector-plane types participate in the same first/last
 boundary logic. The stop boundary of a field detector is its sampling plane,
 not the entrance of its left diagnostic region.
 
+## Experimental particle retirement
+
+The optional retirement layer is an alternative to the field detector's
+ballistic charged-particle background reconstruction:
+
+```yaml
+particle_retirement:
+  enabled: true
+  entrance_z: 5.0
+  length: 2.0
+```
+
+Both positions use the configured length unit and are fixed laboratory-frame
+coordinates. At `entrance_z`, a physical particle stops participating in the
+push, ordinary trajectory cadence, and detector crossings. A compact
+ballistic carrier continues along its instantaneous velocity and deposits
+current with the C2 profile
+
+```text
+w(s) = 1 - 10 s^3 + 15 s^4 - 6 s^5,   s in [0,1].
+```
+
+It is removed at `entrance_z + length`. This acts only on particle current;
+the E/B solver and fields already present on the grid continue unchanged.
+There is no right-side diagnostic region.
+
+The method is deliberately experimental. Tapering current reduces the sharp
+high-frequency impulse of immediate deletion, but removal of net charge inside
+the Maxwell domain is not an exactly charge-continuous operation. Therefore a
+matched zero-radiation baseline and the power tests in
+[FIELD_POWER_COMPARISON.md](FIELD_POWER_COMPARISON.md) are mandatory. The
+baseline must be subtracted at field amplitude, never by subtracting scalar
+powers.
+
+Initialization enforces all of the following:
+
+- the entrance is at least one lab-equivalent z cell beyond the final magnetic
+  interaction (including its configured fringe support);
+- every field plane is at least one such cell beyond the taper exit;
+- field-plane `particle_background` is disabled because the two removal routes
+  are alternatives;
+- at least one field plane exists;
+- `stop.mode` is `reference-center-z`, and its z lies beyond the final field
+  plane, so retirement does not terminate the run before the field is sampled.
+
+Particle planes remain non-exclusive and may be placed at the retirement
+entrance for small diagnostic runs. Other field planes may overlap one another
+but must all be downstream of the retirement exit. When retirement is disabled,
+it allocates no carrier vector and adds no active carrier work.
+
 ## Laboratory detector planes
 
 The only detector mechanisms in this program are fixed laboratory-frame

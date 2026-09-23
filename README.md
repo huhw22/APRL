@@ -43,6 +43,15 @@ reports the change in forward Poynting power and energy. This keeps the
 production simulation light while retaining a reproducible field-based
 radiation path on the analysis server.
 
+An alternative, explicitly experimental radiation path ends physical particle
+push/output after the magnetic system and tapers a compact ballistic current
+carrier to zero before the field plane. It does not change the Maxwell kernel
+and is disabled by default. Because removing net charge inside the domain is
+not continuity exact, every such run must be paired with a zero-radiation
+baseline. A third C++ post-processor subtracts that baseline at the E/B-amplitude
+level, reports instantaneous forward power and band energy, and can compare
+both peak power and energy with the trajectory far field for small tests.
+
 ## Intended applications
 
 - seeded FEL and laser-modulation studies;
@@ -90,6 +99,7 @@ or particle-boundary I/O.
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [Field-detector ballistic reference region](docs/FIELD_DETECTOR_REFERENCE.md)
 - [Particle-background field reconstruction](docs/FIELD_RECONSTRUCTION.md)
+- [Particle retirement and matched power comparison](docs/FIELD_POWER_COMPARISON.md)
 - [Numerical validation status](docs/VALIDATION.md)
 - [HDF5 input example](config/example.yaml)
 - [Generated Gaussian test example](config/generated_gaussian.yaml)

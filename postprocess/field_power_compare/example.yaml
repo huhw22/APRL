@@ -1,0 +1,20 @@
+# Compare a radiation run with its matched zero-radiation baseline.  The two
+# detector files must have identical plane geometry and laboratory sample times.
+input:
+  signal_field: ../../output/retirement-signal/detectors/radiation.h5
+  zero_radiation_baseline: ../../output/retirement-baseline/detectors/radiation.h5
+  # Optional trajectory reference produced by trajectory_radiation. Its
+  # configured angular grid must represent the same accepted radiation cone.
+  trajectory_far_field: ../../output/retirement-signal/radiation-output.h5
+  require_complete: true
+
+analysis:
+  # Used for both the field FFT and the optional trajectory-energy check.
+  photon_energy_band_eV: [2.0, 30.0]
+  # Only this many transverse points are held while reading. FFT memory is
+  # independent of the complete detector-plane size.
+  spatial_batch_points: 16
+
+output:
+  file: field-power-comparison.h5
+  compression: 0

@@ -300,13 +300,24 @@ namespace fel
       bufferRecords(16384), flushEverySamples(8), compression(0)
   {}
 
+  ParticleRetirementConfig::ParticleRetirementConfig()
+    : enabled(false), entranceZ(0.0), length(0.0)
+  {}
+
+  Double ParticleRetirementConfig::exitZ() const
+  {
+    return entranceZ + length;
+  }
+
   FieldDetectorPlaneConfig::FieldDetectorPlaneConfig()
     : name(), z(0.0), rhythm(0.0), bufferSamples(1), compression(0),
       particleBackgroundReference(true), referenceRho(0.0),
       referenceGamma(1.0), referenceDistance(0.0), referenceEntranceZ(0.0),
       referenceBufferRecords(16384), referenceCompression(0),
       referenceValidation(false),
-      referenceValidationMaximumParticles(100000)
+      referenceValidationMaximumParticles(100000),
+      particleRetirementCurrent(false), particleRetirementEntranceZ(0.0),
+      particleRetirementExitZ(0.0)
   {}
 
   ParticleDetectorPlaneConfig::ParticleDetectorPlaneConfig()
@@ -733,6 +744,28 @@ namespace fel
           }
       }
 
+    const YAML::Node retirement = root["particle_retirement"];
+    if (retirement)
+      {
+        if (!retirement.IsMap())
+          throw configError(retirement, "particle_retirement must be a map");
+        result.particleRetirement.enabled = retirement["enabled"] ?
+          retirement["enabled"].as<bool>() : true;
+        if (result.particleRetirement.enabled)
+          {
+            result.particleRetirement.entranceZ = finiteDouble(
+              required(retirement, "entrance_z"),
+              "particle retirement entrance_z") *
+              result.inputUnits.length;
+            result.particleRetirement.length = finiteDouble(
+              required(retirement, "length"),
+              "particle retirement length") * result.inputUnits.length;
+            if (!(result.particleRetirement.length > 0.0))
+              throw configError(retirement["length"],
+                "particle retirement length must be positive");
+          }
+      }
+
     const YAML::Node stop = required(root, "stop");
     const std::string stopMode = lower(required(stop, "mode").as<std::string>());
     if (stopMode == "after-last-element")
@@ -807,6 +840,74 @@ namespace fel
         !(result.stop.referenceZ > lastInteraction))
       throw configError(stop["z"],
         "reference-center stop z must lie beyond every element interaction region");
+    if (result.particleRetirement.enabled)
+      {
+        Double lastMagneticExit =
+          -std::numeric_limits<Double>::infinity();
+        for (std::size_t i = 0; i < result.magnets.size(); ++i)
+          lastMagneticExit = std::max(lastMagneticExit,
+            result.magnets[i].interactionExitLab());
+        const Double margin = result.mesh.boostGamma *
+          result.mesh.resolution[2];
+        if (!result.magnets.empty() &&
+            result.particleRetirement.entranceZ <
+              lastMagneticExit + margin)
+          {
+            std::ostringstream message;
+            message << "particle_retirement.entrance_z must be at least "
+                    << (lastMagneticExit + margin) /
+                         result.inputUnits.length
+                    << " in the configured length unit: the retirement "
+                       "layer must start one lab-equivalent z cell beyond "
+                       "the final magnetic interaction region";
+            throw configError(retirement["entrance_z"], message.str());
+          }
+        if (result.detectors.fieldPlanes.empty())
+          throw configError(retirement,
+            "enabled particle_retirement requires a downstream field plane");
+        Double lastFieldPlane =
+          -std::numeric_limits<Double>::infinity();
+        for (std::size_t i = 0;
+             i < result.detectors.fieldPlanes.size(); ++i)
+          {
+            FieldDetectorPlaneConfig& plane =
+              result.detectors.fieldPlanes[i];
+            if (plane.particleBackgroundReference)
+              throw configError(retirement,
+                "particle_retirement and field-plane particle_background "
+                "are alternative routes and cannot be enabled together");
+            if (!(plane.z > result.particleRetirement.exitZ() + margin))
+              {
+                std::ostringstream message;
+                message << "field detector '" << plane.name
+                        << "' must be at least one lab-equivalent z cell "
+                           "downstream of the particle-retirement exit at "
+                        << result.particleRetirement.exitZ() /
+                             result.inputUnits.length;
+                throw configError(retirement, message.str());
+              }
+            plane.particleRetirementCurrent = true;
+            plane.particleRetirementEntranceZ =
+              result.particleRetirement.entranceZ;
+            plane.particleRetirementExitZ =
+              result.particleRetirement.exitZ();
+            lastFieldPlane = std::max(lastFieldPlane, plane.z);
+          }
+        if (result.stop.mode != StopMode::ReferenceCenterZ)
+          throw configError(stop,
+            "particle_retirement requires stop.mode: reference-center-z so "
+            "the run does not stop as soon as active particles retire");
+        if (!(result.stop.referenceZ > lastFieldPlane + margin))
+          {
+            std::ostringstream message;
+            message << "particle_retirement requires stop.z beyond the "
+                       "last field plane; use at least "
+                    << (lastFieldPlane + margin) /
+                         result.inputUnits.length
+                    << " in the configured length unit";
+            throw configError(stop["z"], message.str());
+          }
+      }
     if (result.trajectory.enabled && !(result.trajectory.rhythm > 0.0))
       throw configError(trajectory,
         "enabled trajectory output requires positive rhythm");

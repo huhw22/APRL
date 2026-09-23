@@ -114,7 +114,7 @@ namespace radiation
     {
       if (record.particleId == 0 || !std::isfinite(record.time) ||
           !std::isfinite(record.charge) || !std::isfinite(record.weight) ||
-          record.event > 2 || record.boundaryFace < -1 ||
+          record.event > 3 || record.boundaryFace < -1 ||
           record.boundaryFace > 5)
         throw std::runtime_error(
           "Invalid trajectory record in " + filename);

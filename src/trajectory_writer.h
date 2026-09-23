@@ -14,7 +14,8 @@ namespace fel
   {
     Sample = 0,
     CpmlEntry = 1,
-    DomainExit = 2
+    DomainExit = 2,
+    RetirementEntry = 3
   };
 
   /* Compact radiation-postprocessing record in the laboratory frame.

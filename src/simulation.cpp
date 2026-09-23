@@ -25,6 +25,10 @@ namespace fel
     const int CARRIER_UPPER_DATA = 715;
     const int CARRIER_LOWER_COUNT = 716;
     const int CARRIER_LOWER_DATA = 717;
+    const int RETIREMENT_UPPER_COUNT = 718;
+    const int RETIREMENT_UPPER_DATA = 719;
+    const int RETIREMENT_LOWER_COUNT = 720;
+    const int RETIREMENT_LOWER_DATA = 721;
 
     struct ParticlePacket
     {
@@ -208,12 +212,15 @@ namespace fel
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0), frame_(), sources_(),
       fields_(), halo_(), incident_(), particles_(), particleCPML_(),
-      pmlCarriers_(), particleBoundary_(), detectors_(),
+      pmlCarriers_(), retirementCarriers_(), particleBoundary_(), detectors_(),
       trajectoryWriter_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), timeBoxSI_(0.0),
       totalTimeBoxSI_(0.0), step_(0), interrupted_(false),
-      configuredStopReached_(false), lostParticles_(0), stopReason_()
+      configuredStopReached_(false), lostParticles_(0),
+      retirementEntryCount_(0), retirementEntryCharge_(0.0),
+      retirementExitCount_(0), retirementExitResidualCharge_(0.0),
+      peakRetirementCarriers_(0), stopReason_()
   {
     if (communicator_ == MPI_COMM_NULL)
       throw std::invalid_argument("E/B solver communicator cannot be null");
@@ -437,6 +444,19 @@ namespace fel
         if (particleCPML_->enabled())
           logRoot(communicator_,
             "CPML particle policy: physical trajectories and detector participation end at the inner CPML surface; lightweight ballistic carriers continue with per-particle conductivity-matched current damping and no diagnostic output.");
+        if (config_.particleRetirement.enabled)
+          {
+            std::ostringstream retirementMessage;
+            retirementMessage << std::setprecision(10)
+              << "EXPERIMENTAL particle retirement: lab z=["
+              << config_.particleRetirement.entranceZ << ", "
+              << config_.particleRetirement.exitZ()
+              << "] m; physical particle push/output ends at entry and a "
+                 "ballistic current carrier is tapered with a C2 quintic "
+                 "profile. Net charge removal is not continuity exact; a "
+                 "matched zero-radiation baseline is mandatory.";
+            logRoot(communicator_, retirementMessage.str());
+          }
         logRoot(communicator_,
           "WARNING: the initial Gauss-consistent particle field is not implemented; this is not yet a final radiation-production solver.");
         logRoot(communicator_,
@@ -927,8 +947,10 @@ namespace fel
     record.charge = particle.charge;
     record.weight = particle.weight;
     record.event = static_cast<std::uint8_t>(event);
-    record.boundaryFace = event == TrajectoryEvent::Sample ? -1 :
-      static_cast<std::int8_t>(face);
+    record.boundaryFace =
+      (event == TrajectoryEvent::CpmlEntry ||
+       event == TrajectoryEvent::DomainExit) ?
+      static_cast<std::int8_t>(face) : -1;
     trajectoryWriter_.append(record);
   }
 
@@ -1054,10 +1076,14 @@ namespace fel
     retained.reserve(particles_.size());
     std::vector<ParticleCPMLCarrier> retainedCarriers;
     retainedCarriers.reserve(pmlCarriers_.size());
+    std::vector<ParticleCPMLCarrier> retainedRetirementCarriers;
+    retainedRetirementCarriers.reserve(retirementCarriers_.size());
     std::vector<TransferPacket> sendLower;
     std::vector<TransferPacket> sendUpper;
     std::vector<CarrierTransferPacket> sendCarrierLower;
     std::vector<CarrierTransferPacket> sendCarrierUpper;
+    std::vector<CarrierTransferPacket> sendRetirementLower;
+    std::vector<CarrierTransferPacket> sendRetirementUpper;
     const Double lowerZ = localOriginBox_[2];
     const Double upperZ = lowerZ +
       static_cast<Double>(localGeometry_.nz) * localGeometry_.dz;
@@ -1083,6 +1109,73 @@ namespace fel
         throw std::runtime_error(
           "Invalid MPI-interface particle crossing");
       return fraction;
+    };
+
+    const auto labPlaneCrossing = [&](
+        const FieldVector<Double>& start,
+        const FieldVector<Double>& end,
+        Double startFraction, Double planeZ,
+        ParticleBoundaryHit& hit)
+    {
+      if (!config_.particleRetirement.enabled) return false;
+      const Double startTime = timeBoxSI_ +
+        startFraction * globalGeometry_.dt;
+      const Double endTime = timeBoxSI_ + globalGeometry_.dt;
+      const Double startZ = frame_.labZFromBoxZT(start[2], startTime);
+      const Double endZ = frame_.labZFromBoxZT(end[2], endTime);
+      const Double scale = std::max(1.0,
+        std::max(std::abs(startZ), std::max(std::abs(endZ),
+                                            std::abs(planeZ))));
+      const Double tolerance = 128.0 *
+        std::numeric_limits<Double>::epsilon() * scale;
+      if (!(endZ > startZ + tolerance) ||
+          startZ >= planeZ - tolerance || endZ < planeZ - tolerance)
+        return false;
+      hit.fraction = std::max(0.0, std::min(1.0,
+        (planeZ - startZ) / (endZ - startZ)));
+      /* Retirement planes are not domain faces, but initialize the shared
+       * hit record so passing it through generic event selection never reads
+       * an indeterminate enum value. Retirement output stores face=-1. */
+      hit.face = ParticleBoundaryFace::UpperZ;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        hit.position[axis] = start[axis] + hit.fraction *
+          (end[axis] - start[axis]);
+      return true;
+    };
+
+    const auto retirementPrimitive = [](Double coordinate)
+    {
+      const Double s = std::max(0.0, std::min(1.0, coordinate));
+      const Double s2 = s * s;
+      const Double s4 = s2 * s2;
+      return s - 2.5 * s4 + 3.0 * s4 * s - s4 * s2;
+    };
+
+    const auto retirementWeight = [&](Double labZ)
+    {
+      const Double s = (labZ - config_.particleRetirement.entranceZ) /
+        config_.particleRetirement.length;
+      if (s <= 0.0) return 1.0;
+      if (s >= 1.0) return 0.0;
+      const Double s2 = s * s;
+      const Double s3 = s2 * s;
+      return 1.0 - 10.0 * s3 + 15.0 * s3 * s - 6.0 * s3 * s2;
+    };
+
+    const auto retirementAverageWeight = [&](Double firstLabZ,
+                                               Double secondLabZ)
+    {
+      const Double first = (firstLabZ -
+        config_.particleRetirement.entranceZ) /
+        config_.particleRetirement.length;
+      const Double second = (secondLabZ -
+        config_.particleRetirement.entranceZ) /
+        config_.particleRetirement.length;
+      if (std::abs(second - first) <=
+          64.0 * std::numeric_limits<Double>::epsilon())
+        return retirementWeight(0.5 * (firstLabZ + secondLabZ));
+      return (retirementPrimitive(second) -
+              retirementPrimitive(first)) / (second - first);
     };
 
     const auto processCarrierSegment =
@@ -1181,12 +1274,138 @@ namespace fel
         }
     };
 
+    const auto processRetirementSegment = [&](
+        ParticleCPMLCarrier carrier,
+        const FieldVector<Double>& segmentStart,
+        Double segmentStartFraction, bool allowTransfer)
+    {
+      if (!(segmentStartFraction >= 0.0 &&
+            segmentStartFraction <= 1.0) ||
+          !std::isfinite(segmentStartFraction))
+        throw std::runtime_error(
+          "Invalid retirement-carrier segment time fraction");
+
+      bool crossLower = false;
+      bool crossUpper = false;
+      const Double interfaceFraction = interfaceCrossing(
+        segmentStart, carrier.position, crossLower, crossUpper);
+      const bool crossesInterface = crossLower || crossUpper;
+      ParticleBoundaryHit cpmlHit;
+      ParticleBoundaryHit outerHit;
+      ParticleBoundaryHit retirementExitHit;
+      const bool entersCpml = particleCPML_->firstEntry(
+        segmentStart, carrier.position, cpmlHit);
+      const bool exitsOuter = particleBoundary_->firstExit(
+        segmentStart, carrier.position, outerHit);
+      const bool reachesRetirementExit = labPlaneCrossing(
+        segmentStart, carrier.position, segmentStartFraction,
+        config_.particleRetirement.exitZ(), retirementExitHit);
+
+      enum RetirementEnd { RetainRetirement, TransferRetirement,
+                           EnterCpmlFromRetirement, ExitOuterFromRetirement,
+                           CompleteRetirement };
+      RetirementEnd endAction = RetainRetirement;
+      Double localEndFraction = 1.0;
+      FieldVector<Double> segmentEnd(carrier.position);
+      ParticleBoundaryHit selectedHit;
+      const auto select = [&](Double fraction, RetirementEnd action,
+                              const ParticleBoundaryHit& hit)
+      {
+        if (fraction <= localEndFraction + crossingTolerance)
+          {
+            localEndFraction = fraction;
+            endAction = action;
+            selectedHit = hit;
+            segmentEnd = hit.position;
+          }
+      };
+      if (crossesInterface)
+        {
+          if (!allowTransfer)
+            throw std::runtime_error(
+              "A retirement carrier crossed more than one MPI interface in one field step");
+          ParticleBoundaryHit hit;
+          hit.fraction = interfaceFraction;
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            hit.position[axis] = segmentStart[axis] +
+              interfaceFraction *
+              (carrier.position[axis] - segmentStart[axis]);
+          select(interfaceFraction, TransferRetirement, hit);
+        }
+      if (exitsOuter)
+        select(outerHit.fraction, ExitOuterFromRetirement, outerHit);
+      if (entersCpml)
+        select(cpmlHit.fraction, EnterCpmlFromRetirement, cpmlHit);
+      if (reachesRetirementExit)
+        select(retirementExitHit.fraction, CompleteRetirement,
+               retirementExitHit);
+
+      const Double globalEndFraction = segmentStartFraction +
+        localEndFraction * (1.0 - segmentStartFraction);
+      const Double firstTime = timeBoxSI_ +
+        segmentStartFraction * globalGeometry_.dt;
+      const Double secondTime = timeBoxSI_ +
+        globalEndFraction * globalGeometry_.dt;
+      const Double firstLabZ = frame_.labZFromBoxZT(
+        segmentStart[2], firstTime);
+      const Double secondLabZ = frame_.labZFromBoxZT(
+        segmentEnd[2], secondTime);
+      const Double depositedWeight = std::max(0.0, std::min(1.0,
+        retirementAverageWeight(firstLabZ, secondLabZ)));
+      const Double endWeight = retirementWeight(secondLabZ);
+      depositor.depositSegment(segmentStart, segmentEnd,
+                               carrier.charge * depositedWeight);
+
+      if (endAction == CompleteRetirement)
+        {
+          ++retirementExitCount_;
+          retirementExitResidualCharge_ += carrier.charge * endWeight;
+          return;
+        }
+      if (endAction == ExitOuterFromRetirement)
+        {
+          particleBoundary_->depositOutgoingFlux(
+            selectedHit, carrier.charge * endWeight);
+          const std::size_t face =
+            static_cast<std::size_t>(selectedHit.face);
+          ++carrierOuterCount_[face];
+          carrierOuterCharge_[face] += carrier.charge * endWeight;
+          return;
+        }
+      carrier.currentWeight = endWeight;
+      if (endAction == EnterCpmlFromRetirement)
+        {
+          processCarrierSegment(carrier, selectedHit.position,
+                                globalEndFraction, allowTransfer);
+        }
+      else if (endAction == TransferRetirement)
+        {
+          const CarrierTransferPacket packet = packCarrier(
+            carrier, segmentEnd, globalEndFraction);
+          (crossLower ? sendRetirementLower :
+                        sendRetirementUpper).push_back(packet);
+        }
+      else
+        {
+          carrier.position = segmentEnd;
+          retainedRetirementCarriers.push_back(carrier);
+        }
+    };
+
     for (std::size_t index = 0; index < pmlCarriers_.size(); ++index)
       {
         ParticleCPMLCarrier carrier = pmlCarriers_[index];
         const FieldVector<Double> start(carrier.position);
         carrier.position.pmv(globalGeometry_.dt, carrier.velocity);
         processCarrierSegment(carrier, start, 0.0, true);
+      }
+    for (std::size_t index = 0;
+         index < retirementCarriers_.size(); ++index)
+      {
+        ParticleCPMLCarrier carrier = retirementCarriers_[index];
+        const FieldVector<Double> start(carrier.position);
+        carrier.position.pmv(globalGeometry_.dt, carrier.velocity);
+        processRetirementSegment(carrier, start, 0.0, true);
       }
 
     const auto processActiveSegment =
@@ -1202,18 +1421,37 @@ namespace fel
       const bool crossesInterface = crossLower || crossUpper;
       ParticleBoundaryHit cpmlHit;
       ParticleBoundaryHit outerHit;
+      ParticleBoundaryHit retirementHit;
       const bool entersCpml = particleCPML_->firstEntry(
         segmentStart, particle.position, cpmlHit);
       const bool exitsOuter = particleBoundary_->firstExit(
         segmentStart, particle.position, outerHit);
+      const bool entersRetirement = labPlaneCrossing(
+        segmentStart, particle.position, segmentStartFraction,
+        config_.particleRetirement.entranceZ, retirementHit);
 
       enum ActiveEnd { RetainActive, TransferActive,
-                       EnterCpml, ExitOuter };
+                       EnterCpml, ExitOuter, EnterRetirement };
       ActiveEnd endAction = RetainActive;
       Double localEndFraction = 1.0;
       FieldVector<Double> segmentEnd(particle.position);
       ParticleBoundaryHit selectedHit;
-      if (entersCpml &&
+      if (entersRetirement &&
+          (!entersCpml || retirementHit.fraction <=
+            cpmlHit.fraction + crossingTolerance) &&
+          (!exitsOuter || retirementHit.fraction <=
+            outerHit.fraction + crossingTolerance) &&
+          (!crossesInterface || retirementHit.fraction <=
+            interfaceFraction + crossingTolerance))
+        {
+          endAction = EnterRetirement;
+          localEndFraction = retirementHit.fraction;
+          segmentEnd = retirementHit.position;
+          selectedHit = retirementHit;
+        }
+      else if (entersCpml &&
+          (!entersRetirement || cpmlHit.fraction <=
+            retirementHit.fraction + crossingTolerance) &&
           (!exitsOuter ||
            cpmlHit.fraction <= outerHit.fraction + crossingTolerance) &&
           (!crossesInterface ||
@@ -1225,6 +1463,8 @@ namespace fel
           selectedHit = cpmlHit;
         }
       else if (exitsOuter &&
+               (!entersRetirement || outerHit.fraction <=
+                 retirementHit.fraction + crossingTolerance) &&
                (!crossesInterface ||
                 outerHit.fraction <=
                   interfaceFraction + crossingTolerance))
@@ -1271,6 +1511,23 @@ namespace fel
             carrier, selectedHit.position, globalEndFraction,
             allowTransfer);
         }
+      else if (endAction == EnterRetirement)
+        {
+          ++retirementEntryCount_;
+          retirementEntryCharge_ += particle.charge;
+          ParticleCPMLCarrier carrier;
+          carrier.position = particle.position;
+          const Double gamma =
+            BoostFrameTransform::gammaFromProperVelocity(
+              particle.properVelocity);
+          carrier.velocity = particle.properVelocity;
+          carrier.velocity *= SI::c / gamma;
+          carrier.charge = particle.charge;
+          carrier.currentWeight = 1.0;
+          processRetirementSegment(
+            carrier, selectedHit.position, globalEndFraction,
+            allowTransfer);
+        }
       else if (endAction == ExitOuter)
         {
           particleBoundary_->depositOutgoingFlux(
@@ -1305,26 +1562,36 @@ namespace fel
         ParticleBoundaryHit diagnosticHit;
         ParticleBoundaryHit cpmlHit;
         ParticleBoundaryHit outerHit;
+        ParticleBoundaryHit retirementHit;
         const bool entersCpml = particleCPML_->firstEntry(
           start, particle.position, cpmlHit);
         const bool exitsOuter = particleBoundary_->firstExit(
           start, particle.position, outerHit);
+        const bool entersRetirement = labPlaneCrossing(
+          start, particle.position, 0.0,
+          config_.particleRetirement.entranceZ, retirementHit);
         bool hasTerminalEvent = false;
         TrajectoryEvent terminalEvent = TrajectoryEvent::DomainExit;
-        if (entersCpml &&
-            (!exitsOuter ||
-             cpmlHit.fraction <= outerHit.fraction + crossingTolerance))
-          {
-            diagnosticHit = cpmlHit;
-            terminalEvent = TrajectoryEvent::CpmlEntry;
-            hasTerminalEvent = true;
-          }
-        else if (exitsOuter)
-          {
-            diagnosticHit = outerHit;
-            terminalEvent = TrajectoryEvent::DomainExit;
-            hasTerminalEvent = true;
-          }
+        Double terminalFraction = 1.0;
+        const auto selectTerminal = [&](
+            bool present, const ParticleBoundaryHit& hit,
+            TrajectoryEvent event)
+        {
+          if (present &&
+              hit.fraction <= terminalFraction + crossingTolerance)
+            {
+              hasTerminalEvent = true;
+              terminalFraction = hit.fraction;
+              diagnosticHit = hit;
+              terminalEvent = event;
+            }
+        };
+        selectTerminal(exitsOuter, outerHit,
+                       TrajectoryEvent::DomainExit);
+        selectTerminal(entersCpml, cpmlHit,
+                       TrajectoryEvent::CpmlEntry);
+        selectTerminal(entersRetirement, retirementHit,
+                       TrajectoryEvent::RetirementEntry);
 
         RelativisticParticleSI diagnosticEnd(particle);
         Double diagnosticTime = timeBoxSI_ + globalGeometry_.dt;
@@ -1398,9 +1665,39 @@ namespace fel
           processCarrierSegment(
             carrier, segmentStart, transfer.segmentStartFraction, false);
         }
+
+    std::vector<CarrierTransferPacket> receiveRetirementLower;
+    std::vector<CarrierTransferPacket> receiveRetirementUpper;
+    exchangePackets(sendRetirementUpper,
+      halo_->upperRank(), halo_->lowerRank(),
+      RETIREMENT_UPPER_COUNT, RETIREMENT_UPPER_DATA,
+      communicator_, receiveRetirementLower);
+    exchangePackets(sendRetirementLower,
+      halo_->lowerRank(), halo_->upperRank(),
+      RETIREMENT_LOWER_COUNT, RETIREMENT_LOWER_DATA,
+      communicator_, receiveRetirementUpper);
+    const std::vector<CarrierTransferPacket>* receivedRetirement[2] = {
+      &receiveRetirementLower, &receiveRetirementUpper
+    };
+    for (unsigned int side = 0; side < 2; ++side)
+      for (std::size_t index = 0;
+           index < receivedRetirement[side]->size(); ++index)
+        {
+          const CarrierTransferPacket& transfer =
+            (*receivedRetirement[side])[index];
+          ParticleCPMLCarrier carrier = unpackCarrier(transfer);
+          FieldVector<Double> segmentStart(0.0);
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            segmentStart[axis] = transfer.segmentStart[axis];
+          processRetirementSegment(
+            carrier, segmentStart, transfer.segmentStartFraction, false);
+        }
     particles_.swap(retained);
     pmlCarriers_.swap(retainedCarriers);
+    retirementCarriers_.swap(retainedRetirementCarriers);
     peakPmlCarriers_ = std::max(peakPmlCarriers_, pmlCarriers_.size());
+    peakRetirementCarriers_ = std::max(
+      peakRetirementCarriers_, retirementCarriers_.size());
     unsigned long long globalLost = 0;
     MPI_Allreduce(&localLost, &globalLost, 1, MPI_UNSIGNED_LONG_LONG,
                   MPI_SUM, communicator_);
@@ -1432,6 +1729,22 @@ namespace fel
     unsigned long long maximumRankPeak = 0;
     MPI_Reduce(&localPeak, &maximumRankPeak, 1, MPI_UNSIGNED_LONG_LONG,
                MPI_MAX, 0, communicator_);
+    const unsigned long long localRetirement[3] = {
+      retirementEntryCount_, retirementExitCount_,
+      static_cast<unsigned long long>(peakRetirementCarriers_)
+    };
+    unsigned long long globalRetirement[2] = {};
+    unsigned long long maximumRetirementPeak = 0;
+    MPI_Reduce(localRetirement, globalRetirement, 2,
+               MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+    MPI_Reduce(&localRetirement[2], &maximumRetirementPeak, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, communicator_);
+    const Double localRetirementCharge[2] = {
+      retirementEntryCharge_, retirementExitResidualCharge_
+    };
+    Double globalRetirementCharge[2] = {};
+    MPI_Reduce(localRetirementCharge, globalRetirementCharge, 2,
+               MPI_DOUBLE, MPI_SUM, 0, communicator_);
     if (rank_ != 0) return;
 
     const char* labels[3] = {
@@ -1466,6 +1779,21 @@ namespace fel
                 << maximumRankPeak << " ("
                 << maximumRankPeak * sizeof(ParticleCPMLCarrier)
                 << " bytes of live carrier records).";
+        logRoot(communicator_, message.str());
+      }
+    if (globalRetirement[0] > 0 || globalRetirement[1] > 0)
+      {
+        std::ostringstream message;
+        message << std::setprecision(10)
+                << "Experimental particle retirement: entries="
+                << globalRetirement[0] << " (Q="
+                << globalRetirementCharge[0] << " C), completed="
+                << globalRetirement[1] << ", residual Q at taper exit="
+                << globalRetirementCharge[1]
+                << " C, maximum live carriers on any rank="
+                << maximumRetirementPeak << " ("
+                << maximumRetirementPeak * sizeof(ParticleCPMLCarrier)
+                << " bytes).";
         logRoot(communicator_, message.str());
       }
   }

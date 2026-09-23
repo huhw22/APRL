@@ -611,6 +611,10 @@ namespace fel
               "disabled; raw total field retained");
             writeStringAttribute(group_, "particle_background_validation",
               config.referenceValidation ? "enabled" : "disabled");
+            writeStringAttribute(group_, "particle_current_policy",
+              config.particleRetirementCurrent ?
+              "experimental C2-quintic retirement; matched zero-radiation baseline required" :
+              "physical particles remain active until normal CPML/domain handling");
             writeStringAttribute(group_, "external_background_subtracted",
               externalBackgroundName ? externalBackgroundName : "none");
             writeDoubleAttribute(group_, "plane_z_m", config.z);
@@ -622,6 +626,15 @@ namespace fel
               config.referenceRho);
             writeDoubleAttribute(group_, "reference_gamma_guard",
               config.referenceGamma);
+            if (config.particleRetirementCurrent)
+              {
+                writeDoubleAttribute(group_,
+                  "particle_retirement_entrance_z_m",
+                  config.particleRetirementEntranceZ);
+                writeDoubleAttribute(group_,
+                  "particle_retirement_exit_z_m",
+                  config.particleRetirementExitZ);
+              }
             writeDoubleAttribute(group_, "x_first_m", origin[0] + 0.5 * geometry.dx);
             writeDoubleAttribute(group_, "y_first_m", origin[1] + 0.5 * geometry.dy);
             writeDoubleAttribute(group_, "dx_m", geometry.dx);

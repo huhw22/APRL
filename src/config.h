@@ -147,6 +147,20 @@ namespace fel
     TrajectoryConfig();
   };
 
+  /* Experimental diagnostic route for removing charged-particle current
+   * upstream of a radiation field plane. It is deliberately opt-in because
+   * changing a net charge inside the Maxwell domain is not continuity exact;
+   * every production study must pair it with a zero-radiation baseline. */
+  struct ParticleRetirementConfig
+  {
+    bool enabled;
+    Double entranceZ;
+    Double length;
+
+    ParticleRetirementConfig();
+    Double exitZ() const;
+  };
+
   struct FieldDetectorPlaneConfig
   {
     std::string name;
@@ -174,6 +188,12 @@ namespace fel
      * crossing with the straight line launched at referenceEntranceZ. */
     bool referenceValidation;
     std::size_t referenceValidationMaximumParticles;
+
+    /* Audit metadata copied into the field-plane file.  These values do not
+     * control the retirement algorithm; the top-level configuration does. */
+    bool particleRetirementCurrent;
+    Double particleRetirementEntranceZ;
+    Double particleRetirementExitZ;
 
     FieldDetectorPlaneConfig();
   };
@@ -222,6 +242,7 @@ namespace fel
     RuntimeConfig runtime;
     StopConfig stop;
     TrajectoryConfig trajectory;
+    ParticleRetirementConfig particleRetirement;
     DetectorConfig detectors;
   };
 

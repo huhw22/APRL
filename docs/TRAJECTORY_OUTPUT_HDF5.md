@@ -40,12 +40,13 @@ one-dimensional compound dataset `/trajectory/records` contains:
 | 0 | sample | normal cadence sample; `boundary_face = -1` |
 | 1 | CPML entry | exact physical-trajectory endpoint at an inner CPML surface |
 | 2 | domain exit | exact endpoint at an outer face without an intervening CPML surface |
+| 3 | particle-retirement entry | exact endpoint at the experimental retirement entrance; `boundary_face = -1` |
 
 Boundary-face codes are `0=x-`, `1=x+`, `2=y-`, `3=y+`, `4=z-`, and `5=z+`.
 The mappings are also stored as HDF5 attributes so a reader need not rely only
 on this document.
 
-CPML numerical current carriers never produce trajectory records. Consequently
+CPML and retirement numerical current carriers never produce trajectory records. Consequently
 the trajectory dataset is suitable for radiation reconstruction without
 including paths through the non-physical absorbing layer. An event can occur
 between normal sample times and should be retained when reconstructing the end
@@ -67,7 +68,7 @@ Consequently, this dataset is an event table rather than a rectangular
   particle's longitudinal position;
 - a particle that migrates between MPI slabs continues in another rank file;
   its `particle_id` does not change;
-- CPML-entry and domain-exit records can occur between periodic samples;
+- CPML-entry, retirement-entry, and domain-exit records can occur between periodic samples;
 - records are appended in rank-local write order, not globally sorted by
   particle or laboratory time.
 

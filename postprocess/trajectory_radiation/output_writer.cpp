@@ -896,6 +896,36 @@ namespace radiation
       "Cannot write logarithmic energy spectrum");
     writeStringAttribute(dataset, "unit", "J = dW/dln(omega)");
     H5Dclose(dataset);
+
+    std::vector<double> bandEnergy(shots, 0.0);
+    if (frequencies >= 2)
+      for (std::size_t shot = 0; shot < shots; ++shot)
+        for (std::size_t f = 1; f < frequencies; ++f)
+          bandEnergy[shot] += 0.5 *
+            (perShot[shot * frequencies + f - 1] +
+             perShot[shot * frequencies + f]) *
+            static_cast<double>(omega_[f] - omega_[f - 1]);
+    hsize_t energyDimensions[1] = {static_cast<hsize_t>(shots)};
+    space = H5Screate_simple(1, energyDimensions, NULL);
+    dataset = H5Dcreate2(group_, "band_energy_J", H5T_IEEE_F64LE,
+      space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+    H5Sclose(space);
+    requireHandle(dataset, "Cannot create band-energy dataset");
+    requireStatus(H5Dwrite(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+      H5P_DEFAULT, &bandEnergy[0]), "Cannot write band energy");
+    writeStringAttribute(dataset, "unit", "J");
+    writeStringAttribute(dataset, "definition",
+      "trapezoidal integral of energy_spectrum over configured omega axis and angular grid");
+    H5Dclose(dataset);
+    double meanBandEnergy = 0.0;
+    for (std::size_t shot = 0; shot < shots; ++shot)
+      meanBandEnergy += bandEnergy[shot];
+    meanBandEnergy /= static_cast<double>(shots);
+    writeDoubleAttribute(group_, "mean_band_energy_J", meanBandEnergy);
+    writeDoubleAttribute(group_, "band_min_photon_energy_eV",
+      photonEnergyEV_.front());
+    writeDoubleAttribute(group_, "band_max_photon_energy_eV",
+      photonEnergyEV_.back());
     writeUnsignedAttribute(group_, "angular_integral_available",
       thetaX_.size() >= 2 && thetaY_.size() >= 2 ? 1 : 0);
   }

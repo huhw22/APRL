@@ -42,6 +42,12 @@ detector API already accepts a detector-only laboratory background sampler so
 a future analytical injected-laser field can be removed without changing the
 propagated grid.
 
+`particle_current_policy` records whether the run used ordinary physical
+particles or the experimental C2-quintic retirement current. Retirement files
+also carry `particle_retirement_entrance_z_m` and
+`particle_retirement_exit_z_m`. These attributes are audit metadata: the field
+file remains raw, and no baseline is silently subtracted while writing it.
+
 Poynting flux is intentionally not duplicated in the file: downstream tools
 can compute `S = E cross B / mu0` from the saved laboratory fields.
 The committed `field_reconstruction` post-processor performs this calculation

@@ -252,7 +252,7 @@ namespace fel
         writeStringAttribute(group_, "charge_unit", "C");
         writeStringAttribute(group_, "proper_velocity_unit", "gamma*v/c");
         writeStringAttribute(group_, "event_type_definition",
-          "0=periodic_sample,1=cpml_entry,2=outer_domain_exit");
+          "0=periodic_sample,1=cpml_entry,2=outer_domain_exit,3=particle_retirement_entry");
         writeStringAttribute(group_, "boundary_face_definition",
           "-1=none,0=x-,1=x+,2=y-,3=y+,4=z-,5=z+");
         writeStringAttribute(group_, "reader_contract",
@@ -284,13 +284,14 @@ namespace fel
     if (!std::isfinite(record.time) || !std::isfinite(record.charge) ||
         !std::isfinite(record.weight))
       throw std::invalid_argument("Trajectory scalar is not finite");
-    if (record.event >
-          static_cast<std::uint8_t>(TrajectoryEvent::DomainExit) ||
+    const std::uint8_t retirement =
+      static_cast<std::uint8_t>(TrajectoryEvent::RetirementEntry);
+    if (record.event > retirement ||
         record.boundaryFace < -1 || record.boundaryFace > 5 ||
         (record.event ==
            static_cast<std::uint8_t>(TrajectoryEvent::Sample) &&
          record.boundaryFace != -1) ||
-        (record.event !=
+        (record.event != retirement && record.event !=
            static_cast<std::uint8_t>(TrajectoryEvent::Sample) &&
          record.boundaryFace < 0))
       throw std::invalid_argument("Invalid trajectory event metadata");

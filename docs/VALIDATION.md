@@ -59,3 +59,33 @@ Two checks have been completed:
 The `-20.63%` number is a diagnostic result for that test window, not a
 universal correction. Production cards must repeat padding, smoothing,
 aperture, time-step, and transverse-resolution convergence studies.
+
+## Experimental retirement power closure
+
+A two-macroparticle CPML run used `gamma=4`, boost gamma 2, a three-period
+`K=0.1` undulator, a 2 micrometre C2 retirement layer, and a 32x32 laboratory
+field plane. A matched `K=0` run used the same bunch seed and all numerical
+settings. The field cadence gave a 49.59 eV Nyquist limit; comparison used
+25--48 eV.
+
+| quantity | baseline | field difference | trajectory near-axis | baseline/difference | field/trajectory |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| peak power | 3.52197e4 W | 4.12602e5 W | 3.85292e5 W | 0.0854 | 1.071 |
+| band energy | 5.96082e-12 J | 7.50761e-11 J | 8.17674e-11 J | 0.0794 | 0.918 |
+
+The trajectory reference above used `theta_x,theta_y` in +/-0.05 rad, which the
+coarse transverse grid can resolve. Expanding the trajectory integral to
++/-0.35 rad changed the field/trajectory ratios to 0.359 in peak power and
+0.222 in energy. This is consistent with unresolved wide-angle transverse
+wave number in the test mesh and is not evidence that retirement loses 78% of
+the near-axis radiation.
+
+A separate straight-beam decomposition check compared one and two MPI ranks.
+The two field files differed by `5.28e-5` in 1--20 eV forward energy and
+`7.67e-4` in peak power relative to the one-rank result; both runs reported two
+retirement entries and completions with the same residual exit charge.
+
+These tests establish the power-comparison plumbing, event handling, and MPI
+carrier migration. They do not yet approve retirement for production: taper
+length/gap convergence, a physically representative high-gamma grid, and an
+entrance-state replay baseline remain required.

@@ -47,6 +47,21 @@ outputs. Its input assumptions, output datasets, intensity diagnostics, and
 convergence requirements are documented in
 [FIELD_RECONSTRUCTION.md](FIELD_RECONSTRUCTION.md).
 
+The matched zero-radiation power comparison is a third independent build:
+
+```bash
+cmake -S postprocess/field_power_compare -B build-field-power-compare \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=mpic++
+cmake --build build-field-power-compare -j
+./build-field-power-compare/field_power_compare \
+  postprocess/field_power_compare/example.yaml
+```
+
+It streams small transverse batches from two matching detector files, performs
+field-amplitude subtraction and band filtering, and can compare peak power and
+energy with a one-shot trajectory far field. See
+[FIELD_POWER_COMPARISON.md](FIELD_POWER_COMPARISON.md).
+
 ## Convert a legacy text particle file
 
 ```bash

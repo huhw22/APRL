@@ -84,6 +84,10 @@ namespace fel
     std::vector<RelativisticParticleSI> particles_;
     std::unique_ptr<ParticleCPMLRegion> particleCPML_;
     std::vector<ParticleCPMLCarrier> pmlCarriers_;
+    /* The same compact record is reused for experimental retirement-current
+     * carriers; the vector identity keeps CPML and retirement damping paths
+     * separate. */
+    std::vector<ParticleCPMLCarrier> retirementCarriers_;
     std::unique_ptr<ParticleOpenBoundary> particleBoundary_;
     std::unique_ptr<LabDetectorManager> detectors_;
 
@@ -105,6 +109,11 @@ namespace fel
     unsigned long long carrierOuterCount_[6];
     Double carrierOuterCharge_[6];
     std::size_t peakPmlCarriers_;
+    unsigned long long retirementEntryCount_;
+    Double retirementEntryCharge_;
+    unsigned long long retirementExitCount_;
+    Double retirementExitResidualCharge_;
+    std::size_t peakRetirementCarriers_;
     std::string stopReason_;
   };
 }

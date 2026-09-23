@@ -40,8 +40,10 @@ This is the endpoint representation of the far-zone Lienard--Wiechert
 acceleration field for the piecewise-linear path. The first and last artificial
 start/stop endpoints are suppressed: the recorded path is assumed to continue
 inertially outside its time range. Consequently, at least three records are
-required per particle. CPML terminal events are valid final points, but the
-non-physical CPML carriers never enter the calculation.
+required per particle. CPML and particle-retirement terminal events are valid
+final points, but their non-physical current carriers never enter the
+calculation. Suppression of the artificial last endpoint makes a retirement
+record equivalent to inertial continuation of the physical trajectory.
 
 The program uses `long double` for retarded time, phase reduction, local
 coherent accumulation, and MPI reduction. Output is float64. The trajectory
@@ -267,6 +269,11 @@ The principal datasets are:
 | `energy_spectrum` | `[shot,f]` | angularly integrated `dW/dω`, J s |
 | `mean_energy_spectrum` | `[f]` | ensemble mean `dW/dω`, J s |
 | `mean_energy_per_log_frequency` | `[f]` | `dW/dln(ω)`, J |
+| `band_energy_J` | `[shot]` | integral over the configured frequency and angular grids, J |
+
+The `/far_field` attributes `mean_band_energy_J`,
+`band_min_photon_energy_eV`, and `band_max_photon_energy_eV` provide the same
+finite-band integral in scalar form for matched field-power comparisons.
 
 The complex datatype has `real` and `imag` float64 members. Polarization index
 0 is the projected horizontal basis and index 1 completes the right-handed
