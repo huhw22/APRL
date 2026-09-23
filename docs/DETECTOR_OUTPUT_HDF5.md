@@ -44,6 +44,10 @@ propagated grid.
 
 Poynting flux is intentionally not duplicated in the file: downstream tools
 can compute `S = E cross B / mu0` from the saved laboratory fields.
+The committed `field_reconstruction` post-processor performs this calculation
+for both the raw and particle-background-subtracted fields and stores their
+forward power and time-integrated energy. See
+[FIELD_RECONSTRUCTION.md](FIELD_RECONSTRUCTION.md).
 
 ## Ballistic particle-background reference
 

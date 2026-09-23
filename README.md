@@ -15,9 +15,10 @@ while laboratory seed fields and magnetic devices are converted through an
 explicit Lorentz boost. A/phi is not part of the evolution state.
 
 The main radiation result is a fixed laboratory field plane. Each field plane
-can own a diagnostic-only ballistic-reference region on its left: particles continue
-their fully self-consistent push, while a single crossing record supplies the
-straight-line charged-particle background reference for later subtraction.
+can own a diagnostic-only ballistic-reference region on its left: particles
+continue their fully self-consistent push, while a single crossing record
+supplies the straight-line charged-particle background reference for later
+subtraction.
 Small test runs can additionally compare that virtual straight line with the
 same physical particle at the field plane, one paired record per particle,
 without enabling full trajectory output.
@@ -33,6 +34,14 @@ ensemble cross-spectral density without linking or rerunning the simulation
 core. Stable parts of a single pulse can alternatively be treated as a
 Hann-window ensemble in reduced observer time for spatial and two-frequency
 coherence analysis.
+
+A second standalone C++ post-processor combines a raw laboratory E/B plane
+with either its ballistic-reference crossings or a colocated particle plane.
+It deposits the crossings once, reconstructs the uniform-velocity bunch field
+with a three-dimensional FFT, writes a background-subtracted field, and
+reports the change in forward Poynting power and energy. This keeps the
+production simulation light while retaining a reproducible field-based
+radiation path on the analysis server.
 
 ## Intended applications
 
@@ -80,5 +89,7 @@ or particle-boundary I/O.
 - [Trajectory-to-far-field radiation tool](docs/TRAJECTORY_RADIATION.md)
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [Field-detector ballistic reference region](docs/FIELD_DETECTOR_REFERENCE.md)
+- [Particle-background field reconstruction](docs/FIELD_RECONSTRUCTION.md)
+- [Numerical validation status](docs/VALIDATION.md)
 - [HDF5 input example](config/example.yaml)
 - [Generated Gaussian test example](config/generated_gaussian.yaml)

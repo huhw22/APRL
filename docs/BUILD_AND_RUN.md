@@ -7,7 +7,8 @@
 - MPI;
 - HDF5 development libraries, with parallel HDF5 required for multi-rank
   particle input;
-- yaml-cpp development libraries.
+- yaml-cpp development libraries;
+- FFTW3, including its threads library, for field reconstruction only.
 
 ## Build
 
@@ -30,6 +31,21 @@ cmake --build build-radiation -j
 It reads completed per-rank trajectory files, reassembles migrated particle
 histories, and writes one rank-zero HDF5 result. See
 [TRAJECTORY_RADIATION.md](TRAJECTORY_RADIATION.md).
+
+The raw-field/particle-plane reconstruction tool is also a separate build:
+
+```bash
+cmake -S postprocess/field_reconstruction -B build-field-reconstruction \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=mpic++
+cmake --build build-field-reconstruction -j
+./build-field-reconstruction/field_reconstruction \
+  postprocess/field_reconstruction/example.yaml
+```
+
+It uses threaded FFTW on one analysis node and never modifies the simulation
+outputs. Its input assumptions, output datasets, intensity diagnostics, and
+convergence requirements are documented in
+[FIELD_RECONSTRUCTION.md](FIELD_RECONSTRUCTION.md).
 
 ## Convert a legacy text particle file
 

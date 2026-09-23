@@ -239,6 +239,11 @@ statistics and from the full-pulse deterministic spectrum.
 ## HDF5 output
 
 The `/far_field` group has `format_version=1` and a scalar `complete` marker.
+
+Absolute spectral-energy normalization and the current 40/80/160-step
+single-electron peak-intensity convergence result are recorded in
+[VALIDATION.md](VALIDATION.md). Peak position agreement alone must not be used
+as an intensity validation.
 Major axes are `photon_energy_eV`, `omega_rad_per_s`, `frequency_Hz`,
 `wavelength_m`, `theta_x_rad`, and `theta_y_rad`. `observation_basis` records
 the central, horizontal, and vertical basis vectors.

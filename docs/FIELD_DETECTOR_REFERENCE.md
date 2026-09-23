@@ -126,3 +126,9 @@ seed-laser subtraction; it is currently empty and recorded as
 `external_background_subtracted=none`. Prescribed undulator fields are not
 written into the radiation-oriented field plane and therefore need no such
 subtraction.
+
+The standalone C++ implementation that turns this reference plus the raw E/B
+plane into a cleaned field is described in
+[FIELD_RECONSTRUCTION.md](FIELD_RECONSTRUCTION.md). It can alternatively read
+a particle detector colocated with the field plane; the ballistic reference is
+preferred because it remains available without enabling a second detector.

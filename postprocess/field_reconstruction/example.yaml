@@ -1,0 +1,23 @@
+# Standalone particle-background reconstruction card. Paths are resolved
+# relative to this YAML file.
+input:
+  field_file: ../../output/example/detectors/exit-fields.h5
+  # Use the matching *-ballistic-reference.h5 file, or a colocated laboratory
+  # particle-plane file with one downstream crossing per particle.
+  particle_file: ../../output/example/detectors/exit-particles.h5
+  require_complete: true
+  particle_read_chunk: 65536
+
+model:
+  fft_threads: 8
+  # Zero padding order is [laboratory time, y, x]. Increase it until the
+  # reconstructed background and intensity diagnostics converge.
+  padding_factor: [2, 2, 2]
+  transverse_smoothing_m: 0.0
+  maximum_relative_gamma_spread: 0.05
+  maximum_rms_transverse_beta: 0.05
+  maximum_outside_charge_fraction: 0.001
+
+output:
+  file: reconstructed-fields.h5
+  compression: 0
