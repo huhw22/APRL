@@ -1,0 +1,43 @@
+# Standalone trajectory-to-far-field post-processing card.
+input:
+  require_complete: true
+  read_chunk_records: 65536
+  shots:
+    - name: shot-000
+      files:
+        - ../../output/example/particles-rank-00000.h5
+        - ../../output/example/particles-rank-00001.h5
+
+observation:
+  # Central laboratory direction and the transverse horizontal reference.
+  axis: [0.0, 0.0, 1.0]
+  horizontal: [1.0, 0.0, 0.0]
+  distance_m: 100.0
+  theta_x_rad: {min: -0.001, max: 0.001, count: 101}
+  theta_y_rad: {min: -0.001, max: 0.001, count: 101}
+
+spectrum:
+  photon_energy_eV:
+    min: 100.0
+    max: 1000.0
+    count: 181
+    spacing: linear
+
+calculation:
+  frequency_block: 16
+  theta_y_block: 4
+  minimum_records_per_particle: 3
+
+coherence:
+  # Optional ensemble CSD samples. With one shot these are rank-one outer
+  # products, not evidence of statistical partial coherence.
+  spatial_photon_energy_eV: [500.0]
+  spatial_reference_angles_rad:
+    - [0.0, 0.0]
+  temporal_photon_energy_eV: [450.0, 475.0, 500.0, 525.0, 550.0]
+  temporal_reference_angles_rad:
+    - [0.0, 0.0]
+
+output:
+  file: radiation-output.h5
+  compression: 0

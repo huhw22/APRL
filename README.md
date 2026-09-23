@@ -20,6 +20,11 @@ measurements without forcing a large multidimensional field dump during every
 supercomputer run.  The outputs are intended for radiation reconstruction and
 other analysis on a separate, less expensive machine.
 
+An independent C++/MPI post-processor reconstructs the complex polarized
+far-field spectrum directly from those histories. It provides angular and
+integrated energy spectra, Stokes data, and optional ensemble cross-spectral
+density without linking or rerunning the simulation core.
+
 ## Intended applications
 
 - seeded FEL and laser-modulation studies;
@@ -61,6 +66,7 @@ or particle-boundary I/O.
 - [CPML-aware particle boundary](docs/PARTICLE_OPEN_BOUNDARY.md)
 - [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)
 - [Laboratory trajectory HDF5 output](docs/TRAJECTORY_OUTPUT_HDF5.md)
+- [Trajectory-to-far-field radiation tool](docs/TRAJECTORY_RADIATION.md)
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [HDF5 input example](config/example.yaml)
 - [Generated Gaussian test example](config/generated_gaussian.yaml)

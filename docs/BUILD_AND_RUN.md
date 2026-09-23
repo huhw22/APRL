@@ -19,6 +19,18 @@ cmake --build build -j
 
 This produces `build/simulator` and `build/particle_text_to_hdf5`.
 
+The trajectory radiation post-processor is deliberately a separate build:
+
+```bash
+cmake -S postprocess/trajectory_radiation -B build-radiation \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=mpic++
+cmake --build build-radiation -j
+```
+
+It reads completed per-rank trajectory files, reassembles migrated particle
+histories, and writes one rank-zero HDF5 result. See
+[TRAJECTORY_RADIATION.md](TRAJECTORY_RADIATION.md).
+
 ## Convert a legacy text particle file
 
 ```bash
