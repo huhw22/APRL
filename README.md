@@ -45,11 +45,18 @@ seed-wave correction, a Gauss-consistent initial particle self-field, and
 particle subcycling remain planned work. Production radiation results still
 require problem-scale convergence and reflection validation.
 
+Escaping particles use a charge-conserving open boundary: the last in-domain
+trajectory segment is deposited and terminal charge leaves through a virtual
+normal current instead of being silently deleted or retained as wall charge.
+The production path keeps only six face totals, with no particle-boundary I/O
+or face-sized diagnostic allocation.
+
 ## Documentation
 
 - [Build, conversion, and execution](docs/BUILD_AND_RUN.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
 - [Cowan-z kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
+- [Charge-conserving open particle boundary](docs/PARTICLE_OPEN_BOUNDARY.md)
 - [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [HDF5 input example](config/example.yaml)

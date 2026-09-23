@@ -16,6 +16,7 @@
 #include "eb_particles.h"
 #include "eb_sources.h"
 #include "lab_detectors.h"
+#include "particle_boundary.h"
 #include "trajectory_writer.h"
 
 namespace fel
@@ -46,6 +47,7 @@ namespace fel
 
     void redistributeParticles();
     void pushDepositAndMigrate();
+    void reportParticleBoundaryLosses() const;
     bool synchronizedStopRequested();
     bool configuredStopReached();
 
@@ -72,6 +74,7 @@ namespace fel
     std::unique_ptr<EBZSlabHaloExchange> halo_;
     std::unique_ptr<EBMaxwellIncidentInjector> incident_;
     std::vector<RelativisticParticleSI> particles_;
+    std::unique_ptr<ParticleOpenBoundary> particleBoundary_;
     std::unique_ptr<LabDetectorManager> detectors_;
 
     TrajectoryWriter trajectoryWriter_;

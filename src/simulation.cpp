@@ -150,44 +150,6 @@ namespace fel
                    MPI_STATUS_IGNORE);
     }
 
-    bool clipSegmentToBox(const FieldVector<Double>& start,
-                          const FieldVector<Double>& end,
-                          const Double lower[3], const Double upper[3],
-                          FieldVector<Double>& clipped,
-                          Double& exitFraction)
-    {
-      bool outside = false;
-      exitFraction = 1.0;
-      for (unsigned int axis = 0; axis < 3; ++axis)
-        {
-          if (end[axis] < lower[axis])
-            {
-              outside = true;
-              exitFraction = std::min(exitFraction,
-                (lower[axis] - start[axis]) /
-                (end[axis] - start[axis]));
-            }
-          else if (end[axis] > upper[axis])
-            {
-              outside = true;
-              exitFraction = std::min(exitFraction,
-                (upper[axis] - start[axis]) /
-                (end[axis] - start[axis]));
-            }
-        }
-      if (!outside) return false;
-      if (!(exitFraction >= 0.0) || !(exitFraction <= 1.0) ||
-          !std::isfinite(exitFraction))
-        throw std::runtime_error("Cannot clip escaped particle trajectory");
-      clipped = start;
-      for (unsigned int axis = 0; axis < 3; ++axis)
-        {
-          clipped[axis] += exitFraction * (end[axis] - start[axis]);
-          clipped[axis] = std::max(lower[axis],
-                                   std::min(upper[axis], clipped[axis]));
-        }
-      return true;
-    }
   }
 
   Simulation::Simulation(const SimulationConfig& config,
@@ -195,7 +157,8 @@ namespace fel
     : config_(config), communicator_(communicator), rank_(0), size_(1),
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0), frame_(), sources_(),
-      fields_(), halo_(), incident_(), particles_(), detectors_(),
+      fields_(), halo_(), incident_(), particles_(), particleBoundary_(),
+      detectors_(),
       trajectoryWriter_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), timeBoxSI_(0.0),
@@ -223,6 +186,7 @@ namespace fel
           break;
 
         fields_->clearCurrent();
+        particleBoundary_->beginStep();
         halo_->advanceMagnetic(*fields_);
         if (incident_)
           incident_->correctAfterMagneticUpdate(
@@ -252,6 +216,7 @@ namespace fel
     const bool completed = !interrupted_ && configuredStopReached_;
     finalizeTrajectoryOutput(completed);
     if (detectors_) detectors_->close(completed);
+    reportParticleBoundaryLosses();
     if (configuredStopReached_ && rank_ == 0)
       logRoot(communicator_, "Configured stop reached: " + stopReason_);
     if (interrupted_ && rank_ == 0)
@@ -285,6 +250,8 @@ namespace fel
     initializeParticles();
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
+    particleBoundary_.reset(new ParticleOpenBoundary(
+      localGeometry_, localOriginBox_, globalGeometry_, globalOriginBox_));
     if (config_.boundary.type == EBBoundaryType::Cpml)
       fields_->setBoundary(std::unique_ptr<EBBoundaryOperator>(
         new EBConvolutionalPML(
@@ -401,6 +368,8 @@ namespace fel
         else
           logRoot(communicator_,
             "Boundary: PEC regression mode; no absorbing-layer state allocated.");
+        logRoot(communicator_,
+          "Particle boundary: charge-conserving open absorption at the outer computational faces. The final in-domain segment is deposited and terminal CIC charge exits through a virtual normal current; production mode retains only face totals.");
         logRoot(communicator_,
           "WARNING: the initial Gauss-consistent particle field is not implemented; this is not yet a final radiation-production solver.");
         logRoot(communicator_,
@@ -829,14 +798,6 @@ namespace fel
     const Double lowerZ = localOriginBox_[2];
     const Double upperZ = lowerZ +
       static_cast<Double>(localGeometry_.nz) * localGeometry_.dz;
-    const Double globalLower[3] = {
-      globalOriginBox_[0], globalOriginBox_[1], globalOriginBox_[2]
-    };
-    const Double globalUpper[3] = {
-      globalOriginBox_[0] + static_cast<Double>(globalGeometry_.nx) * globalGeometry_.dx,
-      globalOriginBox_[1] + static_cast<Double>(globalGeometry_.ny) * globalGeometry_.dy,
-      globalOriginBox_[2] + static_cast<Double>(globalGeometry_.nz) * globalGeometry_.dz
-    };
     unsigned long long localLost = 0;
 
     for (std::size_t index = 0; index < particles_.size(); ++index)
@@ -867,18 +828,20 @@ namespace fel
                 "Invalid MPI-interface particle crossing");
           }
 
-        FieldVector<Double> clipped(0.0);
-        Double exitFraction = 1.0;
-        const bool particleOutside = clipSegmentToBox(
-          start, particle.position, globalLower, globalUpper,
-          clipped, exitFraction);
+        ParticleBoundaryHit boundaryHit;
+        const bool particleOutside = particleBoundary_->firstExit(
+          start, particle.position, boundaryHit);
         const Double crossingTolerance = 64.0 *
           std::numeric_limits<Double>::epsilon();
         if (particleOutside &&
             (!crossesInterface ||
-             exitFraction <= interfaceFraction + crossingTolerance))
+             boundaryHit.fraction <=
+               interfaceFraction + crossingTolerance))
           {
-            depositor.depositSegment(start, clipped, particle.charge);
+            depositor.depositSegment(start, boundaryHit.position,
+                                     particle.charge);
+            particleBoundary_->depositOutgoingFlux(
+              boundaryHit, particle.charge);
             ++localLost;
             continue;
           }
@@ -926,14 +889,14 @@ namespace fel
           FieldVector<Double> segmentStart(0.0);
           for (unsigned int axis = 0; axis < 3; ++axis)
             segmentStart[axis] = transfer.segmentStart[axis];
-          FieldVector<Double> clipped(0.0);
-          Double exitFraction = 1.0;
-          if (clipSegmentToBox(segmentStart, particle.position,
-                               globalLower, globalUpper,
-                               clipped, exitFraction))
+          ParticleBoundaryHit boundaryHit;
+          if (particleBoundary_->firstExit(
+                segmentStart, particle.position, boundaryHit))
             {
-              depositor.depositSegment(segmentStart, clipped,
+              depositor.depositSegment(segmentStart, boundaryHit.position,
                                        particle.charge);
+              particleBoundary_->depositOutgoingFlux(
+                boundaryHit, particle.charge);
               ++localLost;
             }
           else
@@ -949,6 +912,45 @@ namespace fel
                   MPI_SUM, communicator_);
     lostParticles_ += globalLost;
     if (detectors_) detectors_->collectParticleCrossings();
+  }
+
+  void Simulation::reportParticleBoundaryLosses() const
+  {
+    unsigned long long localCounts[6] = {};
+    Double localCharges[6] = {};
+    for (std::size_t face = 0; face < 6; ++face)
+      {
+        const ParticleBoundaryFace boundaryFace =
+          static_cast<ParticleBoundaryFace>(face);
+        localCounts[face] = particleBoundary_->cumulativeCount(boundaryFace);
+        localCharges[face] =
+          particleBoundary_->cumulativeCharge(boundaryFace);
+      }
+    unsigned long long globalCounts[6] = {};
+    Double globalCharges[6] = {};
+    MPI_Reduce(localCounts, globalCounts, 6, MPI_UNSIGNED_LONG_LONG,
+               MPI_SUM, 0, communicator_);
+    MPI_Reduce(localCharges, globalCharges, 6, MPI_DOUBLE,
+               MPI_SUM, 0, communicator_);
+    if (rank_ != 0) return;
+
+    unsigned long long total = 0;
+    for (std::size_t face = 0; face < 6; ++face)
+      total += globalCounts[face];
+    if (total == 0) return;
+    std::ostringstream message;
+    message << std::setprecision(10)
+            << "Open particle-boundary losses:";
+    for (std::size_t face = 0; face < 6; ++face)
+      {
+        const ParticleBoundaryFace boundaryFace =
+          static_cast<ParticleBoundaryFace>(face);
+        message << " " << particleBoundaryFaceName(boundaryFace)
+                << "=" << globalCounts[face]
+                << " (Q=" << globalCharges[face] << " C)";
+        if (face + 1 < 6) message << ",";
+      }
+    logRoot(communicator_, message.str());
   }
 
   bool Simulation::synchronizedStopRequested()

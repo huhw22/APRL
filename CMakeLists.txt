@@ -26,6 +26,7 @@ set(DIRECT_EB_SOURCES
   src/lab_detectors.cpp
   src/particle_file.cpp
   src/particle_initializer.cpp
+  src/particle_boundary.cpp
   src/runtime_control.cpp
   src/runtime_util.cpp
   src/simulation.cpp

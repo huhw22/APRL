@@ -270,12 +270,24 @@ stop:
   mode: after-last-element
 ```
 
-Particles that cross a transverse or longitudinal computational boundary are
-clipped to that boundary for their final current segment, removed from the
-valid set, and excluded from this all-particles predicate. This is an explicit
-domain loss, not the old post-undulator soft deletion. If no valid particles
-remain, this mode stops and reports that fact instead of claiming that the
-bunch crossed the downstream boundary.
+Particles that cross a transverse or longitudinal computational boundary use
+the fixed open-particle policy: their trajectory is clipped at its first
+global-box intersection, the final in-domain segment is deposited, and the
+terminal CIC charge is exported through a virtual outward current before the
+particle is removed. This closes the discrete continuity equation instead of
+silently deleting charge. The particle is then excluded from this
+all-particles predicate. This is an explicit domain loss, not the old
+post-undulator soft deletion. If no valid particles remain, this mode stops
+and reports that fact instead of claiming that the bunch crossed the
+downstream boundary.
+
+This policy has no YAML switch at present: all six particle faces are open,
+while `boundary.type` independently selects the electromagnetic PEC or CPML
+operator. Production runs allocate no face-sized particle-flux arrays and do
+no boundary I/O; they retain only face counts and net escaped charge for the
+shutdown log. See
+[PARTICLE_OPEN_BOUNDARY.md](PARTICLE_OPEN_BOUNDARY.md) for the continuity and
+MPI details.
 
 Alternatively, stop when the boost reference centre reaches a fixed lab z:
 
