@@ -67,6 +67,21 @@ namespace radiation
     std::vector<Vec3> temporalReferenceAngles;
   };
 
+  struct TimeAverageConfig
+  {
+    bool enabled;
+    double startTime;
+    double endTime;
+    double windowDuration;
+    double windowStep;
+    std::vector<double> photonEnergyEV;
+    std::vector<Vec3> referenceAngles;
+    std::size_t maximumAccumulatorMiB;
+
+    TimeAverageConfig();
+    std::vector<double> windowCenters() const;
+  };
+
   struct RadiationConfig
   {
     std::string cardPath;
@@ -89,6 +104,7 @@ namespace radiation
     std::string outputFile;
     unsigned int compression;
     CoherenceConfig coherence;
+    TimeAverageConfig timeAverage;
 
     RadiationConfig();
   };
@@ -132,6 +148,15 @@ namespace radiation
     Vec3 vertical;
     double thetaX;
     double thetaY;
+  };
+
+  struct ObserverTimeRange
+  {
+    long double minimum;
+    long double maximum;
+    unsigned long long internalKnots;
+
+    ObserverTimeRange();
   };
 
   struct RadiationBlock

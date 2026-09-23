@@ -38,6 +38,13 @@ coherence:
   temporal_reference_angles_rad:
     - [0.0, 0.0]
 
+# Optional quasi-stationary Hann-window ensemble. The interval uses reduced
+# observer time u=t_lab-n.r_lab/c. Supply selected reference angles, or use
+# reference_angles_rad: all to emit the complete angular CSD (potentially
+# very large and therefore guarded by maximum_accumulator_mib).
+time_average:
+  enabled: false
+
 output:
   file: radiation-output.h5
   compression: 0

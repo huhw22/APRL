@@ -15,6 +15,7 @@ add_executable(trajectory_radiation
   main.cpp
   output_writer.cpp
   radiation_kernel.cpp
+  time_average.cpp
   trajectory_reader.cpp
 )
 

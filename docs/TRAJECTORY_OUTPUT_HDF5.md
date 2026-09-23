@@ -51,6 +51,46 @@ including paths through the non-physical absorbing layer. An event can occur
 between normal sample times and should be retained when reconstructing the end
 of a particle history.
 
+## Sampling cadence and radiation time windows
+
+`trajectory.rhythm` is converted from the input card's time unit to seconds
+and applied as a cadence threshold in the boosted simulation frame. A sample
+is taken at the first completed E/B step at or beyond that threshold; the
+particle state is not interpolated back to an exact cadence time. Each sampled
+state is then Lorentz-transformed and stored as its own laboratory event.
+
+Consequently, this dataset is an event table rather than a rectangular
+`[common_time, particle]` array:
+
+- particles recorded during one boosted-frame step can have different
+  `time_s` after the transformation because laboratory time depends on the
+  particle's longitudinal position;
+- a particle that migrates between MPI slabs continues in another rank file;
+  its `particle_id` does not change;
+- CPML-entry and domain-exit records can occur between periodic samples;
+- records are appended in rank-local write order, not globally sorted by
+  particle or laboratory time.
+
+The radiation reader therefore reads only the committed prefix of every rank
+file, redistributes records by `particle_id`, and sorts each reconstructed
+history by `time_s`. It derives segment velocities from consecutive laboratory
+positions and times; `proper_velocity` is retained as a diagnostic rather than
+used to replace those chords.
+
+For a far-field direction `n`, the relevant window coordinate is not
+`time_s` alone but the reduced observer time
+
+```text
+u = time_s - n dot position_m/c.
+```
+
+For forward relativistic radiation, `time_s` and `z/c` nearly cancel, so the
+useful `u` interval can be much shorter than either the laboratory simulation
+duration or `trajectory.rhythm`. The far-field tool reports the actual
+central-axis range of internal-knot `u` values. Production window choices
+should be based on that reported range and on convergence under a finer
+trajectory cadence, not inferred from the number of HDF5 rows alone.
+
 ## Disabled-output cost
 
 When `trajectory.enabled` is false, no trajectory writer, record buffer, or

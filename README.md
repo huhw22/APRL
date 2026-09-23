@@ -23,7 +23,9 @@ other analysis on a separate, less expensive machine.
 An independent C++/MPI post-processor reconstructs the complex polarized
 far-field spectrum directly from those histories. It provides angular and
 integrated energy spectra, Stokes data, and optional ensemble cross-spectral
-density without linking or rerunning the simulation core.
+density without linking or rerunning the simulation core. Stable parts of a
+single pulse can alternatively be treated as a Hann-window ensemble in reduced
+observer time for spatial and two-frequency coherence analysis.
 
 ## Intended applications
 

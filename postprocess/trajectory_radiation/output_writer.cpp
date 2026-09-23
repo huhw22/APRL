@@ -328,6 +328,12 @@ namespace radiation
     try { close(); } catch (...) {}
   }
 
+  hid_t FarFieldWriter::fileHandle() const
+  {
+    if (!open_) throw std::logic_error("Far-field writer is closed");
+    return file_;
+  }
+
   hid_t FarFieldWriter::createComplexType() const
   {
     hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(ComplexValue));

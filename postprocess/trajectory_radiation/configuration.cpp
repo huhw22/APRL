@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <set>
 #include <stdexcept>
 
@@ -220,12 +221,56 @@ namespace radiation
       verticalAxis(0.0, 1.0, 0.0), distanceM(1.0), thetaX(), thetaY(),
       photonEnergyEV(), frequencyBlock(16), thetaYBlock(4),
       minimumRecordsPerParticle(3), outputFile(), compression(0),
-      coherence()
+      coherence(), timeAverage()
   {}
+
+  TimeAverageConfig::TimeAverageConfig()
+    : enabled(false), startTime(0.0), endTime(0.0),
+      windowDuration(0.0), windowStep(0.0), photonEnergyEV(),
+      referenceAngles(), maximumAccumulatorMiB(1024)
+  {}
+
+  std::vector<double> TimeAverageConfig::windowCenters() const
+  {
+    std::vector<double> result;
+    if (!enabled) return result;
+    const long double first = static_cast<long double>(startTime) +
+      0.5L * static_cast<long double>(windowDuration);
+    const long double last = static_cast<long double>(endTime) -
+      0.5L * static_cast<long double>(windowDuration);
+    const long double step = static_cast<long double>(windowStep);
+    const long double tolerance = 64.0L *
+      static_cast<long double>(std::numeric_limits<double>::epsilon()) *
+      std::max(std::numeric_limits<long double>::min(),
+        std::max(step, std::max(std::abs(first), std::abs(last))));
+    const long double countValue = std::floor(
+      (last - first + tolerance) / step) + 1.0L;
+    if (!(countValue >= 1.0L) ||
+        countValue > static_cast<long double>(
+          std::numeric_limits<std::size_t>::max()))
+      throw std::overflow_error("Invalid number of time-average windows");
+    const std::size_t count = static_cast<std::size_t>(countValue);
+    result.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+      {
+        const long double center = first +
+          static_cast<long double>(index) * step;
+        if (center > last + tolerance)
+          throw std::logic_error("Inconsistent time-average window count");
+        result.push_back(static_cast<double>(center));
+      }
+    return result;
+  }
 
   TrajectoryLoadStats::TrajectoryLoadStats()
     : inputRecords(0), uniqueRecords(0), particles(0),
       terminalEvents(0), duplicateRecords(0)
+  {}
+
+  ObserverTimeRange::ObserverTimeRange()
+    : minimum(std::numeric_limits<long double>::infinity()),
+      maximum(-std::numeric_limits<long double>::infinity()),
+      internalKnots(0)
   {}
 
   std::size_t RadiationBlock::scalarIndex(
@@ -356,6 +401,67 @@ namespace radiation
         config.coherence.temporalReferenceAngles.empty())
       throw std::invalid_argument(
         "Temporal coherence needs both energies and reference angles");
+
+    const YAML::Node timeAverage = root["time_average"];
+    if (timeAverage)
+      {
+        config.timeAverage.enabled = timeAverage["enabled"] ?
+          timeAverage["enabled"].as<bool>() : true;
+        if (config.timeAverage.enabled)
+          {
+            const YAML::Node interval = required(
+              timeAverage, "interval_s");
+            if (!interval.IsSequence() || interval.size() != 2)
+              throw std::invalid_argument(
+                "time_average.interval_s must be [start, end]");
+            config.timeAverage.startTime = interval[0].as<double>();
+            config.timeAverage.endTime = interval[1].as<double>();
+            config.timeAverage.windowDuration = required(
+              timeAverage, "window_duration_s").as<double>();
+            config.timeAverage.windowStep = required(
+              timeAverage, "window_step_s").as<double>();
+            config.timeAverage.photonEnergyEV = readDoubleList(required(
+              timeAverage, "photon_energy_eV"),
+              "time_average.photon_energy_eV");
+            const YAML::Node timeReferences = required(
+              timeAverage, "reference_angles_rad");
+            if (timeReferences.IsScalar() &&
+                timeReferences.as<std::string>() == "all")
+              {
+                const std::vector<double> allX = config.thetaX.values();
+                const std::vector<double> allY = config.thetaY.values();
+                for (std::size_t y = 0; y < allY.size(); ++y)
+                  for (std::size_t x = 0; x < allX.size(); ++x)
+                    config.timeAverage.referenceAngles.push_back(
+                      Vec3(allX[x], allY[y], 0.0));
+              }
+            else
+              config.timeAverage.referenceAngles = readAngleList(
+                timeReferences, "time_average.reference_angles_rad");
+            if (timeAverage["maximum_accumulator_mib"])
+              config.timeAverage.maximumAccumulatorMiB = timeAverage[
+                "maximum_accumulator_mib"].as<std::size_t>();
+            if (!std::isfinite(config.timeAverage.startTime) ||
+                !std::isfinite(config.timeAverage.endTime) ||
+                !(config.timeAverage.endTime >
+                  config.timeAverage.startTime) ||
+                !(config.timeAverage.windowDuration > 0.0) ||
+                !std::isfinite(config.timeAverage.windowDuration) ||
+                !(config.timeAverage.windowStep > 0.0) ||
+                !std::isfinite(config.timeAverage.windowStep) ||
+                config.timeAverage.windowDuration >
+                  config.timeAverage.endTime -
+                  config.timeAverage.startTime ||
+                config.timeAverage.photonEnergyEV.empty() ||
+                config.timeAverage.referenceAngles.empty() ||
+                config.timeAverage.maximumAccumulatorMiB == 0)
+              throw std::invalid_argument(
+                "Invalid enabled time_average definition");
+            if (config.timeAverage.windowCenters().empty())
+              throw std::invalid_argument(
+                "time_average interval contains no complete window");
+          }
+      }
 
     return config;
   }

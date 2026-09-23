@@ -7,7 +7,7 @@ link the simulation core and does not read the Maxwell grid. Its input is one
 or more sets of laboratory-frame trajectory HDF5 files; its output is a single
 HDF5 file containing the complex polarized far-field spectrum, spectral and
 angular energy density, Stokes parameters, angle-integrated energy spectrum,
-and optional first-order coherence matrices.
+and optional shot-ensemble or time-window first-order coherence matrices.
 
 The separation is intentional: the expensive simulation stores reusable
 particle histories once, while frequency ranges, angular grids, observation
@@ -93,6 +93,11 @@ by `particle_id`, so a trajectory that migrated between simulation ranks is
 reassembled before radiation is calculated. Output is written only by analysis
 rank zero. Frequency and theta-y blocking bound temporary field memory.
 
+The optional time-average path evaluates one window at a time and accumulates
+only the requested correlations. It does not store a field for every window.
+The startup log reports its accumulator size, and configuration is rejected
+before trajectory analysis if it exceeds `maximum_accumulator_mib`.
+
 Trajectory records owned by an analysis rank remain in memory for the current
 shot; the blocking applies to the radiation array, not to the trajectory set.
 The one-rank path has no MPI message-size restriction. With multiple ranks, a
@@ -156,6 +161,80 @@ n = normalize(axis + tan(theta_x) horizontal + tan(theta_y) vertical).
 ```
 
 Photon energy can use `linear` or `log` spacing. Angular axes are linear.
+
+## Quasi-stationary time averaging
+
+For a stable or slowly evolving part of a pulse, short-time spectra can be
+used as samples of a stationary or quasi-stationary process:
+
+```yaml
+time_average:
+  enabled: true
+  interval_s: [5.0e-15, 25.0e-15]
+  window_duration_s: 4.0e-15
+  window_step_s: 2.0e-15
+  photon_energy_eV: [450.0, 475.0, 500.0, 525.0, 550.0]
+  reference_angles_rad:
+    - [0.0, 0.0]
+  maximum_accumulator_mib: 1024
+```
+
+Every shot/window pair is one sample. The fixed Hann window is applied in
+reduced observer time
+
+```text
+u = t_lab - n dot r_lab/c.
+```
+
+The common propagation delay `R/c` is omitted, so `interval_s` remains close
+to the radiation emission time instead of including the arbitrary detector
+distance. Window membership is evaluated separately for each observation
+direction. The log reports the central-axis range of internal-knot `u` values
+for every shot, which provides the first practical bound for choosing the
+interval. The angular edges can have slightly different ranges.
+
+Choose the interval inside the stable plateau. Including startup, saturation
+transients, or pulse decay measures those deterministic envelope changes
+together with coherence loss. Overlapping windows improve sampling smoothness
+but are correlated; they do not provide the same number of independent
+realizations.
+
+The `/time_average` group contains:
+
+| dataset | shape | meaning |
+| --- | --- | --- |
+| `spatial_cross_spectral_density` | `[ref,f,y,x,2,2]` complex | time-window CSD `mean(conj(E_ref,a) E_target,b)` |
+| `spectral_degree_of_coherence_squared` | `[ref,f,y,x]` | basis-invariant electromagnetic `mu_EM^2` |
+| `mean_window_spectral_energy_density` | `[f,y,x]` | arithmetic mean energy spectrum per Hann window |
+| `reference_mean_window_spectral_energy_density` | `[ref,f]` | same quantity at reference angles |
+| `reference_window_spectral_energy_density` | `[shot,window,ref,f]` | compact per-window stationarity diagnostic |
+| `two_frequency_cross_spectral_density` | `[ref,f1,f2,2,2]` complex | time-window two-frequency correlation |
+| `solid_angle_quadrature_weight` | `[y,x]` | tangent-grid `dOmega` integration weights |
+
+The full polarized matrices are retained, so another normalization or a
+polarization projection can be performed without rerunning the trajectories.
+The compact per-window reference intensities make startup, decay, or a drifting
+plateau visible without storing the full angular field for every window.
+The two-frequency CSD contains the temporal first-order coherence information;
+the mutual coherence function follows by the corresponding inverse Fourier
+transform. A dense, uniformly spaced frequency grid is recommended for that
+transform.
+
+Set `reference_angles_rad: all` to make every angular-grid point a reference.
+This produces the complete angular CSD operator needed for coherent-mode
+decomposition. Its storage scales as the square of the angular point count,
+so a reduced angular grid or a representative reference list is normally much
+cheaper. The configured accumulator-memory limit protects against accidental
+multi-gigabyte allocations.
+
+For a polarized coherent-mode decomposition, flatten angle and polarization
+into one index and diagonalize the quadrature-symmetrized matrix
+`sqrt(dOmega_i) W_ij sqrt(dOmega_j)`. The stored solid-angle weights include
+the tangent-coordinate Jacobian and trapezoidal edge factors.
+
+Time-window averaging characterizes unresolved variation within the selected
+part of a pulse. It is deliberately stored separately from shot-to-shot
+statistics and from the full-pulse deterministic spectrum.
 
 ## HDF5 output
 

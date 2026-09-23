@@ -57,29 +57,32 @@ namespace radiation
     for (std::size_t localY = 0; localY < thetaYCount; ++localY)
       for (std::size_t x = 0; x < thetaX.size(); ++x)
         {
-          const double xAngle = thetaX[x];
-          const double yAngle = thetaY[thetaYOffset + localY];
-          const Vec3 slopeDirection = config.observationAxis +
-            std::tan(static_cast<long double>(xAngle)) *
-              config.horizontalAxis +
-            std::tan(static_cast<long double>(yAngle)) *
-              config.verticalAxis;
-          ObservationDirection observation;
-          observation.direction = normalized(
-            slopeDirection, "observation direction");
-          const Vec3 horizontalProjection = config.horizontalAxis -
-            dot(config.horizontalAxis, observation.direction) *
-              observation.direction;
-          observation.horizontal = normalized(
-            horizontalProjection, "far-field horizontal polarization");
-          observation.vertical = normalized(cross(
-            observation.direction, observation.horizontal),
-            "far-field vertical polarization");
-          observation.thetaX = xAngle;
-          observation.thetaY = yAngle;
-          result.push_back(observation);
+          result.push_back(makeObservationDirection(config, thetaX[x],
+            thetaY[thetaYOffset + localY]));
         }
     return result;
+  }
+
+  ObservationDirection makeObservationDirection(
+      const RadiationConfig& config, double thetaX, double thetaY)
+  {
+    const Vec3 slopeDirection = config.observationAxis +
+      std::tan(static_cast<long double>(thetaX)) * config.horizontalAxis +
+      std::tan(static_cast<long double>(thetaY)) * config.verticalAxis;
+    ObservationDirection observation;
+    observation.direction = normalized(
+      slopeDirection, "observation direction");
+    const Vec3 horizontalProjection = config.horizontalAxis -
+      dot(config.horizontalAxis, observation.direction) *
+        observation.direction;
+    observation.horizontal = normalized(
+      horizontalProjection, "far-field horizontal polarization");
+    observation.vertical = normalized(cross(
+      observation.direction, observation.horizontal),
+      "far-field vertical polarization");
+    observation.thetaX = thetaX;
+    observation.thetaY = thetaY;
+    return observation;
   }
 
   std::vector<long double> photonEnergyToOmega(
@@ -89,6 +92,32 @@ namespace radiation
     for (std::size_t index = 0; index < result.size(); ++index)
       result[index] = static_cast<long double>(photonEnergyEV[index]) *
         constants::elementaryCharge / constants::hbar;
+    return result;
+  }
+
+  ObserverTimeRange internalKnotObserverTimeRange(
+      const std::vector<ParticleTrajectory>& trajectories,
+      const ObservationDirection& observation,
+      std::size_t minimumRecordsPerParticle)
+  {
+    ObserverTimeRange result;
+    for (std::size_t particle = 0; particle < trajectories.size(); ++particle)
+      {
+        const ParticleTrajectory& trajectory = trajectories[particle];
+        if (trajectory.records.size() < minimumRecordsPerParticle) continue;
+        for (std::size_t knot = 1;
+             knot + 1 < trajectory.records.size(); ++knot)
+          {
+            const TrajectoryRecord& record = trajectory.records[knot];
+            const long double reducedObserverTime =
+              static_cast<long double>(record.time) -
+              dot(observation.direction, recordPosition(record)) /
+                constants::c;
+            result.minimum = std::min(result.minimum, reducedObserverTime);
+            result.maximum = std::max(result.maximum, reducedObserverTime);
+            ++result.internalKnots;
+          }
+      }
     return result;
   }
 
@@ -182,5 +211,88 @@ namespace radiation
           }
       }
     return block;
+  }
+
+  std::vector<long double> calculateWindowedRadiation(
+      const std::vector<ParticleTrajectory>& trajectories,
+      const RadiationConfig& config,
+      const std::vector<long double>& omega,
+      const std::vector<ObservationDirection>& directions,
+      long double windowCenter,
+      long double windowDuration,
+      unsigned long long& skippedShortParticles)
+  {
+    if (!(windowDuration > 0.0L) || !std::isfinite(windowCenter) ||
+        !std::isfinite(windowDuration))
+      throw std::invalid_argument("Invalid radiation time window");
+    std::vector<long double> amplitude(
+      omega.size() * directions.size() * 2 * 2, 0.0L);
+    skippedShortParticles = 0;
+    const long double halfWindow = 0.5L * windowDuration;
+
+    for (std::size_t particle = 0; particle < trajectories.size(); ++particle)
+      {
+        const ParticleTrajectory& trajectory = trajectories[particle];
+        if (trajectory.records.size() < config.minimumRecordsPerParticle)
+          {
+            ++skippedShortParticles;
+            continue;
+          }
+        std::vector<Vec3> beta(trajectory.records.size() - 1);
+        for (std::size_t segment = 0; segment < beta.size(); ++segment)
+          beta[segment] = segmentBeta(trajectory.records[segment],
+                                     trajectory.records[segment + 1]);
+        const long double charge = trajectory.charge;
+        for (std::size_t directionIndex = 0;
+             directionIndex < directions.size(); ++directionIndex)
+          {
+            const ObservationDirection& observation =
+              directions[directionIndex];
+            for (std::size_t knot = 1;
+                 knot + 1 < trajectory.records.size(); ++knot)
+              {
+                const TrajectoryRecord& record = trajectory.records[knot];
+                const Vec3 position = recordPosition(record);
+                const long double reducedObserverTime =
+                  static_cast<long double>(record.time) -
+                  dot(observation.direction, position) / constants::c;
+                const long double normalizedOffset =
+                  (reducedObserverTime - windowCenter) / halfWindow;
+                if (!(std::abs(normalizedOffset) < 1.0L)) continue;
+                const long double windowWeight = 0.5L * (1.0L +
+                  std::cos(constants::pi * normalizedOffset));
+                const Vec3 delta = transverseFactor(
+                  observation.direction, beta[knot]) -
+                  transverseFactor(observation.direction, beta[knot - 1]);
+                const long double component[2] = {
+                  dot(delta, observation.horizontal),
+                  dot(delta, observation.vertical)
+                };
+                if (component[0] == 0.0L && component[1] == 0.0L)
+                  continue;
+                for (std::size_t frequency = 0;
+                     frequency < omega.size(); ++frequency)
+                  {
+                    const long double phase = std::remainder(
+                      omega[frequency] * reducedObserverTime,
+                      2.0L * constants::pi);
+                    const long double cosine = std::cos(phase);
+                    const long double sine = std::sin(phase);
+                    for (std::size_t polarization = 0;
+                         polarization < 2; ++polarization)
+                      {
+                        const long double magnitude = charge *
+                          component[polarization] * windowWeight;
+                        const std::size_t index =
+                          ((frequency * directions.size() + directionIndex) *
+                            2 + polarization) * 2;
+                        amplitude[index] += magnitude * cosine;
+                        amplitude[index + 1] += magnitude * sine;
+                      }
+                  }
+              }
+          }
+      }
+    return amplitude;
   }
 }

@@ -31,6 +31,7 @@ namespace radiation
                         const std::vector<long double>& omega);
     void finalizeEnsemble();
     void close();
+    hid_t fileHandle() const;
 
   private:
     hid_t createComplexType() const;
