@@ -52,6 +52,199 @@ namespace fel
       face(ParticleBoundaryFace::LowerX)
   {}
 
+  ParticleCPMLRegion::ParticleCPMLRegion(
+      const EBGridGeometry& globalGeometry,
+      const FieldVector<Double>& globalOriginSI,
+      const EBCPMLParameters& parameters)
+    : geometry_(globalGeometry), originSI_(globalOriginSI),
+      parameters_(parameters)
+  {
+    const Double spacing[3] = {
+      geometry_.dx, geometry_.dy, geometry_.dz
+    };
+    const std::size_t cells[3] = {
+      geometry_.nx, geometry_.ny, geometry_.nz
+    };
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        if (2 * parameters_.cells[axis] >= cells[axis] &&
+            parameters_.cells[axis] > 0)
+          throw std::invalid_argument(
+            "Particle CPML region must leave a physical interior");
+        outerLower_[axis] = originSI_[axis];
+        outerUpper_[axis] = originSI_[axis] +
+          static_cast<Double>(cells[axis]) * spacing[axis];
+        physicalLower_[axis] = outerLower_[axis] +
+          static_cast<Double>(parameters_.cells[axis]) * spacing[axis];
+        physicalUpper_[axis] = outerUpper_[axis] -
+          static_cast<Double>(parameters_.cells[axis]) * spacing[axis];
+        tolerance_[axis] = coordinateTolerance(
+          outerLower_[axis], outerUpper_[axis]);
+        maximumRate_[axis] = parameters_.maximumConductivityRate(
+          axis, geometry_);
+      }
+  }
+
+  bool ParticleCPMLRegion::enabled() const
+  {
+    return parameters_.enabled();
+  }
+
+  bool ParticleCPMLRegion::containsPhysical(
+      const FieldVector<Double>& positionSI) const
+  {
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      if (!std::isfinite(positionSI[axis]) ||
+          positionSI[axis] < physicalLower_[axis] - tolerance_[axis] ||
+          positionSI[axis] > physicalUpper_[axis] + tolerance_[axis])
+        return false;
+    return true;
+  }
+
+  bool ParticleCPMLRegion::firstEntry(
+      const FieldVector<Double>& startSI,
+      const FieldVector<Double>& endSI,
+      ParticleBoundaryHit& hit) const
+  {
+    if (!enabled()) return false;
+    Double bestFraction = std::numeric_limits<Double>::infinity();
+    ParticleBoundaryFace bestFace = ParticleBoundaryFace::LowerX;
+    bool entered = false;
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        if (!std::isfinite(startSI[axis]) ||
+            !std::isfinite(endSI[axis]))
+          throw std::runtime_error(
+            "Particle CPML trajectory contains a non-finite coordinate");
+        if (startSI[axis] < physicalLower_[axis] - tolerance_[axis] ||
+            startSI[axis] > physicalUpper_[axis] + tolerance_[axis])
+          throw std::out_of_range(
+            "Active particle starts inside the non-physical CPML region");
+        if (parameters_.cells[axis] == 0) continue;
+
+        Double candidate = 0.0;
+        ParticleBoundaryFace candidateFace =
+          ParticleBoundaryFace::LowerX;
+        bool axisEntered = false;
+        if (endSI[axis] < physicalLower_[axis])
+          {
+            candidate = (physicalLower_[axis] - startSI[axis]) /
+              (endSI[axis] - startSI[axis]);
+            candidateFace = static_cast<ParticleBoundaryFace>(2 * axis);
+            axisEntered = true;
+          }
+        else if (endSI[axis] > physicalUpper_[axis])
+          {
+            candidate = (physicalUpper_[axis] - startSI[axis]) /
+              (endSI[axis] - startSI[axis]);
+            candidateFace = static_cast<ParticleBoundaryFace>(2 * axis + 1);
+            axisEntered = true;
+          }
+        if (axisEntered && candidate < bestFraction)
+          {
+            bestFraction = candidate;
+            bestFace = candidateFace;
+            entered = true;
+          }
+      }
+    if (!entered) return false;
+    const Double fractionTolerance = 64.0 *
+      std::numeric_limits<Double>::epsilon();
+    if (!std::isfinite(bestFraction) ||
+        bestFraction < -fractionTolerance ||
+        bestFraction > 1.0 + fractionTolerance)
+      throw std::runtime_error(
+        "Cannot locate the first particle entry into CPML");
+    hit.fraction = std::max(0.0, std::min(1.0, bestFraction));
+    hit.face = bestFace;
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        hit.position[axis] = startSI[axis] + hit.fraction *
+          (endSI[axis] - startSI[axis]);
+        hit.position[axis] = std::max(outerLower_[axis],
+          std::min(outerUpper_[axis], hit.position[axis]));
+      }
+    const std::size_t selectedFace =
+      static_cast<std::size_t>(hit.face);
+    const unsigned int normal =
+      static_cast<unsigned int>(selectedFace / 2);
+    hit.position[normal] = (selectedFace % 2) != 0 ?
+      physicalUpper_[normal] : physicalLower_[normal];
+    return true;
+  }
+
+  Double ParticleCPMLRegion::currentDampingFactor(
+      const FieldVector<Double>& startSI,
+      const FieldVector<Double>& endSI,
+      Double durationSI) const
+  {
+    if (!(durationSI >= 0.0) || !std::isfinite(durationSI))
+      throw std::invalid_argument(
+        "CPML carrier segment duration must be finite and nonnegative");
+    if (durationSI == 0.0 || !enabled()) return 1.0;
+
+    /* Three-point Gauss-Legendre quadrature is exact for the common cubic
+     * grading while remaining inexpensive for the transient carrier list. */
+    const Double abscissa = std::sqrt(3.0 / 5.0);
+    const Double node[3] = {
+      0.5 * (1.0 - abscissa), 0.5, 0.5 * (1.0 + abscissa)
+    };
+    const Double weight[3] = {5.0 / 18.0, 4.0 / 9.0, 5.0 / 18.0};
+    Double averageRate = 0.0;
+    for (unsigned int sample = 0; sample < 3; ++sample)
+      {
+        FieldVector<Double> position(0.0);
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          position[axis] = startSI[axis] + node[sample] *
+            (endSI[axis] - startSI[axis]);
+        averageRate += weight[sample] * conductivityRate(position);
+      }
+    const Double exponent = -durationSI * averageRate;
+    return exponent < std::log(std::numeric_limits<Double>::min()) ?
+      0.0 : std::exp(exponent);
+  }
+
+  Double ParticleCPMLRegion::physicalLower(unsigned int axis) const
+  {
+    if (axis >= 3) throw std::out_of_range("CPML axis must be x, y, or z");
+    return physicalLower_[axis];
+  }
+
+  Double ParticleCPMLRegion::physicalUpper(unsigned int axis) const
+  {
+    if (axis >= 3) throw std::out_of_range("CPML axis must be x, y, or z");
+    return physicalUpper_[axis];
+  }
+
+  Double ParticleCPMLRegion::conductivityRate(
+      const FieldVector<Double>& positionSI) const
+  {
+    const Double spacing[3] = {
+      geometry_.dx, geometry_.dy, geometry_.dz
+    };
+    Double rate = 0.0;
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        if (parameters_.cells[axis] == 0) continue;
+        const Double thickness =
+          static_cast<Double>(parameters_.cells[axis]) * spacing[axis];
+        Double depth = 0.0;
+        if (positionSI[axis] < physicalLower_[axis])
+          depth = (physicalLower_[axis] - positionSI[axis]) / thickness;
+        else if (positionSI[axis] > physicalUpper_[axis])
+          depth = (positionSI[axis] - physicalUpper_[axis]) / thickness;
+        depth = std::max(0.0, std::min(1.0, depth));
+        rate += maximumRate_[axis] *
+          std::pow(depth, parameters_.polynomialOrder);
+      }
+    return rate;
+  }
+
+  ParticleCPMLCarrier::ParticleCPMLCarrier()
+    : position(0.0), velocity(0.0), charge(0.0),
+      currentWeight(1.0)
+  {}
+
   ParticleOpenBoundary::FaceFlux::FaceFlux()
     : firstNodes(0), secondNodes(0), values()
   {}

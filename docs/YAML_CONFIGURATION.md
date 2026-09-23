@@ -270,24 +270,23 @@ stop:
   mode: after-last-element
 ```
 
-Particles that cross a transverse or longitudinal computational boundary use
-the fixed open-particle policy: their trajectory is clipped at its first
-global-box intersection, the final in-domain segment is deposited, and the
-terminal CIC charge is exported through a virtual outward current before the
-particle is removed. This closes the discrete continuity equation instead of
-silently deleting charge. The particle is then excluded from this
-all-particles predicate. This is an explicit domain loss, not the old
-post-undulator soft deletion. If no valid particles remain, this mode stops
-and reports that fact instead of claiming that the bunch crossed the
-downstream boundary.
+With CPML enabled, its inner surface is the physical particle boundary. A
+particle trajectory and detector participation end exactly at the first CPML
+entrance. The rest of that step continues as an output-free ballistic carrier
+whose deposited current is damped by the CPML conductivity profile. Residual
+carrier charge is exported through a virtual outward current at the outer box.
+The physical particle is immediately excluded from the all-particles predicate;
+carriers do not postpone this stop mode. If no valid particles remain, this
+mode stops and reports that fact instead of claiming that the bunch crossed
+the downstream boundary. Use `reference-center-z` when field ring-down after
+the physical particles leave must be retained.
 
-This policy has no YAML switch at present: all six particle faces are open,
-while `boundary.type` independently selects the electromagnetic PEC or CPML
-operator. Production runs allocate no face-sized particle-flux arrays and do
-no boundary I/O; they retain only face counts and net escaped charge for the
-shutdown log. See
-[PARTICLE_OPEN_BOUNDARY.md](PARTICLE_OPEN_BOUNDARY.md) for the continuity and
-MPI details.
+This policy has no YAML switch. A face without CPML uses the direct
+charge-conserving outer boundary instead. Production runs allocate no
+face-sized particle-flux arrays and do no boundary I/O; shutdown reports
+separate CPML-entry, direct-exit, and residual-carrier totals. See
+[PARTICLE_OPEN_BOUNDARY.md](PARTICLE_OPEN_BOUNDARY.md) for the damping,
+continuity, and MPI details.
 
 Alternatively, stop when the boost reference centre reaches a fixed lab z:
 
@@ -373,4 +372,7 @@ Each MPI rank writes one HDF5 file. `rhythm` uses the YAML time unit. In global
 interactive runtime mode, `flush_every_samples` periodically commits a
 readable prefix. Global throughput mode buffers normally until a full batch or
 clean close. `compression` is 0-9; zero minimizes CPU cost. When `enabled` is
-false, `rhythm` may be omitted.
+false, `rhythm` may be omitted. Format version 2 additionally stores exact
+CPML-entry or direct-domain-exit terminal events between cadence samples.
+Numerical CPML carriers are never written. See
+[TRAJECTORY_OUTPUT_HDF5.md](TRAJECTORY_OUTPUT_HDF5.md).

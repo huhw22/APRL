@@ -43,6 +43,10 @@ namespace fel
     void initializeTrajectoryOutput();
     void initializeDetectorOutput();
     void sampleTrajectory();
+    void appendTrajectoryEvent(const RelativisticParticleSI& particle,
+                               Double timeBox,
+                               TrajectoryEvent event,
+                               ParticleBoundaryFace face);
     void finalizeTrajectoryOutput(bool completed);
 
     void redistributeParticles();
@@ -74,6 +78,8 @@ namespace fel
     std::unique_ptr<EBZSlabHaloExchange> halo_;
     std::unique_ptr<EBMaxwellIncidentInjector> incident_;
     std::vector<RelativisticParticleSI> particles_;
+    std::unique_ptr<ParticleCPMLRegion> particleCPML_;
+    std::vector<ParticleCPMLCarrier> pmlCarriers_;
     std::unique_ptr<ParticleOpenBoundary> particleBoundary_;
     std::unique_ptr<LabDetectorManager> detectors_;
 
@@ -88,6 +94,13 @@ namespace fel
     bool interrupted_;
     bool configuredStopReached_;
     unsigned long long lostParticles_;
+    unsigned long long cpmlEntryCount_[6];
+    Double cpmlEntryCharge_[6];
+    unsigned long long directOuterCount_[6];
+    Double directOuterCharge_[6];
+    unsigned long long carrierOuterCount_[6];
+    Double carrierOuterCharge_[6];
+    std::size_t peakPmlCarriers_;
     std::string stopReason_;
   };
 }

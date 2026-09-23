@@ -1,83 +1,111 @@
-# Charge-conserving open particle boundary
+# CPML-aware particle boundary
 
 ## Purpose
 
-Particles can leave the finite transverse mesh even when the beam core is
-well confined. Deleting such a macroparticle at its last in-domain position
-would remove charge without the matching current and would introduce an
-artificial discrete Gauss-law error. Keeping the particle at the wall would
-instead leave a static near-field contribution that is not part of the wanted
-outgoing radiation.
+The inner CPML surface is the end of the physical particle domain. A particle
+that reaches this surface must no longer contribute trajectory or detector
+data, because the layer beyond it is a numerical wave absorber rather than an
+observation region. Deleting its charge immediately, however, would create a
+static field and an outgoing numerical pulse through a discontinuity in the
+discrete continuity equation.
 
-The program therefore uses an open, absorbing particle boundary on all six
-outer computational faces. This is separate from the electromagnetic
-boundary: CPML absorbs outgoing E/B waves, whereas the particle boundary
-closes the charge-continuity equation when a particle leaves the mesh.
+The program therefore separates a physical particle from a numerical current
+carrier. The former ends exactly at the first CPML entrance. The latter is a
+   small, output-free record which transports and damps the remaining current
+inside CPML. CPML-disabled faces retain the charge-conserving open boundary at
+the outer computational surface.
 
-## Discrete operation
+## Physical-to-numerical transition
 
 For every pushed trajectory from `x_old` to `x_new`:
 
-1. Find the first intersection with the global computational box.
-2. Deposit the segment from `x_old` to that intersection with the existing
-   first-order charge-conserving trajectory depositor.
-3. Represent the terminal CIC charge by a virtual outward normal current on
-   the selected face.
-4. Remove the particle from the valid-particle set and record its face, charge,
-   and loss count.
+1. Find its first intersection with an enabled inner CPML surface or an outer
+   computational face.
+2. Deposit the physical segment from `x_old` to the intersection with the
+   existing first-order charge-conserving trajectory depositor.
+3. Store an exact terminal trajectory event at a CPML entrance when trajectory
+   output is enabled, and stop particle-plane participation there.
+4. Replace the remainder of that same time step with a ballistic numerical
+   carrier. It keeps only position, frozen coordinate velocity, charge, and current
+   weight; it performs no field gather, Boris push, trajectory output, or
+   detector work.
+5. Deposit the carrier segment with its damped current weight. Remove the
+   residual carrier at the outer face using the same virtual outward-current
+   closure as the open-boundary fallback.
 
-If `rho_face` is the terminal CIC charge density, the virtual link supplies
-the missing term
+There is no one-step pause at the transition. At an exact edge or corner the
+first face is selected deterministically, so an event and its charge are
+counted only once.
+
+## Matched current damping
+
+Carrier velocity is frozen at the CPML entrance. Along its actual boosted-frame
+path the current weight is updated as
+
+```text
+w(t + dt) = w(t) exp[-integral sigma(x(t)) / epsilon_0 dt].
+```
+
+Here `sigma/epsilon_0` is the same graded electric-conductivity rate used by
+the field CPML. Rates from simultaneously active x, y, and z layers are added.
+The path integral is evaluated with three-point Gauss--Legendre quadrature;
+this is exact for the configured cubic conductivity grading while a segment
+remains in one polynomial piece. A transferred segment retains its global time
+fraction, so splitting it between z ranks does not restart the damping.
+
+The current deposited over a segment uses the weight evaluated at the segment
+midpoint. This is a numerical absorption device, not a physical model of an
+electron moving through material. The CPML `kappa` and complex-frequency
+shift `alpha` remain field-update parameters and are not folded into the
+particle-current matching law.
+
+## Outer cleanup and non-CPML fallback
+
+When the residual carrier reaches the outer box, its final in-domain segment
+is deposited and its terminal CIC charge is exported through a virtual normal
+current. If `rho_face` is that terminal density, the virtual link supplies
 
 ```text
 (rho_after - rho_before) / dt + div(J_inside) + div(J_out) = 0,
 div(J_out) = rho_face / dt.
 ```
 
-The sign of the particle charge is retained. At an exact edge or corner one
-face is selected deterministically, so the charge is exported once rather
-than duplicated across two or three faces. The local continuity diagnostic
-covers all faces and exact transverse-corner exits.
+The virtual link lies outside the E/B lattice and is not an additional Ampere
+source. On a face without CPML, a physical particle follows this outer-face
+path directly. Extremely small residual carrier weights are discarded at a
+roundoff-level threshold.
 
-The virtual normal link lies outside the E/B lattice and is not an additional
-Ampere source. The resolved in-domain current up to the boundary remains in
-the Maxwell update; only the charge that has actually left the open domain is
-exported.
+## MPI, memory, and output behaviour
 
-## MPI and memory behaviour
+Internal z-rank interfaces are migration surfaces, not loss surfaces. Both
+physical particles and numerical carriers can continue on the neighbouring
+rank. Carrier transfer includes the start of the unfinished segment and its
+global time fraction so deposition and damping remain continuous.
 
-The z decomposition treats internal rank interfaces only as migration
-surfaces. A trajectory is split at the interface, its tangential current is
-summed by the existing halo exchange, and the particle continues on the
-neighbour rank. Only an intersection with a global outer face is counted as a
-loss.
+Each carrier is eight floating-point values: 64 bytes with the current scalar
+type. The simulation records only the local carrier vector, its peak size, and
+six face totals for each boundary category. It allocates no dense face arrays
+and performs no particle-boundary I/O. Face reductions occur once at shutdown.
+Trajectory files contain the exact CPML-entry event but never contain carrier
+samples.
 
-Normal production runs retain six local counters and six signed charge sums.
-They allocate no face-sized particle-boundary arrays and perform no particle
-boundary I/O. Face-resolved MPI reduction occurs only once at shutdown for
-the log. Optional dense face-current storage exists solely for explicit local
-continuity tests and is disabled by the simulation driver.
+## Stopping and interpretation
 
-## Interpretation and limits
-
-- Absorption occurs at the outer computational face, not at the CPML entrance.
-  CPML and the particle boundary therefore do not silently redefine the
-  physical aperture.
-- This mechanism prevents an artificial charge discontinuity; it does not
-  delete radiation or near fields that were already present on the E/B grid.
-  Those fields must propagate through CPML in the ordinary Maxwell update.
-- It is not a radiation/near-field separator. Radiation reconstruction should
-  still use the retained trajectories or suitably placed laboratory detector
-  planes.
+- CPML-entry particles immediately leave the valid-particle set. Numerical
+  carriers therefore do not delay `after-last-element`; this mode is intended
+  to stop when the physical particle calculation is complete.
+- To retain electromagnetic ring-down after all physical particles have left,
+  use `reference-center-z` with a target sufficiently downstream. Carriers then
+  continue to drive their damped current while the Maxwell solver advances.
+- Neither boundary treatment separates radiation from near field. Radiation
+  reconstruction should use the retained physical trajectories or laboratory
+  detector planes.
+- Entry into CPML is a domain-loss diagnostic. Frequent or high-weight entries
+  indicate that the physical aperture may be too small.
 - The current development solver still lacks a Gauss-consistent initial
   particle self-field. Boundary continuity cannot repair an inconsistent
-  initial field, so that item remains a separate prerequisite for final
-  self-consistent production results.
-- Frequent particle motion inside CPML is a warning that the transverse box
-  or physical aperture is too small for the intended observation region. A
-  later dedicated particle-buffer policy may absorb particles before the
-  field PML, but that would require a separately defined physical surface and
-  is not assumed here.
+  initial field.
 
-At normal shutdown the log reports loss count and net escaped charge for
-`x-`, `x+`, `y-`, `y+`, `z-`, and `z+`.
+At normal shutdown the log separately reports physical CPML entries, direct
+outer-face exits, residual carrier cleanup, signed charge, and peak carrier
+memory for `x-`, `x+`, `y-`, `y+`, `z-`, and `z+`.

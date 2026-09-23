@@ -190,15 +190,9 @@ namespace fel
       const std::size_t thicknessCells = parameters.cells[axis];
       if (thicknessCells == 0) return result;
 
-      const Double spacing = axis == 0 ? geometry.dx :
-        (axis == 1 ? geometry.dy : geometry.dz);
       const Double thickness = static_cast<Double>(thicknessCells);
       const Double sigmaRateMaximum =
-        /* sigma_max/epsilon0 from the usual polynomial CPML estimate
-         * sigma_max=-(m+1)ln(R)/(2 eta0 d), using 1/(eta0 epsilon0)=c. */
-        -(parameters.polynomialOrder + 1.0) * SI::c *
-        std::log(parameters.targetReflection) /
-        (2.0 * thickness * spacing);
+        parameters.maximumConductivityRate(axis, geometry);
 
       for (std::size_t localIndex = 0; localIndex < count; ++localIndex)
         {
@@ -245,6 +239,26 @@ namespace fel
   bool EBCPMLParameters::enabled() const
   {
     return cells[0] > 0 || cells[1] > 0 || cells[2] > 0;
+  }
+
+  Double EBCPMLParameters::maximumConductivityRate(
+      unsigned int axis, const EBGridGeometry& geometry) const
+  {
+    if (axis >= 3)
+      throw std::out_of_range("CPML conductivity axis must be x, y, or z");
+    if (cells[axis] == 0) return 0.0;
+    const Double spacing = axis == 0 ? geometry.dx :
+      (axis == 1 ? geometry.dy : geometry.dz);
+    if (!(spacing > 0.0) || !std::isfinite(spacing) ||
+        !(polynomialOrder > 0.0) ||
+        !(targetReflection > 0.0 && targetReflection < 1.0))
+      throw std::invalid_argument(
+        "Cannot evaluate an invalid CPML conductivity profile");
+    const Double thickness = static_cast<Double>(cells[axis]) * spacing;
+    /* sigma_max/epsilon0 from the polynomial CPML estimate
+     * sigma_max=-(m+1)ln(R)/(2 eta0 d), using 1/(eta0 epsilon0)=c. */
+    return -(polynomialOrder + 1.0) * SI::c *
+      std::log(targetReflection) / (2.0 * thickness);
   }
 
   struct EBConvolutionalPML::Impl

@@ -20,7 +20,9 @@ namespace fel
 
   TrajectoryRecord::TrajectoryRecord()
     : particleId(0), sourceId(0), time(0.0),
-      charge(0.0), weight(1.0)
+      charge(0.0), weight(1.0),
+      event(static_cast<std::uint8_t>(TrajectoryEvent::Sample)),
+      boundaryFace(-1)
   {
     position[0] = position[1] = position[2] = 0.0;
     properVelocity[0] = properVelocity[1] = properVelocity[2] = 0.0;
@@ -86,6 +88,14 @@ namespace fel
                                 HOFFSET(TrajectoryRecord, weight),
                                 H5T_NATIVE_DOUBLE),
                       "Cannot add trajectory weight field");
+        requireStatus(H5Tinsert(type, "event_type",
+                                HOFFSET(TrajectoryRecord, event),
+                                H5T_NATIVE_UCHAR),
+                      "Cannot add trajectory event field");
+        requireStatus(H5Tinsert(type, "boundary_face",
+                                HOFFSET(TrajectoryRecord, boundaryFace),
+                                H5T_NATIVE_SCHAR),
+                      "Cannot add trajectory boundary face field");
       }
     catch (...)
       {
@@ -99,7 +109,7 @@ namespace fel
   {
     const std::size_t u64 = 8;
     const std::size_t f64 = 8;
-    const std::size_t fileSize = 2 * u64 + 9 * f64;
+    const std::size_t fileSize = 2 * u64 + 9 * f64 + 2;
     hid_t type = H5Tcreate(H5T_COMPOUND, fileSize);
     requireHandle(type, "Cannot create trajectory file datatype");
     try
@@ -131,6 +141,12 @@ namespace fel
         offset += f64;
         requireStatus(H5Tinsert(type, "weight", offset, H5T_IEEE_F64LE),
                       "Cannot add trajectory file weight");
+        offset += f64;
+        requireStatus(H5Tinsert(type, "event_type", offset, H5T_STD_U8LE),
+                      "Cannot add trajectory file event");
+        offset += 1;
+        requireStatus(H5Tinsert(type, "boundary_face", offset, H5T_STD_I8LE),
+                      "Cannot add trajectory file boundary face");
       }
     catch (...)
       {
@@ -223,7 +239,7 @@ namespace fel
         writeUnsignedScalar(committedDataset_, 0);
         writeByteScalar(completeDataset_, 0);
 
-        writeIntAttribute(group_, "format_version", 1);
+        writeIntAttribute(group_, "format_version", 2);
         writeIntAttribute(group_, "mpi_rank", mpiRank);
         writeIntAttribute(group_, "mpi_size", mpiSize);
         writeIntAttribute(group_, "compression_level",
@@ -235,6 +251,10 @@ namespace fel
         writeStringAttribute(group_, "time_unit", "s");
         writeStringAttribute(group_, "charge_unit", "C");
         writeStringAttribute(group_, "proper_velocity_unit", "gamma*v/c");
+        writeStringAttribute(group_, "event_type_definition",
+          "0=periodic_sample,1=cpml_entry,2=outer_domain_exit");
+        writeStringAttribute(group_, "boundary_face_definition",
+          "-1=none,0=x-,1=x+,2=y-,3=y+,4=z-,5=z+");
         writeStringAttribute(group_, "reader_contract",
           "read only records[0:committed_records]");
 
@@ -264,6 +284,16 @@ namespace fel
     if (!std::isfinite(record.time) || !std::isfinite(record.charge) ||
         !std::isfinite(record.weight))
       throw std::invalid_argument("Trajectory scalar is not finite");
+    if (record.event >
+          static_cast<std::uint8_t>(TrajectoryEvent::DomainExit) ||
+        record.boundaryFace < -1 || record.boundaryFace > 5 ||
+        (record.event ==
+           static_cast<std::uint8_t>(TrajectoryEvent::Sample) &&
+         record.boundaryFace != -1) ||
+        (record.event !=
+           static_cast<std::uint8_t>(TrajectoryEvent::Sample) &&
+         record.boundaryFace < 0))
+      throw std::invalid_argument("Invalid trajectory event metadata");
     for (unsigned int component = 0; component < 3; ++component)
       if (!std::isfinite(record.position[component]) ||
           !std::isfinite(record.properVelocity[component]))

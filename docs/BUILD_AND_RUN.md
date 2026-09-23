@@ -77,6 +77,10 @@ select compact CFS-CPML and report its actual auxiliary memory. A nonempty
 TF/SF `incident_waves` list is currently rejected with CPML, and Cowan TF/SF
 remains unavailable until the injection surface is generalized. See
 [MAXWELL_COWAN_CPML.md](MAXWELL_COWAN_CPML.md) for the numerical details and
-current MPI restriction. Escaping particles use a separate charge-conserving
-open boundary with no production face-array allocation or boundary I/O; see
-[PARTICLE_OPEN_BOUNDARY.md](PARTICLE_OPEN_BOUNDARY.md).
+current MPI restriction. Physical particle histories stop at the inner CPML
+surface and continue only as compact, output-free carriers with matched current
+damping. The outer face performs charge-conserving residual cleanup, with no
+production face-array allocation or boundary I/O; see
+[PARTICLE_OPEN_BOUNDARY.md](PARTICLE_OPEN_BOUNDARY.md). The trajectory v2
+schema and exact CPML-entry events are documented in
+[TRAJECTORY_OUTPUT_HDF5.md](TRAJECTORY_OUTPUT_HDF5.md).

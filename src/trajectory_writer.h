@@ -10,6 +10,13 @@
 
 namespace fel
 {
+  enum class TrajectoryEvent : std::uint8_t
+  {
+    Sample = 0,
+    CpmlEntry = 1,
+    DomainExit = 2
+  };
+
   /* Compact radiation-postprocessing record in the laboratory frame.
    * Positions and proper velocities remain float64 because small phase errors
    * are amplified in coherent-radiation reconstruction. */
@@ -22,6 +29,8 @@ namespace fel
     double properVelocity[3];
     double charge;
     double weight;
+    std::uint8_t event;
+    std::int8_t boundaryFace;
 
     TrajectoryRecord();
   };

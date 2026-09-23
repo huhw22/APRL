@@ -21,6 +21,10 @@ namespace fel
     const int TRANSFER_UPPER_DATA = 711;
     const int TRANSFER_LOWER_COUNT = 712;
     const int TRANSFER_LOWER_DATA = 713;
+    const int CARRIER_UPPER_COUNT = 714;
+    const int CARRIER_UPPER_DATA = 715;
+    const int CARRIER_LOWER_COUNT = 716;
+    const int CARRIER_LOWER_DATA = 717;
 
     struct ParticlePacket
     {
@@ -37,6 +41,17 @@ namespace fel
     {
       ParticlePacket particle;
       Double segmentStart[3];
+      Double segmentStartFraction;
+    };
+
+    struct CarrierTransferPacket
+    {
+      Double position[3];
+      Double velocity[3];
+      Double charge;
+      Double currentWeight;
+      Double segmentStart[3];
+      Double segmentStartFraction;
     };
 
     ParticlePacket packParticle(const RelativisticParticleSI& particle)
@@ -71,6 +86,38 @@ namespace fel
       particle.id = packet.id;
       particle.sourceId = packet.sourceId;
       return particle;
+    }
+
+    CarrierTransferPacket packCarrier(
+        const ParticleCPMLCarrier& carrier,
+        const FieldVector<Double>& segmentStart,
+        Double segmentStartFraction)
+    {
+      CarrierTransferPacket packet = {};
+      for (unsigned int component = 0; component < 3; ++component)
+        {
+          packet.position[component] = carrier.position[component];
+          packet.velocity[component] = carrier.velocity[component];
+          packet.segmentStart[component] = segmentStart[component];
+        }
+      packet.charge = carrier.charge;
+      packet.currentWeight = carrier.currentWeight;
+      packet.segmentStartFraction = segmentStartFraction;
+      return packet;
+    }
+
+    ParticleCPMLCarrier unpackCarrier(
+        const CarrierTransferPacket& packet)
+    {
+      ParticleCPMLCarrier carrier;
+      for (unsigned int component = 0; component < 3; ++component)
+        {
+          carrier.position[component] = packet.position[component];
+          carrier.velocity[component] = packet.velocity[component];
+        }
+      carrier.charge = packet.charge;
+      carrier.currentWeight = packet.currentWeight;
+      return carrier;
     }
 
     std::size_t exactCells(Double length, Double resolution,
@@ -124,11 +171,12 @@ namespace fel
       return static_cast<int>(records * recordBytes);
     }
 
-    void exchangeTransfers(const std::vector<TransferPacket>& send,
-                           int destination, int source,
-                           int countTag, int dataTag,
-                           MPI_Comm communicator,
-                           std::vector<TransferPacket>& receive)
+    template<typename Packet>
+    void exchangePackets(const std::vector<Packet>& send,
+                         int destination, int source,
+                         int countTag, int dataTag,
+                         MPI_Comm communicator,
+                         std::vector<Packet>& receive)
     {
       if (send.size() > static_cast<std::size_t>(INT_MAX))
         throw std::overflow_error("Too many particles cross one MPI interface");
@@ -140,9 +188,9 @@ namespace fel
       if (receiveCount < 0)
         throw std::runtime_error("Negative MPI particle transfer count");
       receive.resize(static_cast<std::size_t>(receiveCount));
-      const int sendBytes = checkedBytes(send.size(), sizeof(TransferPacket));
+      const int sendBytes = checkedBytes(send.size(), sizeof(Packet));
       const int receiveBytes = checkedBytes(receive.size(),
-                                            sizeof(TransferPacket));
+                                            sizeof(Packet));
       MPI_Sendrecv(send.empty() ? NULL : &send[0], sendBytes, MPI_BYTE,
                    destination, dataTag,
                    receive.empty() ? NULL : &receive[0], receiveBytes,
@@ -157,8 +205,8 @@ namespace fel
     : config_(config), communicator_(communicator), rank_(0), size_(1),
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0), frame_(), sources_(),
-      fields_(), halo_(), incident_(), particles_(), particleBoundary_(),
-      detectors_(),
+      fields_(), halo_(), incident_(), particles_(), particleCPML_(),
+      pmlCarriers_(), particleBoundary_(), detectors_(),
       trajectoryWriter_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), timeBoxSI_(0.0),
@@ -169,6 +217,16 @@ namespace fel
       throw std::invalid_argument("E/B solver communicator cannot be null");
     MPI_Comm_rank(communicator_, &rank_);
     MPI_Comm_size(communicator_, &size_);
+    for (std::size_t face = 0; face < 6; ++face)
+      {
+        cpmlEntryCount_[face] = 0;
+        cpmlEntryCharge_[face] = 0.0;
+        directOuterCount_[face] = 0;
+        directOuterCharge_[face] = 0.0;
+        carrierOuterCount_[face] = 0;
+        carrierOuterCharge_[face] = 0.0;
+      }
+    peakPmlCarriers_ = 0;
   }
 
   void Simulation::solve()
@@ -247,6 +305,10 @@ namespace fel
       throw std::runtime_error(
         "Cowan-z field advance is active, but the present TF/SF incident-wave correction is still Yee-specific. Select mesh.field_solver: yee for this run until the generalized Cowan TF/SF stencil is connected; refusing to inject a numerically inconsistent seed field.");
 
+    particleCPML_.reset(new ParticleCPMLRegion(
+      globalGeometry_, globalOriginBox_,
+      config_.boundary.type == EBBoundaryType::Cpml ?
+        config_.boundary.cpml : EBCPMLParameters()));
     initializeParticles();
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
@@ -369,7 +431,10 @@ namespace fel
           logRoot(communicator_,
             "Boundary: PEC regression mode; no absorbing-layer state allocated.");
         logRoot(communicator_,
-          "Particle boundary: charge-conserving open absorption at the outer computational faces. The final in-domain segment is deposited and terminal CIC charge exits through a virtual normal current; production mode retains only face totals.");
+          "Outer particle fallback: charge-conserving open absorption remains active on non-CPML faces and for residual carrier cleanup; production mode retains only face totals.");
+        if (particleCPML_->enabled())
+          logRoot(communicator_,
+            "CPML particle policy: physical trajectories and detector participation end at the inner CPML surface; lightweight ballistic carriers continue with per-particle conductivity-matched current damping and no diagnostic output.");
         logRoot(communicator_,
           "WARNING: the initial Gauss-consistent particle field is not implemented; this is not yet a final radiation-production solver.");
         logRoot(communicator_,
@@ -635,26 +700,9 @@ namespace fel
   {
     if (!trajectoryWriter_.isOpen()) return;
     for (std::size_t index = 0; index < particles_.size(); ++index)
-      {
-        const RelativisticParticleSI& particle = particles_[index];
-        TrajectoryRecord record;
-        record.particleId = particle.id;
-        record.sourceId = particle.sourceId;
-        frame_.boxToLab(timeBoxSI_, particle.position[2],
-                        record.time, record.position[2]);
-        record.position[0] = particle.position[0];
-        record.position[1] = particle.position[1];
-        const Double gammaBox =
-          BoostFrameTransform::gammaFromProperVelocity(
-            particle.properVelocity);
-        record.properVelocity[0] = particle.properVelocity[0];
-        record.properVelocity[1] = particle.properVelocity[1];
-        record.properVelocity[2] = frame_.gamma() *
-          (particle.properVelocity[2] + frame_.beta() * gammaBox);
-        record.charge = particle.charge;
-        record.weight = particle.weight;
-        trajectoryWriter_.append(record);
-      }
+      appendTrajectoryEvent(
+        particles_[index], timeBoxSI_, TrajectoryEvent::Sample,
+        ParticleBoundaryFace::LowerX);
     if (config_.runtime.interactive())
       {
         ++trajectorySamplesSinceFlush_;
@@ -671,6 +719,35 @@ namespace fel
     do
       nextTrajectorySampleTime_ += trajectoryRhythmSI_;
     while (nextTrajectorySampleTime_ <= timeBoxSI_ + tolerance);
+  }
+
+  void Simulation::appendTrajectoryEvent(
+      const RelativisticParticleSI& particle,
+      Double timeBox,
+      TrajectoryEvent event,
+      ParticleBoundaryFace face)
+  {
+    if (!trajectoryWriter_.isOpen()) return;
+    TrajectoryRecord record;
+    record.particleId = particle.id;
+    record.sourceId = particle.sourceId;
+    frame_.boxToLab(timeBox, particle.position[2],
+                    record.time, record.position[2]);
+    record.position[0] = particle.position[0];
+    record.position[1] = particle.position[1];
+    const Double gammaBox =
+      BoostFrameTransform::gammaFromProperVelocity(
+        particle.properVelocity);
+    record.properVelocity[0] = particle.properVelocity[0];
+    record.properVelocity[1] = particle.properVelocity[1];
+    record.properVelocity[2] = frame_.gamma() *
+      (particle.properVelocity[2] + frame_.beta() * gammaBox);
+    record.charge = particle.charge;
+    record.weight = particle.weight;
+    record.event = static_cast<std::uint8_t>(event);
+    record.boundaryFace = event == TrajectoryEvent::Sample ? -1 :
+      static_cast<std::int8_t>(face);
+    trajectoryWriter_.append(record);
   }
 
   void Simulation::finalizeTrajectoryOutput(bool completed)
@@ -793,12 +870,247 @@ namespace fel
     ChargeConservingCurrentDepositor depositor(*fields_, localOriginBox_);
     std::vector<RelativisticParticleSI> retained;
     retained.reserve(particles_.size());
+    std::vector<ParticleCPMLCarrier> retainedCarriers;
+    retainedCarriers.reserve(pmlCarriers_.size());
     std::vector<TransferPacket> sendLower;
     std::vector<TransferPacket> sendUpper;
+    std::vector<CarrierTransferPacket> sendCarrierLower;
+    std::vector<CarrierTransferPacket> sendCarrierUpper;
     const Double lowerZ = localOriginBox_[2];
     const Double upperZ = lowerZ +
       static_cast<Double>(localGeometry_.nz) * localGeometry_.dz;
+    const Double crossingTolerance = 64.0 *
+      std::numeric_limits<Double>::epsilon();
+    const Double carrierCutoff = 64.0 *
+      std::numeric_limits<Double>::epsilon();
     unsigned long long localLost = 0;
+
+    const auto interfaceCrossing = [&](const FieldVector<Double>& start,
+                                       const FieldVector<Double>& end,
+                                       bool& crossLower,
+                                       bool& crossUpper)
+    {
+      crossLower = rank_ > 0 && end[2] < lowerZ;
+      crossUpper = rank_ + 1 < size_ && end[2] >= upperZ;
+      if (!crossLower && !crossUpper) return 1.0;
+      const Double boundary = crossLower ? lowerZ : upperZ;
+      const Double fraction = (boundary - start[2]) /
+        (end[2] - start[2]);
+      if (!(fraction >= 0.0 && fraction <= 1.0) ||
+          !std::isfinite(fraction))
+        throw std::runtime_error(
+          "Invalid MPI-interface particle crossing");
+      return fraction;
+    };
+
+    const auto processCarrierSegment =
+      [&](ParticleCPMLCarrier carrier,
+          const FieldVector<Double>& segmentStart,
+          Double segmentStartFraction,
+          bool allowTransfer)
+    {
+      if (!(segmentStartFraction >= 0.0 &&
+            segmentStartFraction <= 1.0) ||
+          !std::isfinite(segmentStartFraction))
+        throw std::runtime_error(
+          "Invalid CPML-carrier segment time fraction");
+      if (!(carrier.currentWeight >= 0.0) ||
+          !std::isfinite(carrier.currentWeight))
+        throw std::runtime_error("Invalid CPML carrier current weight");
+      if (carrier.currentWeight <= carrierCutoff) return;
+
+      bool crossLower = false;
+      bool crossUpper = false;
+      const Double interfaceFraction = interfaceCrossing(
+        segmentStart, carrier.position, crossLower, crossUpper);
+      const bool crossesInterface = crossLower || crossUpper;
+      ParticleBoundaryHit outerHit;
+      const bool exitsOuter = particleBoundary_->firstExit(
+        segmentStart, carrier.position, outerHit);
+
+      Double localEndFraction = 1.0;
+      FieldVector<Double> segmentEnd(carrier.position);
+      enum CarrierEnd { RetainCarrier, TransferCarrier, RemoveCarrier };
+      CarrierEnd endAction = RetainCarrier;
+      if (exitsOuter &&
+          (!crossesInterface ||
+           outerHit.fraction <= interfaceFraction + crossingTolerance))
+        {
+          localEndFraction = outerHit.fraction;
+          segmentEnd = outerHit.position;
+          endAction = RemoveCarrier;
+        }
+      else if (crossesInterface)
+        {
+          if (!allowTransfer)
+            throw std::runtime_error(
+              "A CPML carrier crossed more than one MPI interface in one field step");
+          localEndFraction = interfaceFraction;
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            segmentEnd[axis] = segmentStart[axis] +
+              localEndFraction *
+              (carrier.position[axis] - segmentStart[axis]);
+          endAction = TransferCarrier;
+        }
+
+      const Double globalEndFraction = segmentStartFraction +
+        localEndFraction * (1.0 - segmentStartFraction);
+      const Double duration = (globalEndFraction - segmentStartFraction) *
+        globalGeometry_.dt;
+      FieldVector<Double> midpoint(0.0);
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        midpoint[axis] = 0.5 *
+          (segmentStart[axis] + segmentEnd[axis]);
+      const Double midpointDamping =
+        particleCPML_->currentDampingFactor(
+          segmentStart, midpoint, 0.5 * duration);
+      const Double endDamping = particleCPML_->currentDampingFactor(
+        segmentStart, segmentEnd, duration);
+      const Double depositedWeight =
+        carrier.currentWeight * midpointDamping;
+      const Double endWeight = carrier.currentWeight * endDamping;
+      depositor.depositSegment(segmentStart, segmentEnd,
+                               carrier.charge * depositedWeight);
+
+      if (endAction == RemoveCarrier)
+        {
+          particleBoundary_->depositOutgoingFlux(
+            outerHit, carrier.charge * endWeight);
+          const std::size_t face =
+            static_cast<std::size_t>(outerHit.face);
+          ++carrierOuterCount_[face];
+          carrierOuterCharge_[face] += carrier.charge * endWeight;
+          return;
+        }
+      if (endWeight <= carrierCutoff) return;
+
+      carrier.currentWeight = endWeight;
+      if (endAction == TransferCarrier)
+        {
+          const CarrierTransferPacket packet = packCarrier(
+            carrier, segmentEnd, globalEndFraction);
+          (crossLower ? sendCarrierLower : sendCarrierUpper).push_back(
+            packet);
+        }
+      else
+        {
+          carrier.position = segmentEnd;
+          retainedCarriers.push_back(carrier);
+        }
+    };
+
+    for (std::size_t index = 0; index < pmlCarriers_.size(); ++index)
+      {
+        ParticleCPMLCarrier carrier = pmlCarriers_[index];
+        const FieldVector<Double> start(carrier.position);
+        carrier.position.pmv(globalGeometry_.dt, carrier.velocity);
+        processCarrierSegment(carrier, start, 0.0, true);
+      }
+
+    const auto processActiveSegment =
+      [&](RelativisticParticleSI particle,
+          const FieldVector<Double>& segmentStart,
+          Double segmentStartFraction,
+          bool allowTransfer)
+    {
+      bool crossLower = false;
+      bool crossUpper = false;
+      const Double interfaceFraction = interfaceCrossing(
+        segmentStart, particle.position, crossLower, crossUpper);
+      const bool crossesInterface = crossLower || crossUpper;
+      ParticleBoundaryHit cpmlHit;
+      ParticleBoundaryHit outerHit;
+      const bool entersCpml = particleCPML_->firstEntry(
+        segmentStart, particle.position, cpmlHit);
+      const bool exitsOuter = particleBoundary_->firstExit(
+        segmentStart, particle.position, outerHit);
+
+      enum ActiveEnd { RetainActive, TransferActive,
+                       EnterCpml, ExitOuter };
+      ActiveEnd endAction = RetainActive;
+      Double localEndFraction = 1.0;
+      FieldVector<Double> segmentEnd(particle.position);
+      ParticleBoundaryHit selectedHit;
+      if (entersCpml &&
+          (!exitsOuter ||
+           cpmlHit.fraction <= outerHit.fraction + crossingTolerance) &&
+          (!crossesInterface ||
+           cpmlHit.fraction <= interfaceFraction + crossingTolerance))
+        {
+          endAction = EnterCpml;
+          localEndFraction = cpmlHit.fraction;
+          segmentEnd = cpmlHit.position;
+          selectedHit = cpmlHit;
+        }
+      else if (exitsOuter &&
+               (!crossesInterface ||
+                outerHit.fraction <=
+                  interfaceFraction + crossingTolerance))
+        {
+          endAction = ExitOuter;
+          localEndFraction = outerHit.fraction;
+          segmentEnd = outerHit.position;
+          selectedHit = outerHit;
+        }
+      else if (crossesInterface)
+        {
+          if (!allowTransfer)
+            throw std::runtime_error(
+              "An active particle crossed more than one MPI interface in one field step");
+          endAction = TransferActive;
+          localEndFraction = interfaceFraction;
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            segmentEnd[axis] = segmentStart[axis] +
+              localEndFraction *
+              (particle.position[axis] - segmentStart[axis]);
+        }
+
+      depositor.depositSegment(segmentStart, segmentEnd, particle.charge);
+      const Double globalEndFraction = segmentStartFraction +
+        localEndFraction * (1.0 - segmentStartFraction);
+      if (endAction == EnterCpml)
+        {
+          const std::size_t face =
+            static_cast<std::size_t>(selectedHit.face);
+          ++cpmlEntryCount_[face];
+          cpmlEntryCharge_[face] += particle.charge;
+          ++localLost;
+
+          ParticleCPMLCarrier carrier;
+          carrier.position = particle.position;
+          const Double gamma =
+            BoostFrameTransform::gammaFromProperVelocity(
+              particle.properVelocity);
+          carrier.velocity = particle.properVelocity;
+          carrier.velocity *= SI::c / gamma;
+          carrier.charge = particle.charge;
+          carrier.currentWeight = 1.0;
+          processCarrierSegment(
+            carrier, selectedHit.position, globalEndFraction,
+            allowTransfer);
+        }
+      else if (endAction == ExitOuter)
+        {
+          particleBoundary_->depositOutgoingFlux(
+            selectedHit, particle.charge);
+          const std::size_t face =
+            static_cast<std::size_t>(selectedHit.face);
+          ++directOuterCount_[face];
+          directOuterCharge_[face] += particle.charge;
+          ++localLost;
+        }
+      else if (endAction == TransferActive)
+        {
+          TransferPacket transfer = {};
+          transfer.particle = packParticle(particle);
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            transfer.segmentStart[axis] = segmentEnd[axis];
+          transfer.segmentStartFraction = globalEndFraction;
+          (crossLower ? sendLower : sendUpper).push_back(transfer);
+        }
+      else
+        retained.push_back(particle);
+    };
 
     for (std::size_t index = 0; index < particles_.size(); ++index)
       {
@@ -807,73 +1119,58 @@ namespace fel
         RelativisticBorisPusher::pushFromGridAndPrescribedLab(
           particle, *fields_, localOriginBox_, sources_, frame_,
           timeBoxSI_, globalGeometry_.dt);
+
+        ParticleBoundaryHit diagnosticHit;
+        ParticleBoundaryHit cpmlHit;
+        ParticleBoundaryHit outerHit;
+        const bool entersCpml = particleCPML_->firstEntry(
+          start, particle.position, cpmlHit);
+        const bool exitsOuter = particleBoundary_->firstExit(
+          start, particle.position, outerHit);
+        bool hasTerminalEvent = false;
+        TrajectoryEvent terminalEvent = TrajectoryEvent::DomainExit;
+        if (entersCpml &&
+            (!exitsOuter ||
+             cpmlHit.fraction <= outerHit.fraction + crossingTolerance))
+          {
+            diagnosticHit = cpmlHit;
+            terminalEvent = TrajectoryEvent::CpmlEntry;
+            hasTerminalEvent = true;
+          }
+        else if (exitsOuter)
+          {
+            diagnosticHit = outerHit;
+            terminalEvent = TrajectoryEvent::DomainExit;
+            hasTerminalEvent = true;
+          }
+
+        RelativisticParticleSI diagnosticEnd(particle);
+        Double diagnosticTime = timeBoxSI_ + globalGeometry_.dt;
+        if (hasTerminalEvent)
+          {
+            diagnosticEnd.position = diagnosticHit.position;
+            diagnosticTime = timeBoxSI_ +
+              diagnosticHit.fraction * globalGeometry_.dt;
+          }
         if (detectors_)
           detectors_->captureParticleStep(
-            particles_[index], particle, timeBoxSI_,
-            timeBoxSI_ + globalGeometry_.dt);
-
-        const bool crossLower = rank_ > 0 &&
-          particle.position[2] < lowerZ;
-        const bool crossUpper = rank_ + 1 < size_ &&
-          particle.position[2] >= upperZ;
-        const bool crossesInterface = crossLower || crossUpper;
-        Double interfaceFraction = 1.0;
-        if (crossesInterface)
+            particles_[index], diagnosticEnd,
+            timeBoxSI_, diagnosticTime);
+        if (hasTerminalEvent)
           {
-            const Double boundary = crossLower ? lowerZ : upperZ;
-            interfaceFraction = (boundary - start[2]) /
-              (particle.position[2] - start[2]);
-            if (!(interfaceFraction >= 0.0 && interfaceFraction <= 1.0))
-              throw std::runtime_error(
-                "Invalid MPI-interface particle crossing");
+            appendTrajectoryEvent(
+              diagnosticEnd, diagnosticTime,
+              terminalEvent, diagnosticHit.face);
           }
-
-        ParticleBoundaryHit boundaryHit;
-        const bool particleOutside = particleBoundary_->firstExit(
-          start, particle.position, boundaryHit);
-        const Double crossingTolerance = 64.0 *
-          std::numeric_limits<Double>::epsilon();
-        if (particleOutside &&
-            (!crossesInterface ||
-             boundaryHit.fraction <=
-               interfaceFraction + crossingTolerance))
-          {
-            depositor.depositSegment(start, boundaryHit.position,
-                                     particle.charge);
-            particleBoundary_->depositOutgoingFlux(
-              boundaryHit, particle.charge);
-            ++localLost;
-            continue;
-          }
-
-        if (crossLower || crossUpper)
-          {
-            FieldVector<Double> interfacePosition(start);
-            for (unsigned int axis = 0; axis < 3; ++axis)
-              interfacePosition[axis] += interfaceFraction *
-                (particle.position[axis] - start[axis]);
-            depositor.depositSegment(start, interfacePosition,
-                                     particle.charge);
-            TransferPacket transfer = {};
-            transfer.particle = packParticle(particle);
-            for (unsigned int axis = 0; axis < 3; ++axis)
-              transfer.segmentStart[axis] = interfacePosition[axis];
-            (crossLower ? sendLower : sendUpper).push_back(transfer);
-          }
-        else
-          {
-            depositor.depositSegment(start, particle.position,
-                                     particle.charge);
-            retained.push_back(particle);
-          }
+        processActiveSegment(particle, start, 0.0, true);
       }
 
     std::vector<TransferPacket> receiveLower;
     std::vector<TransferPacket> receiveUpper;
-    exchangeTransfers(sendUpper, halo_->upperRank(), halo_->lowerRank(),
+    exchangePackets(sendUpper, halo_->upperRank(), halo_->lowerRank(),
       TRANSFER_UPPER_COUNT, TRANSFER_UPPER_DATA,
       communicator_, receiveLower);
-    exchangeTransfers(sendLower, halo_->lowerRank(), halo_->upperRank(),
+    exchangePackets(sendLower, halo_->lowerRank(), halo_->upperRank(),
       TRANSFER_LOWER_COUNT, TRANSFER_LOWER_DATA,
       communicator_, receiveUpper);
 
@@ -889,24 +1186,39 @@ namespace fel
           FieldVector<Double> segmentStart(0.0);
           for (unsigned int axis = 0; axis < 3; ++axis)
             segmentStart[axis] = transfer.segmentStart[axis];
-          ParticleBoundaryHit boundaryHit;
-          if (particleBoundary_->firstExit(
-                segmentStart, particle.position, boundaryHit))
-            {
-              depositor.depositSegment(segmentStart, boundaryHit.position,
-                                       particle.charge);
-              particleBoundary_->depositOutgoingFlux(
-                boundaryHit, particle.charge);
-              ++localLost;
-            }
-          else
-            {
-              depositor.depositSegment(segmentStart, particle.position,
-                                       particle.charge);
-              retained.push_back(particle);
-            }
+          processActiveSegment(
+            particle, segmentStart, transfer.segmentStartFraction, false);
+        }
+
+    std::vector<CarrierTransferPacket> receiveCarrierLower;
+    std::vector<CarrierTransferPacket> receiveCarrierUpper;
+    exchangePackets(sendCarrierUpper,
+      halo_->upperRank(), halo_->lowerRank(),
+      CARRIER_UPPER_COUNT, CARRIER_UPPER_DATA,
+      communicator_, receiveCarrierLower);
+    exchangePackets(sendCarrierLower,
+      halo_->lowerRank(), halo_->upperRank(),
+      CARRIER_LOWER_COUNT, CARRIER_LOWER_DATA,
+      communicator_, receiveCarrierUpper);
+    const std::vector<CarrierTransferPacket>* receivedCarriers[2] = {
+      &receiveCarrierLower, &receiveCarrierUpper
+    };
+    for (unsigned int side = 0; side < 2; ++side)
+      for (std::size_t index = 0;
+           index < receivedCarriers[side]->size(); ++index)
+        {
+          const CarrierTransferPacket& transfer =
+            (*receivedCarriers[side])[index];
+          ParticleCPMLCarrier carrier = unpackCarrier(transfer);
+          FieldVector<Double> segmentStart(0.0);
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            segmentStart[axis] = transfer.segmentStart[axis];
+          processCarrierSegment(
+            carrier, segmentStart, transfer.segmentStartFraction, false);
         }
     particles_.swap(retained);
+    pmlCarriers_.swap(retainedCarriers);
+    peakPmlCarriers_ = std::max(peakPmlCarriers_, pmlCarriers_.size());
     unsigned long long globalLost = 0;
     MPI_Allreduce(&localLost, &globalLost, 1, MPI_UNSIGNED_LONG_LONG,
                   MPI_SUM, communicator_);
@@ -916,41 +1228,64 @@ namespace fel
 
   void Simulation::reportParticleBoundaryLosses() const
   {
-    unsigned long long localCounts[6] = {};
-    Double localCharges[6] = {};
+    unsigned long long localCounts[18] = {};
+    Double localCharges[18] = {};
     for (std::size_t face = 0; face < 6; ++face)
       {
-        const ParticleBoundaryFace boundaryFace =
-          static_cast<ParticleBoundaryFace>(face);
-        localCounts[face] = particleBoundary_->cumulativeCount(boundaryFace);
-        localCharges[face] =
-          particleBoundary_->cumulativeCharge(boundaryFace);
+        localCounts[face] = cpmlEntryCount_[face];
+        localCharges[face] = cpmlEntryCharge_[face];
+        localCounts[6 + face] = directOuterCount_[face];
+        localCharges[6 + face] = directOuterCharge_[face];
+        localCounts[12 + face] = carrierOuterCount_[face];
+        localCharges[12 + face] = carrierOuterCharge_[face];
       }
-    unsigned long long globalCounts[6] = {};
-    Double globalCharges[6] = {};
-    MPI_Reduce(localCounts, globalCounts, 6, MPI_UNSIGNED_LONG_LONG,
+    unsigned long long globalCounts[18] = {};
+    Double globalCharges[18] = {};
+    MPI_Reduce(localCounts, globalCounts, 18, MPI_UNSIGNED_LONG_LONG,
                MPI_SUM, 0, communicator_);
-    MPI_Reduce(localCharges, globalCharges, 6, MPI_DOUBLE,
+    MPI_Reduce(localCharges, globalCharges, 18, MPI_DOUBLE,
                MPI_SUM, 0, communicator_);
+    const unsigned long long localPeak =
+      static_cast<unsigned long long>(peakPmlCarriers_);
+    unsigned long long maximumRankPeak = 0;
+    MPI_Reduce(&localPeak, &maximumRankPeak, 1, MPI_UNSIGNED_LONG_LONG,
+               MPI_MAX, 0, communicator_);
     if (rank_ != 0) return;
 
-    unsigned long long total = 0;
-    for (std::size_t face = 0; face < 6; ++face)
-      total += globalCounts[face];
-    if (total == 0) return;
-    std::ostringstream message;
-    message << std::setprecision(10)
-            << "Open particle-boundary losses:";
-    for (std::size_t face = 0; face < 6; ++face)
+    const char* labels[3] = {
+      "CPML physical-domain exits",
+      "Direct outer-domain exits",
+      "Residual CPML-carrier cleanup"
+    };
+    for (std::size_t category = 0; category < 3; ++category)
       {
-        const ParticleBoundaryFace boundaryFace =
-          static_cast<ParticleBoundaryFace>(face);
-        message << " " << particleBoundaryFaceName(boundaryFace)
-                << "=" << globalCounts[face]
-                << " (Q=" << globalCharges[face] << " C)";
-        if (face + 1 < 6) message << ",";
+        unsigned long long total = 0;
+        for (std::size_t face = 0; face < 6; ++face)
+          total += globalCounts[6 * category + face];
+        if (total == 0) continue;
+        std::ostringstream message;
+        message << std::setprecision(10) << labels[category] << ":";
+        for (std::size_t face = 0; face < 6; ++face)
+          {
+            const ParticleBoundaryFace boundaryFace =
+              static_cast<ParticleBoundaryFace>(face);
+            const std::size_t offset = 6 * category + face;
+            message << " " << particleBoundaryFaceName(boundaryFace)
+                    << "=" << globalCounts[offset]
+                    << " (Q=" << globalCharges[offset] << " C)";
+            if (face + 1 < 6) message << ",";
+          }
+        logRoot(communicator_, message.str());
       }
-    logRoot(communicator_, message.str());
+    if (maximumRankPeak > 0)
+      {
+        std::ostringstream message;
+        message << "Peak lightweight CPML carriers on any MPI rank="
+                << maximumRankPeak << " ("
+                << maximumRankPeak * sizeof(ParticleCPMLCarrier)
+                << " bytes of live carrier records).";
+        logRoot(communicator_, message.str());
+      }
   }
 
   bool Simulation::synchronizedStopRequested()
@@ -1061,16 +1396,26 @@ namespace fel
       globalOriginBox_[2] + static_cast<Double>(globalGeometry_.nz) * globalGeometry_.dz
     };
     int localInvalid = 0;
+    int localInCpml = 0;
     for (std::size_t index = 0; index < particles_.size(); ++index)
       for (unsigned int axis = 0; axis < 3; ++axis)
         if (particles_[index].position[axis] < globalOriginBox_[axis] ||
             particles_[index].position[axis] > upper[axis])
           localInvalid = 1;
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      if (!particleCPML_->containsPhysical(particles_[index].position))
+        localInCpml = 1;
     int globalInvalid = 0;
+    int globalInCpml = 0;
     MPI_Allreduce(&localInvalid, &globalInvalid, 1, MPI_INT, MPI_MAX,
+                  communicator_);
+    MPI_Allreduce(&localInCpml, &globalInCpml, 1, MPI_INT, MPI_MAX,
                   communicator_);
     if (globalInvalid)
       throw std::out_of_range(
         "Boosted bunch does not fit inside the configured direct E/B box");
+    if (globalInCpml)
+      throw std::out_of_range(
+        "Boosted bunch overlaps the non-physical CPML particle region; enlarge the mesh or reduce the CPML thickness");
   }
 }

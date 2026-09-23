@@ -18,6 +18,8 @@ namespace fel
 
     EBCPMLParameters();
     bool enabled() const;
+    Double maximumConductivityRate(unsigned int axis,
+                                   const EBGridGeometry& geometry) const;
   };
 
   /* Unsplit complex-frequency-shifted convolutional PML.  Only convolution

@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <vector>
 
+#include "eb_cpml.h"
 #include "eb_field.h"
 #include "fieldvector.h"
 
@@ -28,6 +29,58 @@ namespace fel
     ParticleBoundaryFace face;
 
     ParticleBoundaryHit();
+  };
+
+  /* Geometry and matched current damping for particles entering CPML.
+   * The inner CPML surface is the end of the physical particle domain. */
+  class ParticleCPMLRegion
+  {
+  public:
+    ParticleCPMLRegion(const EBGridGeometry& globalGeometry,
+                       const FieldVector<Double>& globalOriginSI,
+                       const EBCPMLParameters& parameters);
+
+    bool enabled() const;
+    bool containsPhysical(const FieldVector<Double>& positionSI) const;
+    bool firstEntry(const FieldVector<Double>& startSI,
+                    const FieldVector<Double>& endSI,
+                    ParticleBoundaryHit& hit) const;
+
+    /* Per-particle current-only damping over a straight ballistic segment.
+     * This integrates sigma/epsilon0 along the actual simulation-frame path,
+     * avoiding a fixed assumed particle velocity. */
+    Double currentDampingFactor(
+        const FieldVector<Double>& startSI,
+        const FieldVector<Double>& endSI,
+        Double durationSI) const;
+
+    Double physicalLower(unsigned int axis) const;
+    Double physicalUpper(unsigned int axis) const;
+
+  private:
+    Double conductivityRate(const FieldVector<Double>& positionSI) const;
+
+    EBGridGeometry geometry_;
+    FieldVector<Double> originSI_;
+    EBCPMLParameters parameters_;
+    Double outerLower_[3];
+    Double outerUpper_[3];
+    Double physicalLower_[3];
+    Double physicalUpper_[3];
+    Double tolerance_[3];
+    Double maximumRate_[3];
+  };
+
+  /* Minimal non-physical carrier retained only while matched current is
+   * attenuated inside CPML. It owns no diagnostic identity or pusher state. */
+  struct ParticleCPMLCarrier
+  {
+    FieldVector<Double> position;
+    FieldVector<Double> velocity;
+    Double charge;
+    Double currentWeight;
+
+    ParticleCPMLCarrier();
   };
 
   /* Open, absorbing particle boundary for a z-slab decomposition.
