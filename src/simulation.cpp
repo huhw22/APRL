@@ -202,7 +202,9 @@ namespace fel
 
   Simulation::Simulation(const SimulationConfig& config,
                          MPI_Comm communicator)
-    : config_(config), communicator_(communicator), rank_(0), size_(1),
+    : config_(config), detectorConfig_(config.detectors),
+      beamlineElements_(config.beamlineElements),
+      communicator_(communicator), rank_(0), size_(1),
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0), frame_(), sources_(),
       fields_(), halo_(), incident_(), particles_(), particleCPML_(),
@@ -543,10 +545,6 @@ namespace fel
 
   void Simulation::initializeParticles()
   {
-    const Double firstPhysicalEntrance =
-      firstBeamlinePhysicalEntranceLab();
-    const Double firstInteractionEntrance =
-      firstBeamlineInteractionEntranceLab();
     const Double boxReferenceZ = config_.mesh.center[2];
     frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
       config_.reference.initialCenterZ,
@@ -561,6 +559,13 @@ namespace fel
     if (rank_ == 0) idOffset = 0;
     for (std::size_t index = 0; index < particles_.size(); ++index)
       particles_[index].id = idOffset + index + 1;
+
+    initializeFieldDetectorRegions();
+    validateBeamlineExclusionRules();
+    const Double firstPhysicalEntrance =
+      firstBeamlinePhysicalEntranceLab();
+    const Double firstInteractionEntrance =
+      firstBeamlineInteractionEntranceLab();
 
     SIBunchPlacement placement;
     placement.firstInteractionEntranceLab = firstInteractionEntrance;
@@ -656,6 +661,181 @@ namespace fel
       sources_.addPrescribedLabMagnet(config_.magnets[i]);
   }
 
+  void Simulation::initializeFieldDetectorRegions()
+  {
+    const unsigned long long localParticleCount =
+      static_cast<unsigned long long>(particles_.size());
+    unsigned long long globalParticleCount = 0;
+    MPI_Allreduce(&localParticleCount, &globalParticleCount, 1,
+                  MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+
+    Double localMaximumGamma = 1.0;
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      localMaximumGamma = std::max(localMaximumGamma,
+        BoostFrameTransform::gammaFromProperVelocity(
+          particles_[index].properVelocity));
+    Double maximumGamma = 1.0;
+    MPI_Allreduce(&localMaximumGamma, &maximumGamma, 1, MPI_DOUBLE,
+                  MPI_MAX, communicator_);
+    if (!(maximumGamma >= 1.0) || !std::isfinite(maximumGamma))
+      throw std::runtime_error(
+        "Cannot derive a finite laboratory gamma for field-detector references");
+
+    /* size_x and size_y are full mesh widths.  Using their complete diagonal
+     * is deliberately more conservative than the centre-to-corner radius and
+     * also leaves room for a modest off-axis bunch envelope. */
+    const Double rho = std::hypot(config_.mesh.lengths[0],
+                                  config_.mesh.lengths[1]);
+    if (!(rho > 0.0) || !std::isfinite(rho))
+      throw std::runtime_error(
+        "Field-detector reference radius must be finite and positive");
+
+    for (std::size_t detector = 0;
+         detector < detectorConfig_.fieldPlanes.size(); ++detector)
+      {
+        FieldDetectorPlaneConfig& plane =
+          detectorConfig_.fieldPlanes[detector];
+        plane.referenceRho = rho;
+        plane.referenceGamma = maximumGamma;
+        plane.referenceDistance = plane.particleBackgroundReference ?
+          maximumGamma * rho : 0.0;
+        plane.referenceEntranceZ = plane.z - plane.referenceDistance;
+        if (plane.referenceValidation &&
+            globalParticleCount > static_cast<unsigned long long>(
+              plane.referenceValidationMaximumParticles))
+          {
+            std::ostringstream message;
+            message << "Field detector '" << plane.name
+                    << "' two-plane validation is limited to "
+                    << plane.referenceValidationMaximumParticles
+                    << " particles, but the input contains "
+                    << globalParticleCount
+                    << ". Disable particle_background.validation for the "
+                       "production run or raise maximum_particles explicitly.";
+            throw std::runtime_error(message.str());
+          }
+      }
+
+    std::size_t fieldIndex = 0;
+    for (std::size_t element = 0;
+         element < beamlineElements_.size(); ++element)
+      if (beamlineElements_[element].role ==
+          BeamlineElementRole::FieldDetectorPlane)
+        {
+          if (fieldIndex >= detectorConfig_.fieldPlanes.size())
+            throw std::logic_error(
+              "Field-detector beamline extent count is inconsistent");
+          const FieldDetectorPlaneConfig& plane =
+            detectorConfig_.fieldPlanes[fieldIndex++];
+          beamlineElements_[element].interactionEntrance =
+            plane.referenceEntranceZ;
+          beamlineElements_[element].interactionExit = plane.z;
+        }
+    if (fieldIndex != detectorConfig_.fieldPlanes.size())
+      throw std::logic_error(
+        "Field-detector configuration count is inconsistent");
+
+    if (rank_ == 0)
+      for (std::size_t detector = 0;
+           detector < detectorConfig_.fieldPlanes.size(); ++detector)
+        {
+          const FieldDetectorPlaneConfig& plane =
+            detectorConfig_.fieldPlanes[detector];
+          std::ostringstream message;
+          message << std::setprecision(10)
+                  << "Field detector '" << plane.name
+                  << "': diagnostic-only ballistic reference region lab z=["
+                  << plane.referenceEntranceZ << ", " << plane.z
+                  << "] m, length=" << plane.referenceDistance
+                  << " m, rho_guard=" << plane.referenceRho
+                  << " m, gamma_guard=" << plane.referenceGamma
+                  << ". Physical particle and Maxwell evolution are unchanged.";
+          if (plane.referenceValidation)
+            message << " Two-plane straight-line validation is enabled for "
+                    << globalParticleCount << " particles (limit "
+                    << plane.referenceValidationMaximumParticles << ").";
+          logRoot(communicator_, message.str());
+        }
+  }
+
+  void Simulation::validateBeamlineExclusionRules() const
+  {
+    const Double marginLab = config_.mesh.boostGamma * globalGeometry_.dz;
+    const auto overlaps = [](Double firstEntrance, Double firstExit,
+                             Double secondEntrance, Double secondExit)
+      {
+        const Double scale = std::max(1.0,
+          std::max(std::abs(firstEntrance),
+            std::max(std::abs(firstExit),
+              std::max(std::abs(secondEntrance), std::abs(secondExit)))));
+        const Double tolerance = 128.0 *
+          std::numeric_limits<Double>::epsilon() * scale;
+        return std::max(firstEntrance, secondEntrance) <
+               std::min(firstExit, secondExit) - tolerance;
+      };
+
+    /* Magnetic interaction regions are mutually exclusive.  Touching compact
+     * support boundaries are allowed; overlapping fringe supports are not. */
+    for (std::size_t first = 0; first < config_.magnets.size(); ++first)
+      for (std::size_t second = first + 1;
+           second < config_.magnets.size(); ++second)
+        if (overlaps(config_.magnets[first].interactionEntranceLab(),
+                     config_.magnets[first].interactionExitLab(),
+                     config_.magnets[second].interactionEntranceLab(),
+                     config_.magnets[second].interactionExitLab()))
+          {
+            std::ostringstream message;
+            message << "Magnetic element interaction regions overlap: magnet "
+                    << first << " lab z=["
+                    << config_.magnets[first].interactionEntranceLab() << ", "
+                    << config_.magnets[first].interactionExitLab()
+                    << "] m and magnet " << second << " lab z=["
+                    << config_.magnets[second].interactionEntranceLab() << ", "
+                    << config_.magnets[second].interactionExitLab()
+                    << "] m. Separate the physical devices or reduce their "
+                       "configured fringe support.";
+            throw std::runtime_error(message.str());
+          }
+
+    Double lastMagneticExit = -std::numeric_limits<Double>::infinity();
+    for (std::size_t magnet = 0; magnet < config_.magnets.size(); ++magnet)
+      lastMagneticExit = std::max(lastMagneticExit,
+        config_.magnets[magnet].interactionExitLab());
+
+    for (std::size_t detector = 0;
+         detector < detectorConfig_.fieldPlanes.size(); ++detector)
+      {
+        const FieldDetectorPlaneConfig& plane =
+          detectorConfig_.fieldPlanes[detector];
+        if (!plane.particleBackgroundReference) continue;
+        for (std::size_t magnet = 0;
+             magnet < config_.magnets.size(); ++magnet)
+          if (overlaps(plane.referenceEntranceZ, plane.z,
+                       config_.magnets[magnet].interactionEntranceLab(),
+                       config_.magnets[magnet].interactionExitLab()))
+            {
+              const Double recommended = lastMagneticExit +
+                plane.referenceDistance + marginLab;
+              std::ostringstream message;
+              message << std::setprecision(10)
+                      << "Field detector '" << plane.name
+                      << "' has a diagnostic reference region lab z=["
+                      << plane.referenceEntranceZ << ", " << plane.z
+                      << "] m that overlaps magnetic element " << magnet
+                      << " interaction region lab z=["
+                      << config_.magnets[magnet].interactionEntranceLab()
+                      << ", "
+                      << config_.magnets[magnet].interactionExitLab()
+                      << "] m. Move detector z to at least " << recommended
+                      << " m (" << recommended / config_.inputUnits.length
+                      << " in the configured length unit). Field-detector "
+                         "regions may overlap each other; particle detector "
+                         "planes do not participate in exclusion checks.";
+              throw std::runtime_error(message.str());
+            }
+      }
+  }
+
   void Simulation::initializeTrajectoryOutput()
   {
     if (!config_.trajectory.enabled) return;
@@ -680,17 +860,17 @@ namespace fel
 
   void Simulation::initializeDetectorOutput()
   {
-    if (!config_.detectors.enabled()) return;
+    if (!detectorConfig_.enabled()) return;
     detectors_.reset(new LabDetectorManager(
-      config_.detectors, globalGeometry_,
+      detectorConfig_, globalGeometry_,
       globalOriginBox_, localOriginBox_, frame_, communicator_));
     if (rank_ == 0)
       {
         std::ostringstream message;
         message << "Laboratory detector planes active: fields="
-                << config_.detectors.fieldPlanes.size()
+                << detectorConfig_.fieldPlanes.size()
                 << ", particles="
-                << config_.detectors.particlePlanes.size()
+                << detectorConfig_.particlePlanes.size()
                 << "; detector HDF5 is written only by MPI rank zero.";
         logRoot(communicator_, message.str());
       }
@@ -715,7 +895,9 @@ namespace fel
       }
     const Double tolerance = 32.0 *
       std::numeric_limits<Double>::epsilon() *
-      std::max(1.0, std::abs(timeBoxSI_));
+      std::max(trajectoryRhythmSI_,
+        std::max(std::abs(timeBoxSI_),
+                 std::abs(nextTrajectorySampleTime_)));
     do
       nextTrajectorySampleTime_ += trajectoryRhythmSI_;
     while (nextTrajectorySampleTime_ <= timeBoxSI_ + tolerance);
@@ -1156,7 +1338,7 @@ namespace fel
           detectors_->captureParticleStep(
             particles_[index], diagnosticEnd,
             timeBoxSI_, diagnosticTime);
-        if (hasTerminalEvent)
+        if (hasTerminalEvent && config_.trajectory.enabled)
           {
             appendTrajectoryEvent(
               diagnosticEnd, diagnosticTime,
@@ -1362,9 +1544,9 @@ namespace fel
   {
     Double entrance = std::numeric_limits<Double>::infinity();
     for (std::size_t element = 0;
-         element < config_.beamlineElements.size(); ++element)
+         element < beamlineElements_.size(); ++element)
       entrance = std::min(entrance,
-        config_.beamlineElements[element].physicalEntrance);
+        beamlineElements_[element].physicalEntrance);
     return entrance;
   }
 
@@ -1372,9 +1554,9 @@ namespace fel
   {
     Double entrance = std::numeric_limits<Double>::infinity();
     for (std::size_t element = 0;
-         element < config_.beamlineElements.size(); ++element)
+         element < beamlineElements_.size(); ++element)
       entrance = std::min(entrance,
-        config_.beamlineElements[element].interactionEntrance);
+        beamlineElements_[element].interactionEntrance);
     return entrance;
   }
 
@@ -1382,9 +1564,9 @@ namespace fel
   {
     Double exit = -std::numeric_limits<Double>::infinity();
     for (std::size_t element = 0;
-         element < config_.beamlineElements.size(); ++element)
+         element < beamlineElements_.size(); ++element)
       exit = std::max(exit,
-        config_.beamlineElements[element].interactionExit);
+        beamlineElements_[element].interactionExit);
     return exit;
   }
 

@@ -40,6 +40,8 @@ namespace fel
     void initializeGeometry();
     void initializeParticles();
     void initializeSources();
+    void initializeFieldDetectorRegions();
+    void validateBeamlineExclusionRules() const;
     void initializeTrajectoryOutput();
     void initializeDetectorOutput();
     void sampleTrajectory();
@@ -63,6 +65,8 @@ namespace fel
     void validateParticlesInsideGlobalBox() const;
 
     const SimulationConfig& config_;
+    DetectorConfig detectorConfig_;
+    std::vector<BeamlineElementExtent> beamlineElements_;
     MPI_Comm communicator_;
     int rank_;
     int size_;

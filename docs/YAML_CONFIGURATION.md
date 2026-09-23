@@ -303,7 +303,8 @@ last device.
 
 Stopping operates on generic beamline-element extents. Magnetic devices and
 both laboratory detector-plane types participate in the same first/last
-boundary logic.
+boundary logic. The stop boundary of a field detector is its sampling plane,
+not the entrance of its left diagnostic region.
 
 ## Laboratory detector planes
 
@@ -321,6 +322,13 @@ detectors:
       rhythm: 0.002
       buffer_samples: 2
       compression: 0
+      particle_background:
+        enabled: true
+        buffer_records: 16384
+        compression: 0
+        validation:
+          enabled: false
+          maximum_particles: 100000
   particle_planes:
     - name: exit-particles
       z: 2.5
@@ -328,10 +336,57 @@ detectors:
       compression: 0
 ```
 
-Every plane is a zero-length beamline element at lab `z`. It can therefore be
-the last element used by `after-last-element`, and a `reference-center-z` stop
-must lie downstream of it. Detector names are unique and may contain letters,
-digits, `.`, `-`, and `_`.
+A particle plane is a zero-length beamline element at lab `z`. A field plane's
+physical and stop location is also `z`, but when `particle_background.enabled`
+is true it owns a diagnostic-only interaction interval immediately to the
+left. Either plane can therefore be the last element used by
+`after-last-element`, and a `reference-center-z` stop must lie downstream of
+its sampling plane. Detector names are unique and may contain letters, digits,
+`.`, `-`, and `_`.
+
+After laboratory particles are read, the field detector derives
+
+```text
+rho_guard         = sqrt(mesh.lengths.x^2 + mesh.lengths.y^2)
+gamma_guard       = maximum initial laboratory particle gamma
+reference_length  = gamma_guard * rho_guard
+reference_z       = detector_z - reference_length
+```
+
+The mesh lengths are full transverse widths, so this is a deliberately
+conservative full-diagonal rule. When a physical particle crosses
+`reference_z` downstream, the detector records one laboratory position,
+proper velocity, charge, mass, and weight. This record defines a virtual
+straight line for charged-particle background reconstruction. It never changes
+the particle push, current deposition, MPI migration, or Maxwell fields. The
+main field file remains the raw total Maxwell field; the companion reference
+file is intended for later convolution/subtraction on the analysis machine.
+
+`particle_background.validation` is a test-only two-plane diagnostic. When
+enabled, the real particle is sampled once more as it crosses the field plane.
+Rank zero pairs that state with the left-boundary reference by particle ID,
+stores the actual and straight-line-predicted exit states, and reports
+transverse-position, arrival-time, proper-velocity, and direction errors.
+`maximum_particles` is mandatory protection against accidentally allocating a
+large rank-zero pairing table: startup exits if the global input macroparticle
+count exceeds the configured value. Validation requires
+`particle_background.enabled: true`.
+
+When validation is false, no pairing table or validation dataset exists and no
+extra field-plane crossing event is generated.
+
+Initialization applies the following independent rules:
+
+- magnetic interaction regions may not overlap other magnetic regions;
+- a magnetic interaction region may not overlap a field detector's left
+  reference region;
+- field detector reference regions may overlap one another;
+- particle detector planes never participate in exclusion checks.
+
+An invalid magnetic/field-detector placement exits before field allocation and
+prints the minimum recommended downstream detector `z`. The left-only region
+and its Lorentz-transformed moving planes are detailed in
+[FIELD_DETECTOR_REFERENCE.md](FIELD_DETECTOR_REFERENCE.md).
 
 A field plane stores laboratory E and B over all x-y cell centres. `rhythm` is
 a laboratory-time minimum interval; actual sample times are stored because
@@ -343,8 +398,8 @@ full-domain field copy.
 
 A particle plane stores a record only when a particle segment actually
 crosses its fixed lab z, including downstream/upstream direction. It does not
-change the normal trajectory cadence or records. `buffer_records` controls
-only the separate detector writer.
+change the field reference records, normal trajectory cadence, or trajectory
+records. `buffer_records` controls only the separate particle-detector writer.
 
 Omitting `detectors`, using empty plane lists, or setting `enabled: false`
 constructs no detector manager, allocates no detector buffers, opens no
@@ -359,7 +414,7 @@ I/O paths independent. See [DETECTOR_OUTPUT_HDF5.md](DETECTOR_OUTPUT_HDF5.md).
 
 ```yaml
 trajectory:
-  enabled: true
+  enabled: false
   directory: output/example
   basename: particles
   rhythm: 0.002
@@ -368,7 +423,11 @@ trajectory:
   compression: 0
 ```
 
-Each MPI rank writes one HDF5 file. `rhythm` uses the YAML time unit. In global
+Trajectory output is intended for small-particle validation rather than the
+production radiation path. When disabled, the simulator opens no trajectory
+file, reserves no record buffer, performs no periodic trajectory sampling,
+and skips terminal-record conversion. When enabled, each MPI rank writes one
+HDF5 file. `rhythm` uses the YAML time unit. In global
 interactive runtime mode, `flush_every_samples` periodically commits a
 readable prefix. Global throughput mode buffers normally until a full batch or
 clean close. `compression` is 0-9; zero minimizes CPU cost. When `enabled` is

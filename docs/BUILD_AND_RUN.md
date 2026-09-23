@@ -69,12 +69,27 @@ batch run choose `runtime.mode: throughput`. The choice is global, so local
 signal stopping still works when trajectory output is disabled and only a
 detector plane is active.
 
-The production example also enables one laboratory field plane and one
-particle plane. Their two HDF5 files appear under
+The compact I/O example enables one laboratory field plane and one particle
+plane, but disables the ballistic background reference because its tiny box
+has no room for the required free drift. Their two HDF5 files appear under
 `output/example/detectors/`; MPI rank zero is their only writer. Remove the
 `detectors` block or set `detectors.enabled: false` for runs that need no
 detector allocation or communication. Detector datasets are described in
 [DETECTOR_OUTPUT_HDF5.md](DETECTOR_OUTPUT_HDF5.md).
+
+Production radiation cards should enable the field plane's
+`particle_background` block. Startup computes its left reference boundary
+from the transverse mesh diagonal and maximum input-particle laboratory gamma,
+then rejects overlap with magnetic interaction regions and prints a corrected
+detector position. See
+[FIELD_DETECTOR_REFERENCE.md](FIELD_DETECTOR_REFERENCE.md).
+
+For a small validation card, enable
+`particle_background.validation.enabled`. The run then records only the two
+crossings needed to compare the physical orbit with the virtual straight line;
+it does not require full trajectory output. A mandatory particle-count guard
+prevents this diagnostic from being enabled accidentally on a production
+bunch.
 
 The current solver stops with an explicit error if its boosted initial bunch
 does not fit the longitudinal box or overlaps the finite interaction region of

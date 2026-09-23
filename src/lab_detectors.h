@@ -12,6 +12,21 @@
 
 namespace fel
 {
+  /* Detector-only subtraction hook for a known laboratory background such as
+   * a future analytical injected laser.  It is deliberately separate from
+   * EBFieldGrid: implementations are sampled only while writing a detector
+   * plane and can never modify the propagated E/B state. */
+  class LabFieldDetectorBackground
+  {
+  public:
+    virtual ~LabFieldDetectorBackground() {}
+    virtual const char* name() const = 0;
+    virtual void sampleLab(const FieldVector<Double>& positionLab,
+                           Double timeLab,
+                           FieldVector<Double>& electricLab,
+                           FieldVector<Double>& magneticLab) const = 0;
+  };
+
   /* The manager is constructed only when at least one laboratory detector is
    * configured.  All HDF5 handles live on rank zero; other ranks contribute
    * transient samples through MPI and never open detector files. */
@@ -23,7 +38,8 @@ namespace fel
                        const FieldVector<Double>& globalOriginBox,
                        const FieldVector<Double>& localOriginBox,
                        const BoostFrameTransform& frame,
-                       MPI_Comm communicator);
+                       MPI_Comm communicator,
+                       const LabFieldDetectorBackground* externalBackground = NULL);
     ~LabDetectorManager();
 
     LabDetectorManager(const LabDetectorManager&) = delete;
@@ -36,9 +52,10 @@ namespace fel
                              Double timeBoxBefore,
                              Double timeBoxAfter);
 
-    /* One detector-only collective is entered per particle step when particle
-     * planes exist.  It returns immediately after a zero-count Allreduce on
-     * the overwhelmingly common no-crossing steps. */
+    /* One detector-only collective is entered per particle step when a
+     * particle plane or ballistic-reference plane exists.  It returns
+     * immediately after a zero-count Allreduce on the overwhelmingly common
+     * no-crossing steps. */
     void collectParticleCrossings();
 
     /* Sample due fixed-z field planes.  Only the rank owning the moving

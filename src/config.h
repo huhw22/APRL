@@ -155,6 +155,26 @@ namespace fel
     std::size_t bufferSamples;
     unsigned int compression;
 
+    /* The field plane owns a diagnostic-only, laboratory-frame reference
+     * region immediately to its left.  These values are derived after the
+     * input particles have been read: rho uses the full transverse mesh
+     * diagonal and gamma is the largest laboratory particle gamma.  Crossing
+     * the entrance records one compact straight-line reference state; it
+     * never changes the physical particle or the Maxwell current. */
+    bool particleBackgroundReference;
+    Double referenceRho;
+    Double referenceGamma;
+    Double referenceDistance;
+    Double referenceEntranceZ;
+    std::size_t referenceBufferRecords;
+    unsigned int referenceCompression;
+
+    /* Optional small-particle validation.  When enabled, the detector also
+     * captures the real particle at its sampling plane and compares that
+     * crossing with the straight line launched at referenceEntranceZ. */
+    bool referenceValidation;
+    std::size_t referenceValidationMaximumParticles;
+
     FieldDetectorPlaneConfig();
   };
 

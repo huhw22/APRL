@@ -59,6 +59,16 @@ detectors:
       rhythm: 0.002
       buffer_samples: 2
       compression: 0
+      # This deliberately tiny I/O smoke-test box has no room for the
+      # gamma*rho free-drift reference region. Production radiation cards
+      # should enable this block and place the detector farther downstream.
+      particle_background:
+        enabled: false
+        buffer_records: 16384
+        compression: 0
+        validation:
+          enabled: false
+          maximum_particles: 100000
   particle_planes:
     - name: exit-particles
       z: 2.5
@@ -69,7 +79,8 @@ stop:
   mode: after-last-element
 
 trajectory:
-  enabled: true
+  # Full histories are a small-particle/debug path, not a production default.
+  enabled: false
   directory: output/example
   basename: particles
   rhythm: 0.002

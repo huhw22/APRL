@@ -301,7 +301,12 @@ namespace fel
   {}
 
   FieldDetectorPlaneConfig::FieldDetectorPlaneConfig()
-    : name(), z(0.0), rhythm(0.0), bufferSamples(1), compression(0)
+    : name(), z(0.0), rhythm(0.0), bufferSamples(1), compression(0),
+      particleBackgroundReference(true), referenceRho(0.0),
+      referenceGamma(1.0), referenceDistance(0.0), referenceEntranceZ(0.0),
+      referenceBufferRecords(16384), referenceCompression(0),
+      referenceValidation(false),
+      referenceValidationMaximumParticles(100000)
   {}
 
   ParticleDetectorPlaneConfig::ParticleDetectorPlaneConfig()
@@ -641,6 +646,44 @@ namespace fel
                 if (plane.compression > 9)
                   throw configError(node,
                     "field detector compression must be in [0,9]");
+                const YAML::Node reference = node["particle_background"];
+                if (reference)
+                  {
+                    if (!reference.IsMap())
+                      throw configError(reference,
+                        "field detector particle_background must be a map");
+                    if (reference["enabled"])
+                      plane.particleBackgroundReference =
+                        reference["enabled"].as<bool>();
+                    if (reference["buffer_records"])
+                      plane.referenceBufferRecords = positiveSize(
+                        reference["buffer_records"],
+                        "field detector particle_background buffer_records");
+                    if (reference["compression"])
+                      plane.referenceCompression =
+                        reference["compression"].as<unsigned int>();
+                    if (plane.referenceCompression > 9)
+                      throw configError(reference,
+                        "field detector particle_background compression must be in [0,9]");
+                    const YAML::Node validation = reference["validation"];
+                    if (validation)
+                      {
+                        if (!validation.IsMap())
+                          throw configError(validation,
+                            "field detector particle_background validation must be a map");
+                        if (validation["enabled"])
+                          plane.referenceValidation =
+                            validation["enabled"].as<bool>();
+                        if (validation["maximum_particles"])
+                          plane.referenceValidationMaximumParticles =
+                            positiveSize(validation["maximum_particles"],
+                              "field detector particle_background validation maximum_particles");
+                      }
+                    if (plane.referenceValidation &&
+                        !plane.particleBackgroundReference)
+                      throw configError(reference,
+                        "field detector particle_background validation requires enabled: true");
+                  }
                 result.detectors.fieldPlanes.push_back(plane);
 
                 BeamlineElementExtent extent;

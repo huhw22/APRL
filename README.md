@@ -14,32 +14,41 @@ regression option. Particles are advanced self-consistently with those fields
 while laboratory seed fields and magnetic devices are converted through an
 explicit Lorentz boost. A/phi is not part of the evolution state.
 
-The main reusable result is a compact, laboratory-frame particle history.
-Optional fixed laboratory field and particle detector planes provide focused
-measurements without forcing a large multidimensional field dump during every
-supercomputer run.  The outputs are intended for radiation reconstruction and
-other analysis on a separate, less expensive machine.
+The main radiation result is a fixed laboratory field plane. Each field plane
+can own a diagnostic-only ballistic-reference region on its left: particles continue
+their fully self-consistent push, while a single crossing record supplies the
+straight-line charged-particle background reference for later subtraction.
+Small test runs can additionally compare that virtual straight line with the
+same physical particle at the field plane, one paired record per particle,
+without enabling full trajectory output.
+Particle detector planes remain independent. Full laboratory particle
+histories are retained only as an optional small-particle/debug path because
+their production-scale storage cost is prohibitive. Outputs are intended for
+analysis on a separate, less expensive machine.
 
-An independent C++/MPI post-processor reconstructs the complex polarized
-far-field spectrum directly from those histories. It provides angular and
-integrated energy spectra, Stokes data, and optional ensemble cross-spectral
-density without linking or rerunning the simulation core. Stable parts of a
-single pulse can alternatively be treated as a Hann-window ensemble in reduced
-observer time for spatial and two-frequency coherence analysis.
+For small validation runs, an independent C++/MPI post-processor reconstructs
+the complex polarized far-field spectrum directly from trajectories. It
+provides angular and integrated energy spectra, Stokes data, and optional
+ensemble cross-spectral density without linking or rerunning the simulation
+core. Stable parts of a single pulse can alternatively be treated as a
+Hann-window ensemble in reduced observer time for spatial and two-frequency
+coherence analysis.
 
 ## Intended applications
 
 - seeded FEL and laser-modulation studies;
 - boosted-frame electron motion through undulators and other magnetic devices;
-- scalable trajectory production for radiation post-processing;
+- scalable laboratory field-plane production for radiation analysis;
 - numerical experiments on a direct SI E/B Maxwell-particle formulation.
 
 Runs can end either after all still-valid particles pass the final element's
 finite interaction region, or when the laboratory boost-reference centre
 reaches a configured downstream z coordinate. Laboratory field and particle
-detector planes are zero-length elements in this same ordering model. Only
-MPI rank zero writes their HDF5 files; disabling detectors constructs no
-detector object and enters no detector communication.
+detectors participate in this same ordering model. A field plane has a
+left-only diagnostic interaction extent; a particle plane remains
+geometrically zero-length. Only MPI rank zero writes their HDF5 files;
+disabling detectors constructs no detector object and enters no detector
+communication.
 
 The runtime policy is selected independently of outputs: `interactive` is the
 small-server test path with coordinated clean signal stopping, while
@@ -70,5 +79,6 @@ or particle-boundary I/O.
 - [Laboratory trajectory HDF5 output](docs/TRAJECTORY_OUTPUT_HDF5.md)
 - [Trajectory-to-far-field radiation tool](docs/TRAJECTORY_RADIATION.md)
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
+- [Field-detector ballistic reference region](docs/FIELD_DETECTOR_REFERENCE.md)
 - [HDF5 input example](config/example.yaml)
 - [Generated Gaussian test example](config/generated_gaussian.yaml)
