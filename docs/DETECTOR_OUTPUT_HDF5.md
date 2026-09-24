@@ -142,6 +142,34 @@ later reverses and crosses the plane again.
 
 Field ownership changes as a fixed lab plane moves through boosted-frame MPI
 z slabs. The current owner sends one transient x-y sample to rank zero.
+
+### High-gamma energy-loss analysis
+
+The inverse boost used for every particle-plane and trajectory record is
+evaluated with light-front momentum components, avoiding the cancellation of
+two large terms when beam and boost gamma are nearly equal. Nevertheless, an
+energy loss much smaller than the total beam energy must not be computed by
+subtracting two separately rounded total energies.
+
+For two particle planes, join the selected downstream crossings by
+`particle_id`, compute each record gamma from its three proper-velocity
+components, form the per-particle difference
+
+```text
+delta_E_i = mass_kg_i * c^2 * (gamma_in_i - gamma_out_i),
+```
+
+and only then sum `delta_E_i` with compensated or extended-precision
+accumulation. `charge_C` and `mass_kg`, not the diagnostic relative `weight`,
+already contain the represented macro-particle scaling. Direction, duplicate
+crossings, lost particles and incomplete committed prefixes must be handled
+explicitly.
+
+Particle energy loss and radiation collected by one field plane are not a
+universal hard equality: finite aperture, radiation through other faces,
+particles missing either plane, prescribed external fields and incomplete
+time windows all change the balance. Energy closure is therefore a
+problem-specific validation report rather than a simulator startup condition.
 Particle events are aggregated only on steps with crossings and transferred
 in bounded point-to-point batches. Rank zero serializes all detector writes;
 other ranks never open these files.

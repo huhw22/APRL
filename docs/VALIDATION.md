@@ -182,3 +182,40 @@ production approval for high harmonics. Time step, longitudinal and transverse
 resolution, retirement length/gap, aperture, CPML, and long-undulator
 convergence are still required for a physical run. The current simulator also
 warns that a Gauss-consistent initial self-field has not yet been implemented.
+
+## Input-weight, numerical-preflight, and resource smoke tests
+
+A two-rank HDF5 v2 input with two records of relative weights 1:3 and a YAML
+total of ten electrons produced represented macro-particle counts 2.5 and 7.5.
+Startup reported a global total of ten and preserved the electron
+charge-to-mass ratio. The existing HDF5 v1 example remains readable and uses
+equal weights.
+
+The undulator temporal-resolution guard was exercised with a deliberately
+under-resolved card. It measured 1.6677 particle steps per period against a
+requested 32 and rejected the run before field allocation. For that card it
+reported `dt <= 3.47678e-17 s` and Cowan-z `dz <= 1.04231e-8 m` as corrective
+limits. This is an input safety check, not a convergence result for a selected
+harmonic.
+
+On the two-rank 40x40x60-cell generated-Gaussian smoke test, the one-step
+startup calibration predicted approximately 0.0304 seconds per step after the
+1.25 time safety factor and a 0.456-second duration upper bound. The physical
+loop completed 13 steps in approximately 0.298 seconds; complete wall time was
+approximately 0.327 seconds. Modeled peak memory was 51.6 MiB per rank versus
+roughly 41--43 MiB measured resident memory. These numbers only establish that
+the report is conservative for this local smoke test. They are not transferable
+performance promises; a representative target-machine calibration is still
+required.
+
+The relativistic transform was also isolated with both beam and boost
+`gamma=1000`. The direct product-difference form produced approximately
+`1.0004e-10` relative momentum/gamma round-trip error. After changing the
+longitudinal four-velocity transform to light-front components, the same
+round trip measured `2.27e-16` in both quantities. A zero-field two-rank run
+then completed 22 steps and its trajectory output used the same inverse
+transform. The reported individual-electron lab-energy roundoff scale was
+`1.13e-7 eV`. This validates the transform/output precision path; it does not
+by itself validate a small radiative energy loss, which still requires
+per-particle gamma differences and compensated or extended-precision
+accumulation.

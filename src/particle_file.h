@@ -17,6 +17,7 @@ namespace fel
     Double position[3];
     Double properVelocity[3];
     std::uint64_t sourceId;
+    Double macroWeight;
 
     ParticleInputRecord();
   };
@@ -24,7 +25,8 @@ namespace fel
   class ParticleHdf5File
   {
   public:
-    static const int formatVersion = 1;
+    static const int legacyFormatVersion = 1;
+    static const int formatVersion = 2;
 
     /* Reads one contiguous hyperslab per MPI rank. Parallel HDF5 uses one
      * collective file open and one collective dataset read. */

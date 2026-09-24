@@ -287,7 +287,10 @@ namespace fel
   {}
 
   RuntimeConfig::RuntimeConfig()
-    : mode(RuntimeMode::Throughput), stopCheckIntervalSteps(16)
+    : mode(RuntimeMode::Throughput), stopCheckIntervalSteps(16),
+      resourceReport(true), resourceProgressIntervalSteps(1000),
+      resourceCalibrationSteps(1), memorySafetyFactor(1.25),
+      timeSafetyFactor(1.25)
   {}
 
   bool RuntimeConfig::interactive() const
@@ -371,6 +374,38 @@ namespace fel
           result.runtime.stopCheckIntervalSteps = positiveSize(
             runtime["stop_check_interval_steps"],
             "runtime stop_check_interval_steps");
+        const YAML::Node resources = runtime["resource_monitor"];
+        if (resources)
+          {
+            if (!resources.IsMap())
+              throw configError(resources,
+                "runtime.resource_monitor must be a map");
+            if (resources["enabled"])
+              result.runtime.resourceReport =
+                resources["enabled"].as<bool>();
+            if (resources["progress_interval_steps"])
+              result.runtime.resourceProgressIntervalSteps =
+                resources["progress_interval_steps"].as<std::size_t>();
+            if (resources["calibration_steps"])
+              result.runtime.resourceCalibrationSteps =
+                resources["calibration_steps"].as<unsigned int>();
+            if (resources["memory_safety_factor"])
+              result.runtime.memorySafetyFactor = finiteDouble(
+                resources["memory_safety_factor"],
+                "resource monitor memory safety factor");
+            if (resources["time_safety_factor"])
+              result.runtime.timeSafetyFactor = finiteDouble(
+                resources["time_safety_factor"],
+                "resource monitor time safety factor");
+            if (result.runtime.resourceReport &&
+                result.runtime.resourceCalibrationSteps == 0)
+              throw configError(resources["calibration_steps"],
+                "enabled resource monitor needs at least one calibration step");
+            if (!(result.runtime.memorySafetyFactor >= 1.0) ||
+                !(result.runtime.timeSafetyFactor >= 1.0))
+              throw configError(resources,
+                "resource-monitor safety factors must be at least one");
+          }
       }
 
     const YAML::Node mesh = required(root, "mesh");
@@ -386,9 +421,10 @@ namespace fel
     result.mesh.boostGamma = finiteDouble(required(mesh, "boost_gamma"),
       "boost gamma");
     result.mesh.fieldSolver = fieldSolver(required(mesh, "field_solver"));
-    if (mesh["particle_steps_per_undulator_period"])
-      result.mesh.particleStepsPerUndulatorPeriod =
-        mesh["particle_steps_per_undulator_period"].as<unsigned int>();
+    result.mesh.particleStepsPerUndulatorPeriod =
+      static_cast<unsigned int>(positiveSize(
+        required(mesh, "particle_steps_per_undulator_period"),
+        "particle_steps_per_undulator_period"));
 
     const YAML::Node boundary = required(root, "boundary");
     if (!boundary.IsMap())

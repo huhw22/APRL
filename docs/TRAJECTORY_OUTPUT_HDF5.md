@@ -27,7 +27,7 @@ one-dimensional compound dataset `/trajectory/records` contains:
 | `position_m[3]` | laboratory x, y, z in metres |
 | `proper_velocity[3]` | dimensionless laboratory proper velocity `gamma*v/c` |
 | `charge_C` | signed macroparticle charge in coulombs |
-| `weight` | statistical macroparticle weight |
+| `weight` | relative input macro-particle weight (diagnostic metadata) |
 | `event_type` | record type listed below |
 | `boundary_face` | boundary code listed below, or `-1` |
 

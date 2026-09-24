@@ -2,6 +2,7 @@
 #define DIRECT_EB_SIMULATION_H
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -42,6 +43,9 @@ namespace fel
     void initializeSources();
     void initializeFieldDetectorRegions();
     void validateBeamlineExclusionRules() const;
+    void calibrateResourceEstimate();
+    void reportResourceEstimate();
+    void reportResourceProgress(const char* phase);
     void initializeTrajectoryOutput();
     void initializeDetectorOutput();
     void sampleTrajectory();
@@ -101,6 +105,10 @@ namespace fel
     std::size_t step_;
     bool interrupted_;
     bool configuredStopReached_;
+    Double loopWallStart_;
+    Double estimatedStepSeconds_;
+    std::size_t estimatedMaximumSteps_;
+    std::uint64_t modeledLocalPeakBytes_;
     unsigned long long lostParticles_;
     unsigned long long cpmlEntryCount_[6];
     Double cpmlEntryCharge_[6];

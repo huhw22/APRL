@@ -21,7 +21,11 @@ namespace fel
 
   SIBunchBoostReport::SIBunchBoostReport()
     : earliestLabEventTime(0.0), latestLabEventTime(0.0),
-      maximumAbsoluteDriftTime(0.0)
+      maximumAbsoluteDriftTime(0.0),
+      minimumLabGamma(std::numeric_limits<Double>::infinity()),
+      maximumLabGamma(1.0),
+      maximumRelativeMomentumRoundTripError(0.0),
+      maximumRelativeGammaRoundTripError(0.0)
   {}
 
   SIBunchPlacementReport SIBunchPreprocessor::placeRelativeLabSnapshot(
@@ -86,6 +90,8 @@ namespace fel
     for (std::size_t index = 0; index < particles.size(); ++index)
       {
         RelativisticParticleSI& particle = particles[index];
+        const FieldVector<Double> properVelocityLab(
+          particle.properVelocity);
         const Double gammaParticle =
           BoostFrameTransform::gammaFromProperVelocity(
             particle.properVelocity);
@@ -122,9 +128,19 @@ namespace fel
         particle.position[0] = eventPosition[0];
         particle.position[1] = eventPosition[1];
         particle.position[2] = eventZBox;
-        particle.properVelocity[2] = frame.gamma() *
-          (particle.properVelocity[2] -
-           frame.beta() * gammaParticle);
+        frame.properVelocityLabToBox(
+          properVelocityLab, particle.properVelocity);
+
+        FieldVector<Double> reconstructed(0.0);
+        frame.properVelocityBoxToLab(
+          particle.properVelocity, reconstructed);
+        FieldVector<Double> momentumDelta(reconstructed);
+        momentumDelta -= properVelocityLab;
+        const Double momentumError =
+          momentumDelta.norm() /
+          std::max(1.0, properVelocityLab.norm());
+        const Double reconstructedGamma =
+          BoostFrameTransform::gammaFromProperVelocity(reconstructed);
 
         report.earliestLabEventTime = std::min(
           report.earliestLabEventTime, eventTimeLab);
@@ -132,10 +148,22 @@ namespace fel
           report.latestLabEventTime, eventTimeLab);
         report.maximumAbsoluteDriftTime = std::max(
           report.maximumAbsoluteDriftTime, std::abs(driftTime));
+        report.minimumLabGamma = std::min(
+          report.minimumLabGamma, gammaParticle);
+        report.maximumLabGamma = std::max(
+          report.maximumLabGamma, gammaParticle);
+        report.maximumRelativeMomentumRoundTripError = std::max(
+          report.maximumRelativeMomentumRoundTripError, momentumError);
+        report.maximumRelativeGammaRoundTripError = std::max(
+          report.maximumRelativeGammaRoundTripError,
+          std::abs(reconstructedGamma - gammaParticle) / gammaParticle);
       }
 
     if (particles.empty())
-      report.earliestLabEventTime = report.latestLabEventTime = 0.0;
+      {
+        report.earliestLabEventTime = report.latestLabEventTime = 0.0;
+        report.minimumLabGamma = std::numeric_limits<Double>::infinity();
+      }
     return report;
   }
 }

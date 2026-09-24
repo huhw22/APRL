@@ -7,6 +7,12 @@ units:
 # Supercomputer path: no signal polling and no periodic durability flushes.
 runtime:
   mode: throughput
+  resource_monitor:
+    enabled: true
+    progress_interval_steps: 1000
+    calibration_steps: 1
+    memory_safety_factor: 1.25
+    time_safety_factor: 1.25
 
 mesh:
   # z-priority Cowan/CKC stencil; use yee only for regression runs.
@@ -16,7 +22,8 @@ mesh:
   center: [0.0, 0.0, 0.0]
   duration: 0.01
   boost_gamma: 2.0
-  particle_steps_per_undulator_period: 32
+  # Smoke-test minimum only; production high-harmonic cards need much more.
+  particle_steps_per_undulator_period: 1
 
 boundary:
   type: cpml

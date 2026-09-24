@@ -2,8 +2,12 @@
 
 #include <cerrno>
 #include <cstring>
+#include <fstream>
+#include <limits>
 #include <iostream>
 #include <stdexcept>
+#include <sys/resource.h>
+#include <unistd.h>
 #include <sys/stat.h>
 
 namespace fel
@@ -86,5 +90,38 @@ namespace fel
     if (directory.empty() || directory == ".") return filename;
     if (directory[directory.size() - 1] == '/') return directory + filename;
     return directory + "/" + filename;
+  }
+
+  std::uint64_t currentResidentBytes()
+  {
+    std::ifstream status("/proc/self/statm");
+    unsigned long long totalPages = 0;
+    unsigned long long residentPages = 0;
+    if (!(status >> totalPages >> residentPages)) return 0;
+    const long pageBytes = sysconf(_SC_PAGESIZE);
+    if (pageBytes <= 0) return 0;
+    if (residentPages >
+        std::numeric_limits<std::uint64_t>::max() /
+          static_cast<std::uint64_t>(pageBytes))
+      return 0;
+    return static_cast<std::uint64_t>(residentPages) *
+      static_cast<std::uint64_t>(pageBytes);
+  }
+
+  std::uint64_t peakResidentBytes()
+  {
+    struct rusage usage;
+    if (getrusage(RUSAGE_SELF, &usage) != 0 ||
+        usage.ru_maxrss < 0)
+      return 0;
+#ifdef __APPLE__
+    return static_cast<std::uint64_t>(usage.ru_maxrss);
+#else
+    const std::uint64_t kib =
+      static_cast<std::uint64_t>(usage.ru_maxrss);
+    if (kib > std::numeric_limits<std::uint64_t>::max() / 1024)
+      return 0;
+    return kib * 1024;
+#endif
   }
 }

@@ -1352,12 +1352,12 @@ namespace fel
             properVelocityBox[component] = before.properVelocity[component] +
               fraction * (after.properVelocity[component] -
                           before.properVelocity[component]);
-          const double gammaBox =
-            BoostFrameTransform::gammaFromProperVelocity(properVelocityBox);
-          event.record.properVelocity[0] = properVelocityBox[0];
-          event.record.properVelocity[1] = properVelocityBox[1];
-          event.record.properVelocity[2] = frame_.gamma() *
-            (properVelocityBox[2] + frame_.beta() * gammaBox);
+          FieldVector<Double> properVelocityLab(0.0);
+          frame_.properVelocityBoxToLab(properVelocityBox, properVelocityLab);
+          for (unsigned int component = 0; component < 3; ++component)
+            event.record.properVelocity[component] =
+              properVelocityLab[component];
+
           event.record.charge = after.charge;
           event.record.mass = after.mass;
           event.record.weight = after.weight;

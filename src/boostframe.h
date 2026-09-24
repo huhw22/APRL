@@ -37,6 +37,17 @@ namespace fel
       static Double gammaFromProperVelocity(
           const FieldVector<Double>& properVelocity);
 
+      /* Longitudinal four-velocity transforms evaluated through light-front
+       * components. This avoids subtracting two
+       * O(gamma_boost*gamma_beam) terms when the bunch and boost are nearly
+       * comoving. */
+      void properVelocityLabToBox(
+          const FieldVector<Double>& properVelocityLab,
+          FieldVector<Double>& properVelocityBox) const;
+      void properVelocityBoxToLab(
+          const FieldVector<Double>& properVelocityBox,
+          FieldVector<Double>& properVelocityLab) const;
+
       Double gamma() const;
       Double beta() const;
       Double gammaBeta() const;

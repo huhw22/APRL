@@ -54,8 +54,16 @@ the generalized Cowan TF/SF correction is implemented.
 `lengths`, `resolution`, and `center` describe the boosted computational box.
 Each length must be an integral number of cells, every dimension needs at
 least three cells, and z needs at least two cells per MPI rank. `duration` is
-boosted-frame time. The particle-step setting is reserved for the future
-subcycling implementation.
+boosted-frame time. `particle_steps_per_undulator_period` is a required hard
+lower bound, not a subcycling request. After the real particles are read and
+boosted, the program derives the largest laboratory z advance made by any
+particle in one field step and checks it against the shortest configured
+undulator period. A violation exits before field allocation and reports the
+maximum time step and, for Cowan-z, the maximum `dz` in both SI and input
+units. The current solver has no particle subcycling: achieving a large value
+such as the 1000-or-more samples needed by some high-harmonic studies therefore
+requires refining the field time step. The value `1` in the committed examples
+is only for smoke testing.
 
 ## Field boundary
 
@@ -135,10 +143,13 @@ Production input uses HDF5:
 ```
 
 Relative `file` paths are resolved from the YAML file directory. `electrons`
-is the total physical electron count represented by all records; equal macro
-charge and mass are assigned to each. `position_offset` is optional, uses the
-YAML length unit, and is added before reference placement. The binary schema is
-defined in [PARTICLE_INPUT_HDF5.md](PARTICLE_INPUT_HDF5.md).
+is always the total physical electron count represented by all records.
+HDF5 v2 records carry a positive relative `macro_weight`; the simulator
+normalizes their sum to `electrons` and scales each macro charge and mass
+together. Legacy v1 files remain readable and imply equal weights.
+`position_offset` is optional, uses the YAML length unit, and is added before
+reference placement. The binary schema is defined in
+[PARTICLE_INPUT_HDF5.md](PARTICLE_INPUT_HDF5.md).
 
 For small integration tests only, a deterministic Gaussian can be generated
 without an input file:
@@ -248,6 +259,12 @@ For scheduled supercomputer production use:
 ```yaml
 runtime:
   mode: throughput
+  resource_monitor:
+    enabled: true
+    progress_interval_steps: 1000
+    calibration_steps: 1
+    memory_safety_factor: 1.25
+    time_safety_factor: 1.25
 ```
 
 `throughput` is the default. It installs no signal handlers, performs no
@@ -255,6 +272,27 @@ stop-signal MPI polling, and disables periodic trajectory durability flushes;
 normal physical-stop shutdown still closes every output. This avoids the
 testing path's synchronization and filesystem costs. `local-test` and `hpc`
 are accepted aliases for `interactive` and `throughput`, respectively.
+
+
+`resource_monitor` is independent of the stop policy. When enabled, startup
+models the allocated field, CPML, particle, detector, trajectory and MPI halo
+buffers and reports maximum per-rank and aggregate memory. With no incident
+wave it also benchmarks `calibration_steps` zero-field Maxwell updates and a
+bounded sample of particle push/deposition work without advancing the physical
+state. The estimate applies the configured factors, which must be at least one.
+The current seed-wave combinations are rejected earlier, so skipping the
+microbenchmark for a nonempty incident-wave list is an explicit future-facing
+safeguard rather than a hidden fallback.
+
+`progress_interval_steps: 0` suppresses periodic records but retains the
+startup estimate and final measurement. Otherwise rank zero writes a flushed,
+single-line `[resource]` record at that interval. The final record includes
+current and peak resident memory plus measured loop and full wall time. This
+format is intentionally suitable for stdout/stderr capture by `sbatch`; it
+does not require an interactive terminal or a separate monitoring process.
+The time estimate excludes filesystem contention, workload changes caused by
+particle migration, and earlier physical stopping, so production allocations
+should use safety factors calibrated on the target machine and rank layout.
 
 For compatibility with input cards from the preceding commits,
 `trajectory.mode` is still accepted as a global runtime-mode alias when

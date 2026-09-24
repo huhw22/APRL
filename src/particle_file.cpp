@@ -21,7 +21,7 @@ namespace fel
       if (status < 0) throw std::runtime_error(message);
     }
 
-    hid_t memoryRecordType()
+    hid_t memoryRecordType(bool weighted)
     {
       hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(ParticleInputRecord));
       requireHandle(type, "Cannot create particle input memory datatype");
@@ -38,8 +38,11 @@ namespace fel
         HOFFSET(ParticleInputRecord, properVelocity), vectorType);
       const herr_t third = H5Tinsert(type, "source_id",
         HOFFSET(ParticleInputRecord, sourceId), H5T_NATIVE_UINT64);
+      const herr_t fourth = weighted ?
+        H5Tinsert(type, "macro_weight",
+          HOFFSET(ParticleInputRecord, macroWeight), H5T_NATIVE_DOUBLE) : 0;
       H5Tclose(vectorType);
-      if (first < 0 || second < 0 || third < 0)
+      if (first < 0 || second < 0 || third < 0 || fourth < 0)
         {
           H5Tclose(type);
           throw std::runtime_error("Cannot define particle input memory datatype");
@@ -59,7 +62,8 @@ namespace fel
     }
   }
 
-  ParticleInputRecord::ParticleInputRecord() : sourceId(0)
+  ParticleInputRecord::ParticleInputRecord()
+    : sourceId(0), macroWeight(1.0)
   {
     for (unsigned int i = 0; i < 3; ++i)
       position[i] = properVelocity[i] = 0.0;
@@ -104,11 +108,13 @@ namespace fel
         H5Fclose(file);
         throw std::runtime_error("Particle file is missing /particles group");
       }
-    if (readFormatVersion(group) != formatVersion)
+    const int version = readFormatVersion(group);
+    if (version != legacyFormatVersion && version != formatVersion)
       {
         H5Gclose(group);
         H5Fclose(file);
-        throw std::runtime_error("Unsupported particle HDF5 format version");
+        throw std::runtime_error(
+          "Unsupported particle HDF5 format version; supported versions are 1 and 2");
       }
     hid_t dataset = H5Dopen2(group, "records", H5P_DEFAULT);
     if (dataset < 0)
@@ -175,7 +181,7 @@ namespace fel
     requireStatus(H5Pset_dxpl_mpio(transfer, H5FD_MPIO_COLLECTIVE),
                   "Cannot enable collective particle dataset read");
 #endif
-    hid_t memoryType = memoryRecordType();
+    hid_t memoryType = memoryRecordType(version >= formatVersion);
     const herr_t readStatus = H5Dread(dataset, memoryType, memorySpace,
       fileSpace, transfer, input.empty() ? NULL : &input[0]);
     H5Tclose(memoryType);
@@ -187,8 +193,21 @@ namespace fel
     H5Fclose(file);
     requireStatus(readStatus, "Cannot read particle HDF5 records");
 
-    const Double macroElectrons = totalElectrons /
-      static_cast<Double>(globalRecords);
+    Double localWeightSum = 0.0;
+    for (std::size_t i = 0; i < input.size(); ++i)
+      {
+        if (!(input[i].macroWeight > 0.0) ||
+            !std::isfinite(input[i].macroWeight))
+          throw std::runtime_error(
+            "Particle HDF5 macro_weight must be positive and finite");
+        localWeightSum += input[i].macroWeight;
+      }
+    Double globalWeightSum = 0.0;
+    MPI_Allreduce(&localWeightSum, &globalWeightSum, 1, MPI_DOUBLE,
+                  MPI_SUM, communicator);
+    if (!(globalWeightSum > 0.0) || !std::isfinite(globalWeightSum))
+      throw std::runtime_error(
+        "Particle HDF5 macro weights have an invalid global sum");
     std::vector<RelativisticParticleSI> result;
     result.reserve(input.size());
     for (std::size_t i = 0; i < input.size(); ++i)
@@ -204,9 +223,11 @@ namespace fel
             particle.properVelocity[component] =
               input[i].properVelocity[component];
           }
+        const Double macroElectrons = totalElectrons *
+          input[i].macroWeight / globalWeightSum;
         particle.charge = -SI::elementaryCharge * macroElectrons;
         particle.mass = SI::electronMass * macroElectrons;
-        particle.weight = 1.0;
+        particle.weight = input[i].macroWeight;
         particle.sourceId = input[i].sourceId;
         result.push_back(particle);
       }

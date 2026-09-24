@@ -36,6 +36,10 @@ namespace fel
     Double earliestLabEventTime;
     Double latestLabEventTime;
     Double maximumAbsoluteDriftTime;
+    Double minimumLabGamma;
+    Double maximumLabGamma;
+    Double maximumRelativeMomentumRoundTripError;
+    Double maximumRelativeGammaRoundTripError;
 
     SIBunchBoostReport();
   };

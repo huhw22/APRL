@@ -81,6 +81,14 @@ small-server test path with coordinated clean signal stopping, while
 `throughput` removes signal polling and periodic durability flushes for
 scheduled supercomputer runs.
 
+Production HDF5 input supports a positive relative weight per particle and
+normalizes those weights to the total electron count in the YAML card. The
+generated Gaussian path instead uses the requested total charge and macro-
+particle count with uniform weights. An optional root-only resource report
+gives a pre-run memory/time estimate, periodic batch-log progress, and measured
+peak resident memory and wall time without requiring a live terminal.
+
+
 The implementation is still a development solver. Compact CFS-CPML is
 available for no-seed Cowan runs, while the generalized Cowan/CPML TF/SF
 seed-wave correction, a Gauss-consistent initial particle self-field, and
@@ -109,5 +117,6 @@ or particle-boundary I/O.
 - [Particle-background field reconstruction](docs/FIELD_RECONSTRUCTION.md)
 - [Particle retirement and matched power comparison](docs/FIELD_POWER_COMPARISON.md)
 - [Numerical validation status](docs/VALIDATION.md)
+- [Current release audit and production gates](docs/RELEASE_AUDIT.md)
 - [HDF5 input example](config/example.yaml)
 - [Generated Gaussian test example](config/generated_gaussian.yaml)

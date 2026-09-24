@@ -18,6 +18,7 @@ namespace
     double position[3];
     double properVelocity[3];
     std::uint64_t sourceId;
+    double macroWeight;
   };
 
   void requireHandle(hid_t handle, const std::string& message)
@@ -60,14 +61,31 @@ namespace
                 << " must contain x y z ux uy uz";
         throw std::runtime_error(message.str());
       }
+    record.macroWeight = 1.0;
+    if (!(input >> record.macroWeight))
+      {
+        if (!input.eof())
+          {
+            std::ostringstream message;
+            message << "Line " << lineNumber
+                    << " has an invalid optional macro_weight";
+            throw std::runtime_error(message.str());
+          }
+        input.clear();
+      }
     std::string trailing;
     if (input >> trailing)
       {
         std::ostringstream message;
         message << "Line " << lineNumber
-                << " contains data after the six required columns";
+                << " contains data after x y z ux uy uz [macro_weight]";
         throw std::runtime_error(message.str());
       }
+    if (!(record.macroWeight > 0.0) ||
+        !std::isfinite(record.macroWeight))
+      throw std::runtime_error(
+        "Line " + std::to_string(lineNumber) +
+        " macro_weight must be positive and finite");
     for (unsigned int axis = 0; axis < 3; ++axis)
       {
         if (!std::isfinite(record.position[axis]) ||
@@ -99,6 +117,10 @@ namespace
                             HOFFSET(ParticleRecord, sourceId),
                             H5T_NATIVE_UINT64),
                   "Cannot add source_id to HDF5 memory record");
+    requireStatus(H5Tinsert(type, "macro_weight",
+                            HOFFSET(ParticleRecord, macroWeight),
+                            H5T_NATIVE_DOUBLE),
+                  "Cannot add macro_weight to HDF5 memory record");
     H5Tclose(vector);
     return type;
   }
@@ -106,7 +128,7 @@ namespace
   hid_t fileRecordType()
   {
     const std::size_t f64 = 8;
-    hid_t type = H5Tcreate(H5T_COMPOUND, 7 * f64);
+    hid_t type = H5Tcreate(H5T_COMPOUND, 8 * f64);
     requireHandle(type, "Cannot create HDF5 file record type");
     hsize_t dimensions[1] = {3};
     hid_t vector = H5Tarray_create2(H5T_IEEE_F64LE, 1, dimensions);
@@ -117,6 +139,8 @@ namespace
                   "Cannot add proper_velocity to HDF5 file record");
     requireStatus(H5Tinsert(type, "source_id", 6 * f64, H5T_STD_U64LE),
                   "Cannot add source_id to HDF5 file record");
+    requireStatus(H5Tinsert(type, "macro_weight", 7 * f64, H5T_IEEE_F64LE),
+                  "Cannot add macro_weight to HDF5 file record");
     H5Tclose(vector);
     return type;
   }
@@ -187,10 +211,12 @@ namespace
     hid_t group = H5Gcreate2(file, "/particles", H5P_DEFAULT,
                              H5P_DEFAULT, H5P_DEFAULT);
     requireHandle(group, "Cannot create /particles group");
-    writeIntAttribute(group, "format_version", 1);
+    writeIntAttribute(group, "format_version", 2);
     writeStringAttribute(group, "coordinate_frame", "relative-lab");
     writeStringAttribute(group, "position_unit", "m");
     writeStringAttribute(group, "proper_velocity_unit", "gamma*v/c");
+    writeStringAttribute(group, "macro_weight_definition",
+                         "positive relative weight normalized by simulator to beam.input.electrons");
     writeStringAttribute(group, "source_id_definition",
                          "one-based input data row");
 
@@ -269,7 +295,8 @@ namespace
     std::cout << "Usage: " << executable
               << " --input particles.txt --output particles.h5 "
                  "[--length-unit m|mm|um|nm]\n"
-              << "Each data line must contain: x y z ux uy uz\n";
+              << "Each data line must contain: "
+                 "x y z ux uy uz [macro_weight]\n";
   }
 }
 

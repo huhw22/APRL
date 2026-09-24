@@ -86,6 +86,67 @@ namespace fel
                              ux * ux + uy * uy + uz * uz);
   }
 
+  namespace
+  {
+    Double positiveLightFrontComponent(
+        const FieldVector<Double>& properVelocity)
+    {
+      const Double gamma =
+        BoostFrameTransform::gammaFromProperVelocity(properVelocity);
+      const Double transverseMassSquared = std::fma(
+        properVelocity[0], properVelocity[0],
+        std::fma(properVelocity[1], properVelocity[1], 1.0));
+      if (!(transverseMassSquared > 0.0) ||
+          !std::isfinite(transverseMassSquared))
+        throw std::overflow_error(
+          "Cannot form a finite transverse mass for Lorentz transformation");
+      if (properVelocity[2] >= 0.0)
+        return gamma + properVelocity[2];
+      return transverseMassSquared / (gamma - properVelocity[2]);
+    }
+
+    void properVelocityFromPositiveLightFront(
+        const FieldVector<Double>& input, Double positive,
+        FieldVector<Double>& output)
+    {
+      const Double transverseMassSquared = std::fma(
+        input[0], input[0],
+        std::fma(input[1], input[1], 1.0));
+      if (!(positive > 0.0) || !std::isfinite(positive))
+        throw std::overflow_error(
+          "Lorentz transformation produced an invalid light-front momentum");
+      const Double negative = transverseMassSquared / positive;
+      output[0] = input[0];
+      output[1] = input[1];
+      output[2] = 0.5 * (positive - negative);
+      if (!std::isfinite(output[2]))
+        throw std::overflow_error(
+          "Lorentz transformation produced a non-finite longitudinal momentum");
+    }
+  }
+
+  void BoostFrameTransform::properVelocityLabToBox(
+      const FieldVector<Double>& properVelocityLab,
+      FieldVector<Double>& properVelocityBox) const
+  {
+    const Double rapidityFactor = gamma_ + gammaBeta_;
+    const Double positiveBox =
+      positiveLightFrontComponent(properVelocityLab) / rapidityFactor;
+    properVelocityFromPositiveLightFront(
+      properVelocityLab, positiveBox, properVelocityBox);
+  }
+
+  void BoostFrameTransform::properVelocityBoxToLab(
+      const FieldVector<Double>& properVelocityBox,
+      FieldVector<Double>& properVelocityLab) const
+  {
+    const Double rapidityFactor = gamma_ + gammaBeta_;
+    const Double positiveLab =
+      positiveLightFrontComponent(properVelocityBox) * rapidityFactor;
+    properVelocityFromPositiveLightFront(
+      properVelocityBox, positiveLab, properVelocityLab);
+  }
+
   Double BoostFrameTransform::gamma() const { return gamma_; }
   Double BoostFrameTransform::beta()  const { return beta_;  }
   Double BoostFrameTransform::gammaBeta() const { return gammaBeta_; }

@@ -90,11 +90,12 @@ energy with a one-shot trajectory far field. See
 ```
 
 The converter reads the source twice and writes HDF5 in bounded chunks, so its
-memory use does not grow with the full particle count. The six text columns are
-`x y z ux uy uz`; blank lines and `#` comments are accepted. The utility is for
-preparation outside the expensive simulation allocation. Production runs read
-the resulting HDF5 file directly and collectively, one contiguous range per
-MPI rank.
+memory use does not grow with the full particle count. The text columns are
+`x y z ux uy uz [macro_weight]`; the optional seventh value is a positive
+relative macro-particle weight and defaults to one. Blank lines and `#`
+comments are accepted. The utility is for preparation outside the expensive
+simulation allocation. Production runs read the resulting HDF5 file directly
+and collectively, one contiguous range per MPI rank.
 
 The committed example HDF5 can be regenerated with:
 
@@ -117,6 +118,26 @@ debug run choose global `runtime.mode: interactive`; for an uninterrupted
 batch run choose `runtime.mode: throughput`. The choice is global, so local
 signal stopping still works when trajectory output is disabled and only a
 detector plane is active.
+
+The committed cards enable the root-only resource report. Before the time
+loop it prints an estimated per-rank peak resident set, aggregate modeled
+memory, uncompressed output upper bounds, calibrated seconds per step, and a
+wall-time upper estimate. During a long run it prints one compact progress
+record at the configured interval, and shutdown prints measured current/peak
+resident memory and loop/full wall time. Every record is a flushed single line
+prefixed with `[resource]`, so ordinary batch redirection is sufficient:
+
+```bash
+sbatch --output=run-%j.log run.sh
+# run.sh ultimately executes, for example:
+srun ./build/simulator config/production.yaml
+```
+
+The startup timing is a short local microbenchmark, not a scheduler guarantee:
+parallel-file-system contention, later particle migration and early physical
+stopping are not predicted. Calibrate the memory/time safety factors on the
+intended machine and MPI decomposition before requesting a large allocation.
+
 
 The compact I/O example enables one laboratory field plane and one particle
 plane, but disables the ballistic background reference because its tiny box

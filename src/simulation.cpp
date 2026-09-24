@@ -218,7 +218,9 @@ namespace fel
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), timeBoxSI_(0.0),
       totalTimeBoxSI_(0.0), step_(0), interrupted_(false),
-      configuredStopReached_(false), lostParticles_(0),
+      configuredStopReached_(false), loopWallStart_(0.0),
+      estimatedStepSeconds_(0.0), estimatedMaximumSteps_(0),
+      modeledLocalPeakBytes_(0), lostParticles_(0),
       retirementEntryCount_(0), retirementEntryCharge_(0.0),
       retirementExitCount_(0), retirementExitResidualCharge_(0.0),
       peakRetirementCarriers_(0), stopReason_()
@@ -246,6 +248,7 @@ namespace fel
       sampleTrajectory();
     if (detectors_)
       detectors_->sampleFieldPlanes(*fields_, timeBoxSI_);
+    loopWallStart_ = MPI_Wtime();
 
     while (timeBoxSI_ < totalTimeBoxSI_)
       {
@@ -273,6 +276,10 @@ namespace fel
           sampleTrajectory();
         if (detectors_)
           detectors_->sampleFieldPlanes(*fields_, timeBoxSI_);
+        if (config_.runtime.resourceReport &&
+            config_.runtime.resourceProgressIntervalSteps > 0 &&
+            step_ % config_.runtime.resourceProgressIntervalSteps == 0)
+          reportResourceProgress("progress");
         if (configuredStopReached())
           {
             configuredStopReached_ = true;
@@ -285,6 +292,7 @@ namespace fel
     finalizeTrajectoryOutput(completed);
     if (detectors_) detectors_->close(completed);
     reportParticleBoundaryLosses();
+    reportResourceProgress("final");
     if (configuredStopReached_ && rank_ == 0)
       logRoot(communicator_, "Configured stop reached: " + stopReason_);
     if (interrupted_ && rank_ == 0)
@@ -333,6 +341,7 @@ namespace fel
           halo_->upperRank() == MPI_PROC_NULL)));
     else
       halo_->installPhysicalBoundaryMask(*fields_);
+    calibrateResourceEstimate();
 
     if (sources_.maxwellIncidentWaveCount() > 0)
       {
@@ -348,6 +357,7 @@ namespace fel
 
     initializeTrajectoryOutput();
     initializeDetectorOutput();
+    reportResourceEstimate();
     const unsigned long long localBoundaryBytes =
       static_cast<unsigned long long>(
         fields_->memoryFootprint().boundaryBytes);
@@ -465,6 +475,314 @@ namespace fel
       }
   }
 
+  void Simulation::calibrateResourceEstimate()
+  {
+    const Double stepsReal = std::ceil(totalTimeBoxSI_ /
+                                       globalGeometry_.dt);
+    if (!(stepsReal > 0.0) || !std::isfinite(stepsReal) ||
+        stepsReal > static_cast<Double>(
+          std::numeric_limits<std::size_t>::max()))
+      throw std::overflow_error(
+        "Configured duration produces an invalid field-step count");
+    estimatedMaximumSteps_ = static_cast<std::size_t>(stepsReal);
+    if (!config_.runtime.resourceReport) return;
+
+    if (sources_.maxwellIncidentWaveCount() > 0)
+      {
+        estimatedStepSeconds_ = 0.0;
+        if (rank_ == 0)
+          logRoot(communicator_,
+            "[resource] phase=pre-run-calibration status=skipped reason=incident-wave-state");
+        return;
+      }
+
+    fields_->clearCurrent();
+    MPI_Barrier(communicator_);
+    const Double fieldStart = MPI_Wtime();
+    for (unsigned int repetition = 0;
+         repetition < config_.runtime.resourceCalibrationSteps;
+         ++repetition)
+      {
+        halo_->advanceMagnetic(*fields_);
+        halo_->advanceElectric(*fields_);
+        fields_->clearCurrent();
+      }
+    MPI_Barrier(communicator_);
+    const Double localFieldStep =
+      (MPI_Wtime() - fieldStart) /
+      static_cast<Double>(config_.runtime.resourceCalibrationSteps);
+    Double fieldStep = 0.0;
+    MPI_Allreduce(&localFieldStep, &fieldStep, 1, MPI_DOUBLE,
+                  MPI_MAX, communicator_);
+
+    const std::size_t maximumSamples = 4096;
+    const std::size_t sampleCount =
+      std::min(maximumSamples, particles_.size());
+    const std::size_t stride = sampleCount > 0 ?
+      (particles_.size() + sampleCount - 1) / sampleCount : 1;
+    ChargeConservingCurrentDepositor depositor(*fields_,
+                                               localOriginBox_);
+    std::size_t completedSamples = 0;
+    MPI_Barrier(communicator_);
+    const Double particleStart = MPI_Wtime();
+    for (unsigned int repetition = 0;
+         repetition < config_.runtime.resourceCalibrationSteps;
+         ++repetition)
+      for (std::size_t index = 0;
+           index < particles_.size() && completedSamples <
+             sampleCount * static_cast<std::size_t>(
+               repetition + 1);
+           index += stride)
+        {
+          RelativisticParticleSI particle(particles_[index]);
+          const FieldVector<Double> start(particle.position);
+          RelativisticBorisPusher::pushFromGridAndPrescribedLab(
+            particle, *fields_, localOriginBox_, sources_, frame_,
+            timeBoxSI_, globalGeometry_.dt);
+          bool local = true;
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            {
+              const Double upper = localOriginBox_[axis] +
+                static_cast<Double>(axis == 0 ? localGeometry_.nx :
+                  (axis == 1 ? localGeometry_.ny : localGeometry_.nz)) *
+                (axis == 0 ? localGeometry_.dx :
+                  (axis == 1 ? localGeometry_.dy : localGeometry_.dz));
+              local = local &&
+                particle.position[axis] >= localOriginBox_[axis] &&
+                particle.position[axis] <= upper;
+            }
+          if (local)
+            depositor.depositSegment(start, particle.position,
+                                     particle.charge);
+          ++completedSamples;
+        }
+    const Double localParticleElapsed = MPI_Wtime() - particleStart;
+    fields_->clearCurrent();
+    const Double localParticleStep = completedSamples > 0 ?
+      localParticleElapsed /
+        static_cast<Double>(completedSamples) *
+        static_cast<Double>(particles_.size()) : 0.0;
+    Double particleStep = 0.0;
+    MPI_Allreduce(&localParticleStep, &particleStep, 1, MPI_DOUBLE,
+                  MPI_MAX, communicator_);
+
+    estimatedStepSeconds_ =
+      (fieldStep + particleStep) * config_.runtime.timeSafetyFactor;
+    if (!(estimatedStepSeconds_ > 0.0) ||
+        !std::isfinite(estimatedStepSeconds_))
+      estimatedStepSeconds_ = 0.0;
+  }
+
+  void Simulation::reportResourceEstimate()
+  {
+    if (!config_.runtime.resourceReport) return;
+
+    const EBMemoryFootprint field = fields_->memoryFootprint();
+    long double modeled = static_cast<long double>(field.totalBytes()) +
+      static_cast<long double>(halo_->memoryBytes()) +
+      static_cast<long double>(particleBoundary_->memoryBytes()) +
+      static_cast<long double>(trajectoryWriter_.memoryBytes()) +
+      static_cast<long double>(particles_.capacity()) *
+        sizeof(RelativisticParticleSI) +
+      static_cast<long double>(pmlCarriers_.capacity()) *
+        sizeof(ParticleCPMLCarrier) +
+      static_cast<long double>(retirementCarriers_.capacity()) *
+        sizeof(ParticleCPMLCarrier);
+
+    /* During migration the old particle vector, retained vector and transfer
+     * packets coexist.  This bounded estimate deliberately covers three
+     * additional live records per initially local particle. */
+    modeled += 3.0L * static_cast<long double>(particles_.size()) *
+      static_cast<long double>(std::max(
+        sizeof(RelativisticParticleSI), sizeof(TransferPacket)));
+
+    const long double fieldPointBytes = 6.0L * sizeof(Double);
+    const long double planePoints =
+      static_cast<long double>(globalGeometry_.nx) *
+      static_cast<long double>(globalGeometry_.ny);
+    if (!detectorConfig_.fieldPlanes.empty())
+      modeled += planePoints * fieldPointBytes;
+    if (rank_ == 0)
+      {
+        const long double particlePlaneRecordBytes = 112.0L;
+        const long double validationEntryBytes = 192.0L;
+        for (std::size_t detector = 0;
+             detector < detectorConfig_.fieldPlanes.size(); ++detector)
+          {
+            const FieldDetectorPlaneConfig& plane =
+              detectorConfig_.fieldPlanes[detector];
+            modeled += static_cast<long double>(plane.bufferSamples) *
+              (sizeof(Double) + planePoints * fieldPointBytes);
+            if (plane.particleBackgroundReference)
+              modeled += static_cast<long double>(
+                plane.referenceBufferRecords) *
+                particlePlaneRecordBytes;
+            if (plane.referenceValidation)
+              modeled += static_cast<long double>(
+                plane.referenceValidationMaximumParticles) *
+                validationEntryBytes;
+          }
+        for (std::size_t detector = 0;
+             detector < detectorConfig_.particlePlanes.size(); ++detector)
+          modeled += static_cast<long double>(
+            detectorConfig_.particlePlanes[detector].bufferRecords) *
+            particlePlaneRecordBytes;
+      }
+
+    modeled *= config_.runtime.memorySafetyFactor;
+    const long double byteMaximum =
+      static_cast<long double>(
+        std::numeric_limits<std::uint64_t>::max());
+    modeledLocalPeakBytes_ = static_cast<std::uint64_t>(
+      std::min(modeled, byteMaximum));
+    const std::uint64_t resident = currentResidentBytes();
+    const long double residentWithMargin =
+      static_cast<long double>(resident) *
+      config_.runtime.memorySafetyFactor;
+    if (residentWithMargin >
+        static_cast<long double>(modeledLocalPeakBytes_))
+      modeledLocalPeakBytes_ = static_cast<std::uint64_t>(
+        std::min(residentWithMargin, byteMaximum));
+
+    const unsigned long long localModeled =
+      static_cast<unsigned long long>(modeledLocalPeakBytes_);
+    const unsigned long long localResident =
+      static_cast<unsigned long long>(resident);
+    unsigned long long totalModeled = 0;
+    unsigned long long maximumModeled = 0;
+    unsigned long long totalResident = 0;
+    unsigned long long maximumResident = 0;
+    MPI_Reduce(&localModeled, &totalModeled, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+    MPI_Reduce(&localModeled, &maximumModeled, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, communicator_);
+    MPI_Reduce(&localResident, &totalResident, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+    MPI_Reduce(&localResident, &maximumResident, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, communicator_);
+
+    const unsigned long long localParticles =
+      static_cast<unsigned long long>(particles_.size());
+    unsigned long long globalParticles = 0;
+    MPI_Reduce(&localParticles, &globalParticles, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+
+    long double rawFieldOutputBytes = 0.0L;
+    for (std::size_t detector = 0;
+         detector < detectorConfig_.fieldPlanes.size(); ++detector)
+      {
+        const Double labDuration =
+          totalTimeBoxSI_ / frame_.gamma();
+        const long double samples = std::ceil(
+          labDuration / detectorConfig_.fieldPlanes[detector].rhythm) +
+          2.0L;
+        rawFieldOutputBytes += samples * planePoints *
+          fieldPointBytes;
+      }
+    long double rawTrajectoryBytes = 0.0L;
+    if (config_.trajectory.enabled && trajectoryRhythmSI_ > 0.0)
+      {
+        const long double samples = std::ceil(
+          totalTimeBoxSI_ / trajectoryRhythmSI_) + 2.0L;
+        rawTrajectoryBytes = samples *
+          static_cast<long double>(globalParticles) *
+          sizeof(TrajectoryRecord);
+      }
+
+    if (rank_ == 0)
+      {
+        const Double mib = 1024.0 * 1024.0;
+        const Double gib = 1024.0 * mib;
+        const Double estimatedWall =
+          estimatedStepSeconds_ > 0.0 ?
+          estimatedStepSeconds_ *
+            static_cast<Double>(estimatedMaximumSteps_) : 0.0;
+        std::ostringstream work;
+        work << std::setprecision(10)
+          << "[resource] phase=pre-run ranks=" << size_
+          << " grid_cells=" << globalGeometry_.nx << "x"
+          << globalGeometry_.ny << "x" << globalGeometry_.nz
+          << " particles=" << globalParticles
+          << " dt_s=" << globalGeometry_.dt
+          << " steps_duration_upper=" << estimatedMaximumSteps_
+          << " calibrated_step_s=" << estimatedStepSeconds_
+          << " estimated_wall_s=" << estimatedWall
+          << " time_safety_factor=" << config_.runtime.timeSafetyFactor;
+        logRoot(communicator_, work.str());
+
+        std::ostringstream memory;
+        memory << std::setprecision(10)
+          << "[resource] phase=pre-run estimated_peak_rank_max_mib="
+          << static_cast<Double>(maximumModeled) / mib
+          << " estimated_peak_total_mib="
+          << static_cast<Double>(totalModeled) / mib
+          << " current_rss_rank_max_mib="
+          << static_cast<Double>(maximumResident) / mib
+          << " current_rss_total_mib="
+          << static_cast<Double>(totalResident) / mib
+          << " memory_safety_factor="
+          << config_.runtime.memorySafetyFactor
+          << " uncompressed_field_output_gib="
+          << static_cast<Double>(rawFieldOutputBytes) / gib
+          << " uncompressed_trajectory_output_gib="
+          << static_cast<Double>(rawTrajectoryBytes) / gib;
+        logRoot(communicator_, memory.str());
+        logRoot(communicator_,
+          "[resource] note=wall estimate is a zero-field kernel microbenchmark plus initial particle push/deposition estimate; detector I/O, filesystem contention, particle migration and early physical stopping can change it. Calibrate safety factors per machine and scale. Lines are root-only stdout and remain intact under sbatch redirection.");
+      }
+  }
+
+  void Simulation::reportResourceProgress(const char* phase)
+  {
+    if (!config_.runtime.resourceReport) return;
+    const unsigned long long localCurrent =
+      static_cast<unsigned long long>(currentResidentBytes());
+    const unsigned long long localPeak = std::max(
+      localCurrent,
+      static_cast<unsigned long long>(peakResidentBytes()));
+    unsigned long long totalCurrent = 0;
+    unsigned long long maximumCurrent = 0;
+    unsigned long long totalPeak = 0;
+    unsigned long long maximumPeak = 0;
+    MPI_Reduce(&localCurrent, &totalCurrent, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+    MPI_Reduce(&localCurrent, &maximumCurrent, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, communicator_);
+    MPI_Reduce(&localPeak, &totalPeak, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+    MPI_Reduce(&localPeak, &maximumPeak, 1,
+               MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, communicator_);
+    if (rank_ != 0) return;
+
+    const Double elapsed = loopWallStart_ > 0.0 ?
+      MPI_Wtime() - loopWallStart_ : 0.0;
+    const Double secondsPerStep = step_ > 0 ?
+      elapsed / static_cast<Double>(step_) : 0.0;
+    const std::size_t remainingSteps =
+      estimatedMaximumSteps_ > step_ ?
+      estimatedMaximumSteps_ - step_ : 0;
+    const Double projectedRemaining =
+      secondsPerStep * static_cast<Double>(remainingSteps);
+    const Double mib = 1024.0 * 1024.0;
+    std::ostringstream message;
+    message << std::setprecision(10)
+      << "[resource] phase=" << (phase ? phase : "unknown")
+      << " step=" << step_
+      << " elapsed_s=" << elapsed
+      << " measured_step_s=" << secondsPerStep
+      << " duration_upper_remaining_s=" << projectedRemaining
+      << " current_rss_rank_max_mib="
+      << static_cast<Double>(maximumCurrent) / mib
+      << " current_rss_total_mib="
+      << static_cast<Double>(totalCurrent) / mib
+      << " peak_rss_rank_max_mib="
+      << static_cast<Double>(maximumPeak) / mib
+      << " peak_rss_total_mib="
+      << static_cast<Double>(totalPeak) / mib;
+    logRoot(communicator_, message.str());
+  }
+
+
   void Simulation::initializeGeometry()
   {
     const Double dx = config_.mesh.resolution[0];
@@ -581,6 +899,90 @@ namespace fel
     for (std::size_t index = 0; index < particles_.size(); ++index)
       particles_[index].id = idOffset + index + 1;
 
+
+    unsigned long long globalCount = 0;
+    MPI_Allreduce(&localCount, &globalCount, 1,
+                  MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+    long double localRepresentedElectrons = 0.0L;
+    long double localMinimumMacroElectrons =
+      std::numeric_limits<long double>::infinity();
+    long double localMaximumMacroElectrons = 0.0L;
+    Double localMinimumInputWeight =
+      std::numeric_limits<Double>::infinity();
+    Double localMaximumInputWeight = 0.0;
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      {
+        const RelativisticParticleSI& particle = particles_[index];
+        const long double represented = std::abs(
+          static_cast<long double>(particle.charge) /
+          static_cast<long double>(SI::elementaryCharge));
+        if (!(represented > 0.0L) ||
+            !std::isfinite(static_cast<Double>(represented)) ||
+            !(particle.mass > 0.0) || !std::isfinite(particle.mass) ||
+            !(particle.weight > 0.0) || !std::isfinite(particle.weight))
+          throw std::runtime_error(
+            "Particle input produced an invalid macro charge, mass or weight");
+        const Double chargeToMass = particle.charge / particle.mass;
+        const Double electronChargeToMass =
+          -SI::elementaryCharge / SI::electronMass;
+        if (std::abs(chargeToMass / electronChargeToMass - 1.0) >
+            256.0 * std::numeric_limits<Double>::epsilon())
+          throw std::runtime_error(
+            "Particle macro charge and mass do not preserve the electron charge-to-mass ratio");
+        localRepresentedElectrons += represented;
+        localMinimumMacroElectrons = std::min(
+          localMinimumMacroElectrons, represented);
+        localMaximumMacroElectrons = std::max(
+          localMaximumMacroElectrons, represented);
+        localMinimumInputWeight = std::min(
+          localMinimumInputWeight, particle.weight);
+        localMaximumInputWeight = std::max(
+          localMaximumInputWeight, particle.weight);
+      }
+    long double globalRepresentedElectrons = 0.0L;
+    long double globalMinimumMacroElectrons = 0.0L;
+    long double globalMaximumMacroElectrons = 0.0L;
+    Double globalMinimumInputWeight = 0.0;
+    Double globalMaximumInputWeight = 0.0;
+    MPI_Allreduce(&localRepresentedElectrons,
+                  &globalRepresentedElectrons, 1,
+                  MPI_LONG_DOUBLE, MPI_SUM, communicator_);
+    MPI_Allreduce(&localMinimumMacroElectrons,
+                  &globalMinimumMacroElectrons, 1,
+                  MPI_LONG_DOUBLE, MPI_MIN, communicator_);
+    MPI_Allreduce(&localMaximumMacroElectrons,
+                  &globalMaximumMacroElectrons, 1,
+                  MPI_LONG_DOUBLE, MPI_MAX, communicator_);
+    MPI_Allreduce(&localMinimumInputWeight,
+                  &globalMinimumInputWeight, 1,
+                  MPI_DOUBLE, MPI_MIN, communicator_);
+    MPI_Allreduce(&localMaximumInputWeight,
+                  &globalMaximumInputWeight, 1,
+                  MPI_DOUBLE, MPI_MAX, communicator_);
+    const long double electronMismatch = std::abs(
+      globalRepresentedElectrons -
+      static_cast<long double>(config_.beam.electrons)) /
+      static_cast<long double>(config_.beam.electrons);
+    if (electronMismatch > 1.0e-12L)
+      throw std::runtime_error(
+        "Normalized macro-particle charges do not reproduce beam.input.electrons to 1e-12 relative accuracy");
+    if (rank_ == 0)
+      {
+        std::ostringstream message;
+        message << std::setprecision(10)
+                << "Macro-particle normalization: records="
+                << globalCount << ", represented electrons="
+                << static_cast<Double>(globalRepresentedElectrons)
+                << ", electrons per macro range=["
+                << static_cast<Double>(globalMinimumMacroElectrons)
+                << ", "
+                << static_cast<Double>(globalMaximumMacroElectrons)
+                << "], input relative-weight range=["
+                << globalMinimumInputWeight << ", "
+                << globalMaximumInputWeight << "].";
+        logRoot(communicator_, message.str());
+      }
+
     initializeFieldDetectorRegions();
     validateBeamlineExclusionRules();
     const Double firstPhysicalEntrance =
@@ -617,6 +1019,109 @@ namespace fel
                   &boostReport.maximumAbsoluteDriftTime,
                   1, MPI_DOUBLE, MPI_MAX, communicator_);
 
+    MPI_Allreduce(&localBoostReport.minimumLabGamma,
+                  &boostReport.minimumLabGamma,
+                  1, MPI_DOUBLE, MPI_MIN, communicator_);
+    MPI_Allreduce(&localBoostReport.maximumLabGamma,
+                  &boostReport.maximumLabGamma,
+                  1, MPI_DOUBLE, MPI_MAX, communicator_);
+    MPI_Allreduce(
+      &localBoostReport.maximumRelativeMomentumRoundTripError,
+      &boostReport.maximumRelativeMomentumRoundTripError,
+      1, MPI_DOUBLE, MPI_MAX, communicator_);
+    MPI_Allreduce(
+      &localBoostReport.maximumRelativeGammaRoundTripError,
+      &boostReport.maximumRelativeGammaRoundTripError,
+      1, MPI_DOUBLE, MPI_MAX, communicator_);
+
+    const Double roundTripLimit = 1.0e-10;
+    if (boostReport.maximumRelativeMomentumRoundTripError >
+          roundTripLimit ||
+        boostReport.maximumRelativeGammaRoundTripError > roundTripLimit)
+      {
+        std::ostringstream message;
+        message << std::setprecision(10)
+                << "Lorentz boost round-trip error exceeds "
+                << roundTripLimit << ": relative momentum error="
+                << boostReport.maximumRelativeMomentumRoundTripError
+                << ", relative gamma error="
+                << boostReport.maximumRelativeGammaRoundTripError
+                << ". Reduce mesh.boost_gamma, remove nonphysical extreme "
+                   "input momenta, or choose a frame whose particle "
+                   "momenta remain representable in double precision.";
+        throw std::runtime_error(message.str());
+      }
+
+    Double localMaximumAdvance = 0.0;
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      {
+        const Double gammaBox =
+          BoostFrameTransform::gammaFromProperVelocity(
+            particles_[index].properVelocity);
+        const Double betaBoxZ =
+          particles_[index].properVelocity[2] / gammaBox;
+        localMaximumAdvance = std::max(localMaximumAdvance,
+          frame_.gamma() * SI::c * globalGeometry_.dt *
+          (frame_.beta() + betaBoxZ));
+      }
+    Double maximumAdvance = 0.0;
+    MPI_Allreduce(&localMaximumAdvance, &maximumAdvance, 1, MPI_DOUBLE,
+                  MPI_MAX, communicator_);
+    Double minimumUndulatorPeriod =
+      std::numeric_limits<Double>::infinity();
+    for (std::size_t magnet = 0; magnet < config_.magnets.size(); ++magnet)
+      if (config_.magnets[magnet].type ==
+          SIMagnetType::PlanarUndulator)
+        minimumUndulatorPeriod = std::min(
+          minimumUndulatorPeriod, config_.magnets[magnet].period);
+    if (std::isfinite(minimumUndulatorPeriod))
+      {
+        if (!(maximumAdvance > 0.0) || !std::isfinite(maximumAdvance))
+          throw std::runtime_error(
+            "Cannot derive a positive lab advance per particle step for undulator sampling");
+        const Double actualSteps =
+          minimumUndulatorPeriod / maximumAdvance;
+        const Double requestedSteps = static_cast<Double>(
+          config_.mesh.particleStepsPerUndulatorPeriod);
+        if (actualSteps + 128.0 *
+              std::numeric_limits<Double>::epsilon() * requestedSteps <
+            requestedSteps)
+          {
+            const Double maximumDt = globalGeometry_.dt *
+              actualSteps / requestedSteps;
+            const Double maximumDz = SI::c * maximumDt;
+            std::ostringstream message;
+            message << std::setprecision(10)
+                    << "Undulator sampling has only " << actualSteps
+                    << " particle steps per shortest period "
+                    << minimumUndulatorPeriod << " m, below the requested "
+                    << config_.mesh.particleStepsPerUndulatorPeriod
+                    << ". Reduce the field time step to at most "
+                    << maximumDt << " s";
+            if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
+              message << " by setting mesh.resolution z to at most "
+                      << maximumDz << " m (" << maximumDz /
+                           config_.inputUnits.length
+                      << " in the configured length unit); keep dx and dy "
+                         "not smaller than the new dz.";
+            else
+              message << " by refining the Yee mesh; its CFL time step is "
+                         "derived from all three spacings.";
+            throw std::runtime_error(message.str());
+          }
+        if (rank_ == 0)
+          {
+            std::ostringstream message;
+            message << std::setprecision(10)
+                    << "Particle-device sampling guard passed: minimum "
+                       "steps per undulator period=" << actualSteps
+                    << ", required="
+                    << config_.mesh.particleStepsPerUndulatorPeriod
+                    << ", shortest period=" << minimumUndulatorPeriod
+                    << " m.";
+            logRoot(communicator_, message.str());
+          }
+      }
     Double localEventHead = -std::numeric_limits<Double>::infinity();
     for (std::size_t index = 0; index < particles_.size(); ++index)
       {
@@ -667,10 +1172,27 @@ namespace fel
           << firstInteractionEntrance - eventHead;
         logRoot(communicator_, placementMessage.str());
         std::ostringstream boostMessage;
-        boostMessage << "Free-drift Lorentz events [s]: "
+        boostMessage << std::setprecision(10)
+          << "Free-drift Lorentz events [s]: "
           << boostReport.earliestLabEventTime << " to "
-          << boostReport.latestLabEventTime;
+          << boostReport.latestLabEventTime
+          << "; lab gamma range=[" << boostReport.minimumLabGamma
+          << ", " << boostReport.maximumLabGamma
+          << "], maximum relative boost round-trip errors: momentum="
+          << boostReport.maximumRelativeMomentumRoundTripError
+          << ", gamma=" << boostReport.maximumRelativeGammaRoundTripError
+          << ". Individual-electron lab-energy roundoff scale at gamma_max="
+          << std::numeric_limits<Double>::epsilon() *
+             boostReport.maximumLabGamma * SI::electronMass *
+             SI::c * SI::c / SI::elementaryCharge
+          << " eV; energy-loss analysis must subtract per-particle gamma "
+             "with compensated or long-double accumulation, not two rounded "
+             "total beam energies.";
         logRoot(communicator_, boostMessage.str());
+        if (boostReport.maximumRelativeMomentumRoundTripError > 1.0e-13 ||
+            boostReport.maximumRelativeGammaRoundTripError > 1.0e-13)
+          logRoot(communicator_,
+            "WARNING: Lorentz round-trip error is above 1e-13. Consider a less aggressive boost_gamma and verify exported gamma differences before interpreting small particle-energy losses.");
       }
   }
 
@@ -1044,13 +1566,11 @@ namespace fel
                     record.time, record.position[2]);
     record.position[0] = particle.position[0];
     record.position[1] = particle.position[1];
-    const Double gammaBox =
-      BoostFrameTransform::gammaFromProperVelocity(
-        particle.properVelocity);
-    record.properVelocity[0] = particle.properVelocity[0];
-    record.properVelocity[1] = particle.properVelocity[1];
-    record.properVelocity[2] = frame_.gamma() *
-      (particle.properVelocity[2] + frame_.beta() * gammaBox);
+    FieldVector<Double> properVelocityLab(0.0);
+    frame_.properVelocityBoxToLab(particle.properVelocity, properVelocityLab);
+    for (unsigned int component = 0; component < 3; ++component)
+      record.properVelocity[component] = properVelocityLab[component];
+
     record.charge = particle.charge;
     record.weight = particle.weight;
     record.event = static_cast<std::uint8_t>(event);

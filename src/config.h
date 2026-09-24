@@ -129,6 +129,11 @@ namespace fel
   {
     RuntimeMode mode;
     std::size_t stopCheckIntervalSteps;
+    bool resourceReport;
+    std::size_t resourceProgressIntervalSteps;
+    unsigned int resourceCalibrationSteps;
+    Double memorySafetyFactor;
+    Double timeSafetyFactor;
 
     RuntimeConfig();
     bool interactive() const;
