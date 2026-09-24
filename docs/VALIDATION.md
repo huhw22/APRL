@@ -139,8 +139,34 @@ analytic-subtraction result was 3.320 nJ, a 3.1% difference; their field-level
 residual contained 5.0% of the analytic result's instantaneous band energy.
 Increasing the analytic core smoothing to 5 micrometres reduced that residual
 energy ratio to 0.86%, while changing the analytic cycle-averaged energy to
-3.328 nJ. The peak is robust, but the few-percent energy sensitivity shows that
-the old route retains a model-dependent electron-core parameter.
+3.328 nJ. The peak is robust. Across the three sampled smoothing values, the
+analytic energy itself spans about 1.1%, while the two cleaning routes differ
+by 2.8--3.9%; the old route therefore retains a model-dependent electron-core
+parameter without attributing the full route difference to smoothing alone.
+
+The same analytic route was then repeated with 128 macro-particles and no
+additional transverse smoothing. All 128 two-plane records matched. The
+maximum straight-line transverse error was 0.279 micrometres, the maximum
+arrival-time error was `1.12e-18 s`, and the maximum direction error was
+`1.48e-6 rad`.
+
+| 128-particle route | cycle-averaged peak | 50--100 eV energy | peak/trajectory | energy/trajectory |
+| --- | ---: | ---: | ---: | ---: |
+| trajectory radiation | 20.7420 MW | 2.90963 nJ | 1.0000 | 1.0000 |
+| retirement minus `K=0` | 20.9416 MW | 2.92926 nJ | 1.00962 | 1.00675 |
+| analytic electron subtraction, 0 micrometre | 20.9399 MW | 2.89734 nJ | 1.00954 | 0.99578 |
+
+At this particle count, retirement and analytic subtraction differ by only
+`8.3e-5` relative in peak and 1.10% in energy. They bracket the trajectory
+energy: retirement is 0.675% high and analytic subtraction is 0.422% low.
+The field-level instantaneous band residual contains 1.54% of the analytic
+field energy; as a quadratic residual-field metric, this is not the scalar
+energy difference between the two routes.
+
+This result establishes that the straight-line analytic route remains useful
+after macro-particle convergence and does not require a modified propagation
+kernel. No 128-particle smoothing scan has yet been performed, so its core
+parameter sensitivity at this count remains an open convergence item.
 
 The resulting first-version policy is therefore:
 

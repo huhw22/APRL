@@ -48,6 +48,21 @@ also carry `particle_retirement_entrance_z_m` and
 `particle_retirement_exit_z_m`. These attributes are audit metadata: the field
 file remains raw, and no baseline is silently subtracted while writing it.
 
+
+When the field plane enables the detector-bound frequency guard,
+`retirement_frequency_protection` records that initialization passed. The
+file also stores:
+
+- `retirement_protected_minimum_photon_energy_eV`;
+- `retirement_protected_minimum_cycles`;
+- `retirement_required_length_m`;
+- `retirement_observed_cycles_at_minimum_energy`;
+- `retirement_causal_guard_distance_m`;
+- `retirement_causal_guard_entrance_z_m`.
+
+These make the manual length choice and actual maximum-particle-gamma check
+auditable without reopening the input particle file.
+
 Poynting flux is intentionally not duplicated in the file: downstream tools
 can compute `S = E cross B / mu0` from the saved laboratory fields.
 The committed `field_reconstruction` post-processor performs this calculation

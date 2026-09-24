@@ -29,6 +29,7 @@ namespace fel
     const int RETIREMENT_UPPER_DATA = 719;
     const int RETIREMENT_LOWER_COUNT = 720;
     const int RETIREMENT_LOWER_DATA = 721;
+    const Double PLANCK_EV_SECOND = 4.135667696e-15;
 
     struct ParticlePacket
     {
@@ -720,6 +721,73 @@ namespace fel
         plane.referenceDistance = plane.particleBackgroundReference ?
           maximumGamma * rho : 0.0;
         plane.referenceEntranceZ = plane.z - plane.referenceDistance;
+        if (plane.retirementFrequencyProtection)
+          {
+            if (!config_.particleRetirement.enabled)
+              throw std::logic_error(
+                "Frequency-protected detector has no particle retirement");
+            const Double inverseGamma2 =
+              1.0 / (maximumGamma * maximumGamma);
+            const Double betaSquared = 1.0 - inverseGamma2;
+            if (!(betaSquared > 0.0))
+              throw std::runtime_error(
+                "Retirement frequency protection requires moving relativistic particles");
+            const Double beta = std::sqrt(betaSquared);
+            /* Stable evaluation of 1/beta-1 avoids subtracting two nearly
+             * equal numbers at the high gamma values this guard targets. */
+            const Double delayFactor =
+              inverseGamma2 / (beta * (1.0 + beta));
+            plane.retirementRequiredLength =
+              static_cast<Double>(plane.retirementMinimumCycles) *
+              PLANCK_EV_SECOND * SI::c /
+              (plane.retirementMinimumPhotonEnergyEV * delayFactor);
+            plane.retirementObservedCycles =
+              config_.particleRetirement.length * delayFactor *
+              plane.retirementMinimumPhotonEnergyEV /
+              (SI::c * PLANCK_EV_SECOND);
+            plane.retirementCausalDistance = maximumGamma * rho;
+            plane.retirementCausalEntranceZ =
+              plane.z - plane.retirementCausalDistance;
+            const Double marginLab =
+              config_.mesh.boostGamma * globalGeometry_.dz;
+            const Double lengthTolerance = 128.0 *
+              std::numeric_limits<Double>::epsilon() *
+              std::max(1.0, plane.retirementRequiredLength);
+            if (config_.particleRetirement.length + lengthTolerance <
+                plane.retirementRequiredLength)
+              {
+                std::ostringstream message;
+                message << std::setprecision(10)
+                        << "Field detector '" << plane.name
+                        << "' retirement frequency protection requires length "
+                        << plane.retirementRequiredLength << " m ("
+                        << plane.retirementRequiredLength /
+                             config_.inputUnits.length
+                        << " in the configured length unit) for "
+                        << plane.retirementMinimumCycles << " cycles at "
+                        << plane.retirementMinimumPhotonEnergyEV
+                        << " eV using maximum lab gamma=" << maximumGamma
+                        << "; configured length is "
+                        << config_.particleRetirement.length << " m.";
+                throw std::runtime_error(message.str());
+              }
+            if (config_.particleRetirement.exitZ() + marginLab >
+                plane.retirementCausalEntranceZ)
+              {
+                const Double recommended = config_.particleRetirement.exitZ() +
+                  plane.retirementCausalDistance + marginLab;
+                std::ostringstream message;
+                message << std::setprecision(10)
+                        << "Field detector '" << plane.name
+                        << "' causal guard starts at z="
+                        << plane.retirementCausalEntranceZ
+                        << " m before the retirement exit clearance. Move "
+                           "detector z to at least " << recommended << " m ("
+                        << recommended / config_.inputUnits.length
+                        << " in the configured length unit).";
+                throw std::runtime_error(message.str());
+              }
+          }
         if (plane.referenceValidation &&
             globalParticleCount > static_cast<unsigned long long>(
               plane.referenceValidationMaximumParticles))
@@ -747,8 +815,14 @@ namespace fel
               "Field-detector beamline extent count is inconsistent");
           const FieldDetectorPlaneConfig& plane =
             detectorConfig_.fieldPlanes[fieldIndex++];
-          beamlineElements_[element].interactionEntrance =
-            plane.referenceEntranceZ;
+          if (plane.particleBackgroundReference)
+            beamlineElements_[element].interactionEntrance =
+              plane.referenceEntranceZ;
+          else if (plane.retirementFrequencyProtection)
+            beamlineElements_[element].interactionEntrance =
+              config_.particleRetirement.entranceZ;
+          else
+            beamlineElements_[element].interactionEntrance = plane.z;
           beamlineElements_[element].interactionExit = plane.z;
         }
     if (fieldIndex != detectorConfig_.fieldPlanes.size())
@@ -762,18 +836,39 @@ namespace fel
           const FieldDetectorPlaneConfig& plane =
             detectorConfig_.fieldPlanes[detector];
           std::ostringstream message;
-          message << std::setprecision(10)
-                  << "Field detector '" << plane.name
-                  << "': diagnostic-only ballistic reference region lab z=["
-                  << plane.referenceEntranceZ << ", " << plane.z
-                  << "] m, length=" << plane.referenceDistance
-                  << " m, rho_guard=" << plane.referenceRho
-                  << " m, gamma_guard=" << plane.referenceGamma
-                  << ". Physical particle and Maxwell evolution are unchanged.";
-          if (plane.referenceValidation)
-            message << " Two-plane straight-line validation is enabled for "
-                    << globalParticleCount << " particles (limit "
-                    << plane.referenceValidationMaximumParticles << ").";
+          message << std::setprecision(10) << "Field detector '"
+                  << plane.name << "': ";
+          if (plane.particleBackgroundReference)
+            {
+              message
+                << "diagnostic-only ballistic reference region lab z=["
+                << plane.referenceEntranceZ << ", " << plane.z
+                << "] m, length=" << plane.referenceDistance
+                << " m, rho_guard=" << plane.referenceRho
+                << " m, gamma_guard=" << plane.referenceGamma
+                << ". Physical particle and Maxwell evolution are unchanged.";
+              if (plane.referenceValidation)
+                message << " Two-plane straight-line validation is enabled for "
+                        << globalParticleCount << " particles (limit "
+                        << plane.referenceValidationMaximumParticles << ").";
+            }
+          else if (plane.retirementFrequencyProtection)
+            message
+              << "frequency-protected retirement region lab z=["
+              << config_.particleRetirement.entranceZ << ", " << plane.z
+              << "] m; configured/required taper length="
+              << config_.particleRetirement.length << "/"
+              << plane.retirementRequiredLength << " m, protected band starts "
+              << "at " << plane.retirementMinimumPhotonEnergyEV
+              << " eV, requested/actual cycles="
+              << plane.retirementMinimumCycles << "/"
+              << plane.retirementObservedCycles
+              << ", causal guard lab z=[" << plane.retirementCausalEntranceZ
+              << ", " << plane.z << "] m, gamma_guard="
+              << plane.referenceGamma << ".";
+          else
+            message << "raw laboratory field plane; no particle-background "
+                       "diagnostic or retirement-frequency guard.";
           logRoot(communicator_, message.str());
         }
   }
@@ -827,27 +922,39 @@ namespace fel
       {
         const FieldDetectorPlaneConfig& plane =
           detectorConfig_.fieldPlanes[detector];
-        if (!plane.particleBackgroundReference) continue;
+        if (!plane.particleBackgroundReference &&
+            !plane.retirementFrequencyProtection)
+          continue;
+        const Double regionEntrance = plane.particleBackgroundReference ?
+          plane.referenceEntranceZ : config_.particleRetirement.entranceZ;
         for (std::size_t magnet = 0;
              magnet < config_.magnets.size(); ++magnet)
-          if (overlaps(plane.referenceEntranceZ, plane.z,
+          if (overlaps(regionEntrance, plane.z,
                        config_.magnets[magnet].interactionEntranceLab(),
                        config_.magnets[magnet].interactionExitLab()))
             {
-              const Double recommended = lastMagneticExit +
-                plane.referenceDistance + marginLab;
+              const Double recommended = plane.particleBackgroundReference ?
+                lastMagneticExit + plane.referenceDistance + marginLab :
+                lastMagneticExit + marginLab;
               std::ostringstream message;
               message << std::setprecision(10)
                       << "Field detector '" << plane.name
-                      << "' has a diagnostic reference region lab z=["
-                      << plane.referenceEntranceZ << ", " << plane.z
+                      << "' has a "
+                      << (plane.particleBackgroundReference ?
+                          "diagnostic ballistic-reference" :
+                          "frequency-protected retirement")
+                      << " region lab z=[" << regionEntrance << ", "
+                      << plane.z
                       << "] m that overlaps magnetic element " << magnet
                       << " interaction region lab z=["
                       << config_.magnets[magnet].interactionEntranceLab()
                       << ", "
                       << config_.magnets[magnet].interactionExitLab()
-                      << "] m. Move detector z to at least " << recommended
-                      << " m (" << recommended / config_.inputUnits.length
+                      << "] m. "
+                      << (plane.particleBackgroundReference ?
+                          "Move detector z" : "Move retirement entrance_z")
+                      << " to at least " << recommended << " m ("
+                      << recommended / config_.inputUnits.length
                       << " in the configured length unit). Field-detector "
                          "regions may overlap each other; particle detector "
                          "planes do not participate in exclusion checks.";

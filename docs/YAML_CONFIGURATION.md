@@ -197,6 +197,7 @@ element is required because beam placement is defined from the first entrance.
 ```yaml
   magnetic_elements:
     - type: planar-undulator
+      characteristic: true
       strength_parameter: 0.1
       period: 10.0
       periods: 1
@@ -217,6 +218,10 @@ longitudinal envelope so `div(B)=0` remains satisfied through both the entrance
 and exit. `fringe_relative_cutoff` defines the raw Gaussian value used to place
 the compact edge and must lie in `(0,1)`. With `gaussian_fringe: false`, the
 interaction and physical ranges coincide.
+
+`characteristic: true` is optional simulation metadata used by
+`undulator_resonance`. When a card has multiple planar undulators, mark
+exactly one to select the element used for the preflight resonance estimate.
 
 ## Runtime strategy
 
@@ -318,6 +323,15 @@ particle_retirement:
   length: 2.0
 ```
 
+A field detector can bind this global layer to a manual spectral guard:
+
+```yaml
+      retirement_frequency_protection:
+        enabled: true
+        minimum_photon_energy_eV: 50.0
+        cycles: 2
+```
+
 Both positions use the configured length unit and are fixed laboratory-frame
 coordinates. At `entrance_z`, a physical particle stops participating in the
 push, ordinary trajectory cadence, and detector crossings. A compact
@@ -340,6 +354,40 @@ matched zero-radiation baseline and the power tests in
 baseline must be subtracted at field amplitude, never by subtracting scalar
 powers.
 
+The guard never chooses or changes `particle_retirement.length`. After the
+particles are read, it uses their maximum laboratory gamma and checks
+
+```text
+beta_max = sqrt(1 - 1/gamma_max^2)
+delay    = length/c * (1/beta_max - 1)
+observed_cycles = minimum_photon_energy_eV * delay / h
+observed_cycles >= cycles
+```
+
+The photon energy is the lower edge of the radiation band that must be
+protected, not necessarily the undulator resonance centre. The same detector
+also reserves the conservative left causal interval
+
+```text
+rho_guard       = sqrt(mesh.lengths.x^2 + mesh.lengths.y^2)
+causal_distance = gamma_max * rho_guard
+causal_z         = detector_z - causal_distance
+```
+
+The retirement exit plus one lab-equivalent z cell must lie left of
+`causal_z`. An invalid length or placement exits before field allocation and
+prints a recommended retirement length or detector z. This protected detector
+must be the final beamline element; no magnetic, field-detector, or
+particle-detector element may lie downstream. Field-detector regions may still
+overlap, particle planes remain absent from region-exclusion checks, and the
+protected interval excludes magnetic interaction regions in the same way as
+the ballistic-reference interval.
+
+Only one field detector can bind the global retirement layer. Its
+`particle_background.enabled` must be false. The ballistic-reference setting
+remains the independent alternative: it changes no particle or Maxwell state
+and therefore has no restriction on elements downstream of its sampling plane.
+
 Initialization enforces all of the following:
 
 - the entrance is at least one lab-equivalent z cell beyond the final magnetic
@@ -347,6 +395,10 @@ Initialization enforces all of the following:
 - every field plane is at least one such cell beyond the taper exit;
 - field-plane `particle_background` is disabled because the two removal routes
   are alternatives;
+- when frequency protection is enabled, the manual taper length spans the
+  requested number of cycles at the minimum protected energy;
+- the taper exit is upstream of the detector's derived causal interval and the
+  protected detector is the final beamline element;
 - at least one field plane exists;
 - `stop.mode` is `reference-center-z`, and its z lies beyond the final field
   plane, so retirement does not terminate the run before the field is sampled.
@@ -385,6 +437,12 @@ detectors:
       buffer_records: 4096
       compression: 0
 ```
+
+The two charged-particle-field treatments are detector settings:
+`particle_background` records a virtual straight-line reference for offline
+analytic subtraction, whereas `retirement_frequency_protection` audits a
+manually configured global retirement layer. They cannot be enabled together
+on one field plane or in one retirement run.
 
 A particle plane is a zero-length beamline element at lab `z`. A field plane's
 physical and stop location is also `z`, but when `particle_background.enabled`

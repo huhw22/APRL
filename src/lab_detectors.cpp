@@ -615,6 +615,10 @@ namespace fel
               config.particleRetirementCurrent ?
               "experimental C2-quintic retirement; matched zero-radiation baseline required" :
               "physical particles remain active until normal CPML/domain handling");
+            writeStringAttribute(group_, "retirement_frequency_protection",
+              config.retirementFrequencyProtection ?
+              "enabled; detector-bound spectral and causal guards passed" :
+              "disabled");
             writeStringAttribute(group_, "external_background_subtracted",
               externalBackgroundName ? externalBackgroundName : "none");
             writeDoubleAttribute(group_, "plane_z_m", config.z);
@@ -634,6 +638,27 @@ namespace fel
                 writeDoubleAttribute(group_,
                   "particle_retirement_exit_z_m",
                   config.particleRetirementExitZ);
+                if (config.retirementFrequencyProtection)
+                  {
+                    writeDoubleAttribute(group_,
+                      "retirement_protected_minimum_photon_energy_eV",
+                      config.retirementMinimumPhotonEnergyEV);
+                    writeUnsignedAttribute(group_,
+                      "retirement_protected_minimum_cycles",
+                      config.retirementMinimumCycles);
+                    writeDoubleAttribute(group_,
+                      "retirement_required_length_m",
+                      config.retirementRequiredLength);
+                    writeDoubleAttribute(group_,
+                      "retirement_observed_cycles_at_minimum_energy",
+                      config.retirementObservedCycles);
+                    writeDoubleAttribute(group_,
+                      "retirement_causal_guard_distance_m",
+                      config.retirementCausalDistance);
+                    writeDoubleAttribute(group_,
+                      "retirement_causal_guard_entrance_z_m",
+                      config.retirementCausalEntranceZ);
+                  }
               }
             writeDoubleAttribute(group_, "x_first_m", origin[0] + 0.5 * geometry.dx);
             writeDoubleAttribute(group_, "y_first_m", origin[1] + 0.5 * geometry.dy);

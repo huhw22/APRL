@@ -59,9 +59,19 @@ add_executable(particle_text_to_hdf5
   utilities/particle_text_to_hdf5.cpp
 )
 target_include_directories(particle_text_to_hdf5 PRIVATE ${HDF5_INCLUDE_DIRS})
-target_link_libraries(particle_text_to_hdf5 PRIVATE ${HDF5_LIBRARIES})
+target_link_libraries(particle_text_to_hdf5 PRIVATE
+  MPI::MPI_CXX
+  ${HDF5_LIBRARIES}
+)
 target_compile_options(particle_text_to_hdf5 PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
-install(TARGETS simulator particle_text_to_hdf5 RUNTIME DESTINATION bin)
+add_executable(undulator_resonance utilities/undulator_resonance.cpp)
+target_link_libraries(undulator_resonance PRIVATE yaml-cpp)
+target_compile_options(undulator_resonance PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
+)
+
+install(TARGETS simulator particle_text_to_hdf5 undulator_resonance
+  RUNTIME DESTINATION bin)

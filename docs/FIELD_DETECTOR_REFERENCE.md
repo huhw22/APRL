@@ -51,6 +51,10 @@ simultaneous fixed-z surfaces in the boosted frame.
 - Reference regions belonging to different field planes may overlap.
 - Particle detector planes do not participate in these exclusion checks.
 - Stopping at `after-last-element` uses `z_D`, not `z_F`, for the field plane.
+- Elements may lie downstream of `z_D`; only overlap with the left reference
+  interval is forbidden. This is intentionally different from a
+  `retirement_frequency_protection` detector, which must be the final
+  beamline element because it is bound to physical particle retirement.
 
 An overlap is rejected during initialization. The error reports a minimum
 recommended field-plane position based on the last magnetic interaction exit,

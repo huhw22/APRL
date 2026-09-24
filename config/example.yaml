@@ -40,6 +40,7 @@ sources:
   incident_waves: []
   magnetic_elements:
     - type: planar-undulator
+      characteristic: true
       strength_parameter: 0.1
       period: 1.0
       periods: 1

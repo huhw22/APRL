@@ -52,6 +52,14 @@ baseline. A third C++ post-processor subtracts that baseline at the E/B-amplitud
 level, reports instantaneous forward power and band energy, and can compare
 both peak power and energy with the trajectory far field for small tests.
 
+The retirement route can optionally bind one terminal field detector to a
+manual frequency-protection guard. Startup uses the actual maximum laboratory
+particle gamma to verify the requested C2 transition cycles and reserves the
+same conservative gamma-times-transverse-diagonal causal distance used by the
+straight-line diagnostic. A small read-only utility estimates the
+characteristic planar-undulator resonance before the user chooses the protected
+band; it never changes the input card.
+
 ## Intended applications
 
 - seeded FEL and laser-modulation studies;

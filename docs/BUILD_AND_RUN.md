@@ -18,7 +18,25 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-This produces `build/simulator` and `build/particle_text_to_hdf5`.
+This produces `build/simulator`, `build/particle_text_to_hdf5`, and
+`build/undulator_resonance`.
+
+Before choosing a retirement protection band, inspect the characteristic
+planar-undulator resonance:
+
+```bash
+./build/undulator_resonance config/generated_gaussian.yaml
+./build/undulator_resonance config/example.yaml 1000
+```
+
+The second argument supplies laboratory gamma when an HDF5 beam card has no
+`beam.input.gamma`. With one planar undulator the tool selects it
+automatically; with several, mark exactly one magnetic element
+`characteristic: true`. It reports the on-axis cold-beam fundamental as a
+one-dimensional gain-centre estimate. If a field plane enables
+`retirement_frequency_protection`, the same command reads its minimum photon
+energy and cycle count, reports the required manually configured retirement
+length, and prints a preflight pass/fail result. It never edits the card.
 
 The trajectory radiation post-processor is deliberately a separate build:
 

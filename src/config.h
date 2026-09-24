@@ -195,6 +195,22 @@ namespace fel
     Double particleRetirementEntranceZ;
     Double particleRetirementExitZ;
 
+    /* Optional detector-bound retirement design guard.  The user still sets
+     * the global retirement geometry explicitly; these values only validate
+     * that the C2 transition spans the requested number of cycles at the
+     * lowest protected laboratory photon energy. */
+    bool retirementFrequencyProtection;
+    Double retirementMinimumPhotonEnergyEV;
+    unsigned int retirementMinimumCycles;
+
+    /* Derived after the laboratory particle snapshot is read.  The causal
+     * guard uses the same conservative gamma*rho construction as the
+     * ballistic-reference detector, but it performs no particle recording. */
+    Double retirementCausalDistance;
+    Double retirementCausalEntranceZ;
+    Double retirementRequiredLength;
+    Double retirementObservedCycles;
+
     FieldDetectorPlaneConfig();
   };
 

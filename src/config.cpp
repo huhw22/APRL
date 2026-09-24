@@ -317,7 +317,11 @@ namespace fel
       referenceValidation(false),
       referenceValidationMaximumParticles(100000),
       particleRetirementCurrent(false), particleRetirementEntranceZ(0.0),
-      particleRetirementExitZ(0.0)
+      particleRetirementExitZ(0.0),
+      retirementFrequencyProtection(false),
+      retirementMinimumPhotonEnergyEV(0.0), retirementMinimumCycles(0),
+      retirementCausalDistance(0.0), retirementCausalEntranceZ(0.0),
+      retirementRequiredLength(0.0), retirementObservedCycles(0.0)
   {}
 
   ParticleDetectorPlaneConfig::ParticleDetectorPlaneConfig()
@@ -695,6 +699,40 @@ namespace fel
                       throw configError(reference,
                         "field detector particle_background validation requires enabled: true");
                   }
+                const YAML::Node protection =
+                  node["retirement_frequency_protection"];
+                if (protection)
+                  {
+                    if (!protection.IsMap())
+                      throw configError(protection,
+                        "field detector retirement_frequency_protection must be a map");
+                    plane.retirementFrequencyProtection =
+                      protection["enabled"] ?
+                      protection["enabled"].as<bool>() : true;
+                    if (plane.retirementFrequencyProtection)
+                      {
+                        plane.retirementMinimumPhotonEnergyEV = finiteDouble(
+                          required(protection,
+                            "minimum_photon_energy_eV"),
+                          "retirement protection minimum photon energy");
+                        if (!(plane.retirementMinimumPhotonEnergyEV > 0.0))
+                          throw configError(
+                            protection["minimum_photon_energy_eV"],
+                            "retirement protection minimum photon energy must be positive");
+                        const std::size_t cycles = positiveSize(
+                          required(protection, "cycles"),
+                          "retirement protection cycles");
+                        if (cycles >
+                            std::numeric_limits<unsigned int>::max())
+                          throw configError(protection["cycles"],
+                            "retirement protection cycles are too large");
+                        plane.retirementMinimumCycles =
+                          static_cast<unsigned int>(cycles);
+                        if (plane.particleBackgroundReference)
+                          throw configError(protection,
+                            "retirement_frequency_protection and particle_background are alternative field-detector settings");
+                      }
+                  }
                 result.detectors.fieldPlanes.push_back(plane);
 
                 BeamlineElementExtent extent;
@@ -908,6 +946,44 @@ namespace fel
             throw configError(stop["z"], message.str());
           }
       }
+
+    std::size_t protectedRetirementDetectors = 0;
+    for (std::size_t detector = 0;
+         detector < result.detectors.fieldPlanes.size(); ++detector)
+      {
+        const FieldDetectorPlaneConfig& plane =
+          result.detectors.fieldPlanes[detector];
+        if (!plane.retirementFrequencyProtection) continue;
+        ++protectedRetirementDetectors;
+        if (!result.particleRetirement.enabled)
+          throw configError(detectors,
+            "retirement_frequency_protection requires enabled top-level particle_retirement");
+
+        const Double scale = std::max(1.0, std::abs(plane.z));
+        const Double tolerance = 128.0 *
+          std::numeric_limits<Double>::epsilon() * scale;
+        for (std::size_t element = 0;
+             element < result.beamlineElements.size(); ++element)
+          if (result.beamlineElements[element].physicalExit >
+              plane.z + tolerance)
+            {
+              std::ostringstream message;
+              message << "frequency-protected field detector '" << plane.name
+                      << "' at z=" << plane.z / result.inputUnits.length
+                      << " must be the final beamline element; element "
+                      << element << " extends downstream to "
+                      << result.beamlineElements[element].physicalExit /
+                           result.inputUnits.length
+                      << " in the configured length unit. Ballistic analytic "
+                         "particle_background detectors do not have this "
+                         "downstream-element restriction.";
+              throw configError(detectors, message.str());
+            }
+      }
+    if (protectedRetirementDetectors > 1)
+      throw configError(detectors,
+        "only one field detector may bind the global particle_retirement through retirement_frequency_protection");
+
     if (result.trajectory.enabled && !(result.trajectory.rhythm > 0.0))
       throw configError(trajectory,
         "enabled trajectory output requires positive rhythm");
