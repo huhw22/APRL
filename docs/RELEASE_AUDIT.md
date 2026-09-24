@@ -21,13 +21,13 @@ is production-ready.
 | Trajectory radiation analysis | Implemented for small tests | Angular/integrated spectra, polarization/Stokes and optional window/ensemble cross-spectral density are available. |
 | Field-plane background tools | Partially implemented | Uniform-motion background reconstruction and matched-baseline band power/energy comparison exist. |
 | Full field-plane radiation analysis | **Missing** | There is no durable detector-to-full-spectrum, mutual spectral density and spatial-coherence pipeline yet. Existing power comparison is not a substitute. |
-| Initial particle self-field | **Missing** | The Maxwell state starts without a Gauss-consistent bunch self-field. Startup transients may contaminate quantitative production results. |
+| Initial particle self-field | Implemented with boundary caveats | A distributed CIC/Poisson projection enforces the interior discrete Gauss law and releases all potential state before E/B advance. Box padding and the near-rest-frame electrostatic assumption still require convergence. |
 | Particle subcycling | **Missing** | Particle and field steps are identical. The new undulator sampling guard can force a fine field grid but cannot reduce that cost. |
 | Laser/seed injection | **Missing on the target kernel** | The generalized Cowan/CPML TF/SF injection remains the principal unimplemented source path. |
 | Particle retirement | Experimental | It is not exactly charge-continuous and requires a matched zero-radiation baseline plus convergence tests. |
 
 The release therefore is **not** complete apart from laser injection. It is a
-coherent no-seed development solver with working diagnostics, but the three
+coherent no-seed development solver with working diagnostics, but the two
 other bold missing areas are production gates separate from laser injection.
 
 ## Numerical preflight policy
@@ -44,6 +44,9 @@ violate the selected model or input contract:
   and global charge normalization to `beam.input.electrons`;
 - finite Lorentz transforms with relative lab/boost round-trip momentum and
   gamma error no greater than `1e-10`;
+- convergence and post-check residual of the enabled CIC/Poisson initial
+  Gauss-field projection, with all CIC charge confined to interior
+  zero-potential-solver vertices;
 - at least `mesh.particle_steps_per_undulator_period` actual steps across the
   shortest undulator period, computed from the fastest loaded particle;
 - detector, retirement, magnetic interaction, stop and frequency-protection
@@ -61,19 +64,20 @@ physics target:
   `epsilon * gamma_max * m_e c^2`, with advice to compute small beam-energy
   changes from per-particle gamma using compensated or extended-precision
   accumulation instead of subtracting two rounded total beam energies;
-- absence of a Gauss-consistent initial particle self-field;
+- disabling the Gauss-consistent initial field, or using its electrostatic
+  approximation in a boost frame far from the bunch mean rest frame;
 - absence of particle subcycling and experimental retirement use.
 
 Detector sample cadence is stored exactly and band tools reject requests above
+their Nyquist limit. The simulator cannot itself prove that an unspecified
+future analysis band, transverse aperture, CPML reflection level or macro-
+particle representation is converged; those remain required parameter scans.
 
 A global particle-loss-versus-field-energy equality is deliberately not a
 startup hard stop. It depends on detector aperture, radiation through other
 boundaries, prescribed-field work and matched particle crossings. The particle
 plane contract instead documents per-particle gamma differencing followed by
 compensated or extended-precision accumulation.
-their Nyquist limit. The simulator cannot itself prove that an unspecified
-future analysis band, transverse aperture, CPML reflection level or macro-
-particle representation is converged; those remain required parameter scans.
 
 ## Resource report
 
@@ -83,7 +87,8 @@ contains:
 
 - current and peak resident memory measured from the operating system;
 - modeled maximum-per-rank and aggregate allocated memory, including field,
-  CPML, halo, particle-capacity, detector and trajectory buffers;
+  CPML, halo, particle-capacity, detector and trajectory buffers, plus the
+  transient four-slab initial Poisson solve when enabled;
 - upper estimates for uncompressed field-plane and trajectory output;
 - a short non-mutating step benchmark and a safety-factored wall-time upper
   estimate when the no-seed calibration is available.

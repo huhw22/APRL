@@ -122,6 +122,36 @@ before the TF/SF surface is redesigned. The numerical construction and Cowan
 stability conditions are detailed in
 [MAXWELL_COWAN_CPML.md](MAXWELL_COWAN_CPML.md).
 
+## Initial particle self-field
+
+```yaml
+initial_self_field:
+  enabled: true
+  relative_tolerance: 1.0e-10
+  maximum_iterations: 10000
+```
+
+The block is optional and defaults to the values above. When enabled, the
+simulator deposits the boosted bunch with the production CIC shape, sums
+shared MPI vertex planes, and solves the discrete Poisson equation before the
+first physical step. The resulting Yee-edge E field is checked against the
+same charge deposition. Non-convergence and a post-check residual above the
+configured tolerance are hard errors; `maximum_iterations` must be positive
+and `relative_tolerance` must lie strictly between zero and one.
+The run also stops if any CIC charge weight lands on a zero-potential outer
+vertex. Move every particle at least one complete cell inward or enlarge the
+mesh/CPML padding rather than silently dropping boundary charge.
+
+The scalar potential and four distributed CG work slabs exist only during
+initialization and are included in the peak-memory estimate. They are released
+before time advance, so the propagation state remains E/B-only. The outer
+potential is zero: production work must converge box padding, and the
+electrostatic construction assumes the boost frame is close to the bunch mean
+rest frame. It does not initialize an exact velocity-dependent magnetic field.
+Disabling the block is intended for controlled regressions and emits a startup
+warning. See [INITIAL_SELF_FIELD.md](INITIAL_SELF_FIELD.md) for the discrete
+MPI ownership and physical limitations.
+
 ## Beam reference and input
 
 Every particle position is relative to a laboratory-frame beam reference:

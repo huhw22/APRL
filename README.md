@@ -95,10 +95,12 @@ peak resident memory and wall time without requiring a live terminal.
 
 
 The implementation is still a development solver. Compact CFS-CPML is
-available for no-seed Cowan runs, while the generalized Cowan/CPML TF/SF
-seed-wave correction, a Gauss-consistent initial particle self-field, and
-particle subcycling remain planned work. Production radiation results still
-require problem-scale convergence and reflection validation.
+available for no-seed Cowan runs, and a temporary distributed CIC/Poisson
+solve now gives the bunch a Gauss-consistent initial E field without retaining
+A/phi. The generalized Cowan/CPML TF/SF seed-wave correction and particle
+subcycling remain planned work. Production radiation results still require
+problem-scale convergence, initial-field box-padding convergence, and
+reflection validation.
 
 The inner CPML surface is also the physical particle boundary. A physical
 trajectory ends exactly there and becomes a compact, output-free ballistic
@@ -113,6 +115,7 @@ or particle-boundary I/O.
 - [Build, conversion, and execution](docs/BUILD_AND_RUN.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
 - [Cowan-z kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
+- [Gauss-consistent initial particle self-field](docs/INITIAL_SELF_FIELD.md)
 - [CPML-aware particle boundary](docs/PARTICLE_OPEN_BOUNDARY.md)
 - [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)
 - [Laboratory trajectory HDF5 output](docs/TRAJECTORY_OUTPUT_HDF5.md)

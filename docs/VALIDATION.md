@@ -236,3 +236,29 @@ Additional negative tests rejected a fractional cell count, rejected the old
 Cowan card with `dx < dz` while recommending the required x `cell_size`.
 These checks validate deterministic grid construction and input diagnostics;
 they are not a claim that every MPI decomposition has identical performance.
+
+## Gauss-consistent initial particle field
+
+The generated eight-particle card was initialized on the 40x40x60 grid with
+`relative_tolerance: 1e-10`. One MPI rank and seven unequal z slabs both
+required 311 CG iterations. Their post-deposition discrete Gauss residuals
+were respectively `9.497829439e-11` and `9.497828774e-11` in relative L2
+norm; the maximum absolute residuals were `1.039594744` and `1.039594375`
+`V/m^2`. The represented charge agreed at `-1.281741307e-18 C`.
+
+The seven-rank decomposition retained 8--9 z cells per rank with remainder 4
+and completed the same 13-step physical run. Its maximum reported temporary
+Poisson memory was 0.5643 MiB per rank, compared with 3.1806 MiB for the
+single-rank solve. A separate two-rank HDF5-input run converged in 276
+iterations to `8.896098713e-11`, then completed both field- and
+particle-detector output.
+
+These tests validate CIC interface summation, unique ownership of shared z
+vertices, matrix-free scalar halos, and the true cross-rank `Ez` divergence
+post-check. They validate the discrete Gauss constraint, not the infinite-
+space accuracy of the zero-potential outer boundary or an exact moving-bunch
+Lienard-Wiechert initialization; box padding and boost-frame choice remain
+physical convergence studies.
+
+A two-rank negative test capped the solver at one iteration and aborted before
+field advance with explicit tolerance, iteration, and aspect-ratio remedies.

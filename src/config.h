@@ -48,6 +48,15 @@ namespace fel
     BoundaryConfig();
   };
 
+  struct InitialSelfFieldConfig
+  {
+    bool enabled;
+    Double relativeTolerance;
+    std::size_t maximumIterations;
+
+    InitialSelfFieldConfig();
+  };
+
   enum class BeamInputType
   {
     Hdf5,
@@ -256,6 +265,7 @@ namespace fel
     UnitSystem inputUnits;
     MeshConfig mesh;
     BoundaryConfig boundary;
+    InitialSelfFieldConfig initialSelfField;
     BeamReferenceConfig reference;
     BeamInputConfig beam;
     std::vector<WaveConfig> waves;

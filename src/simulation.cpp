@@ -299,6 +299,8 @@ namespace fel
     else
       halo_->installPhysicalBoundaryMask(*fields_);
     calibrateResourceEstimate();
+    fields_->clearFields();
+    initializeParticleSelfField();
 
     if (sources_.maxwellIncidentWaveCount() > 0)
       {
@@ -309,7 +311,7 @@ namespace fel
         incident_.reset(new EBMaxwellIncidentInjector(
           localGeometry_, region, localZOffset_, globalGeometry_.nz));
         incident_->initialize(*fields_, sources_, localOriginBox_,
-                              timeBoxSI_, frame_);
+                              timeBoxSI_, frame_, false);
       }
 
     initializeTrajectoryOutput();
@@ -442,10 +444,39 @@ namespace fel
                  "matched zero-radiation baseline is mandatory.";
             logRoot(communicator_, retirementMessage.str());
           }
-        logRoot(communicator_,
-          "WARNING: the initial Gauss-consistent particle field is not implemented; this is not yet a final radiation-production solver.");
+        if (!config_.initialSelfField.enabled)
+          logRoot(communicator_,
+            "WARNING: initial_self_field is disabled; the Maxwell state does not satisfy Gauss's law for the input bunch and startup radiation can contaminate the result.");
         logRoot(communicator_,
           "WARNING: particle subcycling is not implemented; the E/B field step must resolve every prescribed device field.");
+      }
+  }
+
+  void Simulation::initializeParticleSelfField()
+  {
+    if (!config_.initialSelfField.enabled) return;
+    const EBGaussInitializationReport report =
+      EBGaussFieldInitializer::initialize(
+        *fields_, globalGeometry_, localZOffset_, localOriginBox_, particles_,
+        config_.initialSelfField.relativeTolerance,
+        config_.initialSelfField.maximumIterations, communicator_);
+    if (rank_ == 0)
+      {
+        std::ostringstream message;
+        message << std::setprecision(10)
+          << "Initial particle self-field: CIC/Poisson Gauss projection "
+          << "converged in " << report.iterations
+          << " CG iterations; post-check relative L2 residual="
+          << report.relativeResidual
+          << ", maximum absolute residual="
+          << report.maximumGaussResidual << " V/m^2, total charge="
+          << report.totalCharge << " C, temporary scalar memory/rank<="
+          << static_cast<Double>(report.temporaryBytes) /
+             (1024.0 * 1024.0) << " MiB. The potential is now released; "
+             "only SI E/B remains. Zero-potential outer boundaries require "
+             "box-padding convergence, and the electrostatic start assumes "
+             "the boosted bunch is near its mean rest frame.";
+        logRoot(communicator_, message.str());
       }
   }
 
@@ -602,6 +633,15 @@ namespace fel
             detectorConfig_.particlePlanes[detector].bufferRecords) *
             particlePlaneRecordBytes;
       }
+
+    /* The matrix-free initial Poisson solve owns four vertex slabs only
+     * during initialization. Include that transient allocation in the
+     * conservative peak even though detector buffers are opened later. */
+    if (config_.initialSelfField.enabled)
+      modeled += 4.0L * sizeof(Double) *
+        static_cast<long double>(localGeometry_.nx + 1) *
+        static_cast<long double>(localGeometry_.ny + 1) *
+        static_cast<long double>(localGeometry_.nz + 2);
 
     modeled *= config_.runtime.memorySafetyFactor;
     const long double byteMaximum =

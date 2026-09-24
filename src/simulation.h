@@ -13,6 +13,7 @@
 #include "eb_bunch.h"
 #include "eb_deposition.h"
 #include "eb_incident.h"
+#include "eb_initial_field.h"
 #include "eb_mpi.h"
 #include "eb_particles.h"
 #include "eb_sources.h"
@@ -41,6 +42,7 @@ namespace fel
     void initializeGeometry();
     void initializeParticles();
     void initializeSources();
+    void initializeParticleSelfField();
     void initializeFieldDetectorRegions();
     void validateBeamlineExclusionRules() const;
     void calibrateResourceEstimate();

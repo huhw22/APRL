@@ -286,6 +286,11 @@ namespace fel
     : type(EBBoundaryType::Pec), cpml()
   {}
 
+  InitialSelfFieldConfig::InitialSelfFieldConfig()
+    : enabled(true), relativeTolerance(1.0e-10),
+      maximumIterations(10000)
+  {}
+
   BeamInputConfig::BeamInputConfig()
     : type(BeamInputType::Hdf5), file(), electrons(0.0), positionOffset(0.0),
       macroparticles(0), gamma(1.0), direction(0.0), center(0.0),
@@ -500,6 +505,29 @@ namespace fel
         if (!(result.boundary.cpml.alphaFraction >= 0.0))
           throw configError(boundary["alpha_fraction"],
             "CPML alpha_fraction cannot be negative");
+      }
+
+    const YAML::Node initialSelfField = root["initial_self_field"];
+    if (initialSelfField)
+      {
+        if (!initialSelfField.IsMap())
+          throw configError(initialSelfField,
+            "initial_self_field must be a map");
+        if (initialSelfField["enabled"])
+          result.initialSelfField.enabled =
+            initialSelfField["enabled"].as<bool>();
+        if (initialSelfField["relative_tolerance"])
+          result.initialSelfField.relativeTolerance = finiteDouble(
+            initialSelfField["relative_tolerance"],
+            "initial self-field relative_tolerance");
+        if (initialSelfField["maximum_iterations"])
+          result.initialSelfField.maximumIterations = positiveSize(
+            initialSelfField["maximum_iterations"],
+            "initial self-field maximum_iterations");
+        if (!(result.initialSelfField.relativeTolerance > 0.0) ||
+            !(result.initialSelfField.relativeTolerance < 1.0))
+          throw configError(initialSelfField["relative_tolerance"],
+            "initial self-field relative_tolerance must lie between zero and one");
       }
 
     const YAML::Node beam = required(root, "beam");

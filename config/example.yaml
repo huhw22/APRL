@@ -33,6 +33,11 @@ boundary:
   kappa_max: 8.0
   alpha_fraction: 0.0
 
+initial_self_field:
+  enabled: true
+  relative_tolerance: 1.0e-10
+  maximum_iterations: 10000
+
 beam:
   reference:
     # The first physical element entrance is lab z=0; the bunch starts left.

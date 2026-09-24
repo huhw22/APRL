@@ -20,6 +20,7 @@ set(DIRECT_EB_SOURCES
   src/eb_deposition.cpp
   src/eb_field.cpp
   src/eb_incident.cpp
+  src/eb_initial_field.cpp
   src/eb_mpi.cpp
   src/eb_particles.cpp
   src/eb_sources.cpp
