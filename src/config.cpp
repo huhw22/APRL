@@ -330,6 +330,12 @@ namespace fel
       bufferRecords(16384), flushEverySamples(8), compression(0)
   {}
 
+  EnergyLedgerConfig::EnergyLedgerConfig()
+    : enabled(false), directory("output"),
+      filename("energy-ledger.h5"), sampleIntervalSteps(1),
+      bufferRecords(64), compression(0), warningRelativeTolerance(0.01)
+  {}
+
   ParticleRetirementConfig::ParticleRetirementConfig()
     : enabled(false), entranceZ(0.0), length(0.0)
   {}
@@ -968,6 +974,51 @@ namespace fel
         if (trajectory["compression"])
           result.trajectory.compression =
             trajectory["compression"].as<unsigned int>();
+      }
+
+    const YAML::Node energyLedger = root["energy_ledger"];
+    if (energyLedger)
+      {
+        if (!energyLedger.IsMap())
+          throw configError(energyLedger, "energy_ledger must be a map");
+        result.energyLedger.enabled = energyLedger["enabled"] ?
+          energyLedger["enabled"].as<bool>() : true;
+        if (energyLedger["directory"])
+          result.energyLedger.directory =
+            energyLedger["directory"].as<std::string>();
+        if (energyLedger["filename"])
+          result.energyLedger.filename =
+            energyLedger["filename"].as<std::string>();
+        if (energyLedger["sample_interval_steps"])
+          result.energyLedger.sampleIntervalSteps = positiveSize(
+            energyLedger["sample_interval_steps"],
+            "energy_ledger sample_interval_steps");
+        if (energyLedger["buffer_records"])
+          result.energyLedger.bufferRecords = positiveSize(
+            energyLedger["buffer_records"],
+            "energy_ledger buffer_records");
+        if (energyLedger["compression"])
+          result.energyLedger.compression =
+            energyLedger["compression"].as<unsigned int>();
+        if (energyLedger["warning_relative_tolerance"])
+          result.energyLedger.warningRelativeTolerance = finiteDouble(
+            energyLedger["warning_relative_tolerance"],
+            "energy_ledger warning_relative_tolerance");
+        if (result.energyLedger.enabled &&
+            (result.energyLedger.directory.empty() ||
+             result.energyLedger.filename.empty()))
+          throw configError(energyLedger,
+            "enabled energy_ledger needs nonempty directory and filename");
+        if (result.energyLedger.filename.find('/') != std::string::npos ||
+            result.energyLedger.filename.find('\\') != std::string::npos)
+          throw configError(energyLedger["filename"],
+            "energy_ledger filename must be a basename; use directory for its path");
+        if (result.energyLedger.compression > 9)
+          throw configError(energyLedger["compression"],
+            "energy_ledger compression must be in [0,9]");
+        if (!(result.energyLedger.warningRelativeTolerance > 0.0))
+          throw configError(energyLedger["warning_relative_tolerance"],
+            "energy_ledger warning_relative_tolerance must be positive");
       }
 
     if (!(result.mesh.boostGamma >= 1.0))

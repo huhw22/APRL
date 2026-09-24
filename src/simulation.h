@@ -17,6 +17,7 @@
 #include "eb_mpi.h"
 #include "eb_particles.h"
 #include "eb_sources.h"
+#include "energy_ledger.h"
 #include "lab_detectors.h"
 #include "particle_boundary.h"
 #include "trajectory_writer.h"
@@ -50,6 +51,12 @@ namespace fel
     void reportResourceProgress(const char* phase);
     void initializeTrajectoryOutput();
     void initializeDetectorOutput();
+    void initializeEnergyLedger();
+    void advanceEnergyLedgerStep();
+    void sampleEnergyLedger(bool force = false);
+    void finalizeEnergyLedger(bool completed);
+    long double localInteriorFieldEnergy() const;
+    void localInteriorBoundaryPower(long double power[6]) const;
     void sampleTrajectory();
     void appendTrajectoryEvent(const RelativisticParticleSI& particle,
                                Double timeBox,
@@ -98,10 +105,22 @@ namespace fel
     std::unique_ptr<LabDetectorManager> detectors_;
 
     TrajectoryWriter trajectoryWriter_;
+    EnergyLedgerWriter energyLedgerWriter_;
+    EnergyLedgerRecord lastEnergyLedgerRecord_;
     Double trajectoryRhythmSI_;
     Double nextTrajectorySampleTime_;
     unsigned int trajectorySamplesSinceFlush_;
     unsigned int particleSubsteps_;
+    long double energyLedgerPreviousPower_[6];
+    long double energyLedgerOutwardEnergy_[6];
+    long double energyLedgerPrescribedWork_;
+    long double energyLedgerRemovedKinetic_;
+    long double energyLedgerRemovedTotal_;
+    long double energyLedgerInitialKinetic_;
+    long double energyLedgerInitialField_;
+    unsigned long long energyLedgerRemovedMacroparticles_;
+    std::size_t energyLedgerLastSampleStep_;
+    bool energyLedgerHasReference_;
 
     Double timeBoxSI_;
     Double totalTimeBoxSI_;

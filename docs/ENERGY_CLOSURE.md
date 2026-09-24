@@ -75,14 +75,19 @@ For a dense bunch, matched `K=0` subtraction does not guarantee that the
 signal and baseline have the same bound/self-field energy at the exit plane.
 If the baseline kinetic change itself is comparable to or larger than the
 putative radiation loss, report it rather than interpreting the difference as
-radiation. The required next-level audit is
+radiation. The runtime `energy_ledger` now performs the next-level
+boosted-frame audit
 
 ```text
 particle kinetic change
 + domain electromagnetic-energy change
 + flux through every physical/CPML boundary
-+ prescribed-source work = 0
+- prescribed-source work = 0
 ```
 
-with consistent laboratory-frame accounting. The present tool intentionally
-does not manufacture those missing terms from one downstream plane.
+on equal-box-time slices. See `ENERGY_LEDGER.md`. Laboratory particle-plane
+energy and laboratory detector radiation remain a separate equal-location
+comparison: relativity of simultaneity prevents directly adding those lab
+particle terms to boosted-frame stored-field energy. This standalone tool
+therefore intentionally does not manufacture missing global terms from one
+downstream plane.

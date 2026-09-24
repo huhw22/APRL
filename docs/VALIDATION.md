@@ -309,6 +309,44 @@ file. Production approval remains blocked on a full-domain Poynting ledger and
 convergence of the dense-bunch bound-field term, even though the controlled
 weak-collective result is physically consistent at the requested scale.
 
+## Runtime full-energy ledger and energy-spread decomposition
+
+The optional runtime ledger was exercised with the same gamma-1000,
+52x52x400-cell, 128-macro, three-period configuration at total represented
+charges of one electron and `10^6` electrons. Every run used the
+Gauss-consistent initial field, no particle crossed the CPML entrance, and
+`K=0` was paired with `K=0.5`.
+
+For the one-electron driven control, the boosted-frame terms were
+`delta K=5.5087e-24 J`, `delta U=4.8912e-24 J`, cumulative outward flux
+`-7.3148e-26 J`, and prescribed-device work `9.9570e-24 J`. The remaining
+`3.6970e-25 J` was 1.81% of the summed exchange scale. The near-zero `K=0`
+case had a smaller absolute residual, `1.9658e-25 J`, but a 32.1%
+exchange-normalized residual because its denominator is nearly zero.
+
+For `10^6` electrons the driven terms were `delta K=1.1357e-14 J`,
+`delta U=4.8669e-12 J`, outward flux `-7.3231e-14 J`, and prescribed work
+`4.4430e-12 J`. The residual was `3.6204e-13 J`, or 3.85% of the exchange
+scale and 7.996% of the initial boosted kinetic-plus-field energy. This is a
+successful accounting/sign test, not yet a production conservation result.
+The code now warns at shutdown when the latter relative residual exceeds the
+configured tolerance.
+
+The large-charge driven group ended at mean laboratory gamma `999.9196671`,
+projected `sigma_gamma=0.0437625`, and linearly detrended
+`sigma_gamma=0.0109717`; 93.7% of projected variance was associated with the
+linear gamma-z correlation. Its matched `K=0` group ended at mean gamma
+`1000.0001609` and `sigma_gamma=0.00014297`. These quantities are accelerator
+phase-space diagnostics, not extra terms in the energy equation. They are
+evaluated on an equal-box-time slice, so fixed laboratory particle planes are
+still required for rigorous entrance/exit slice analysis.
+
+The same smoke case completed with one and two MPI ranks while only rank zero
+opened the ledger HDF5. The two-rank output contained seven committed records
+and `complete=1`, and the standalone C++ reader recovered its initial and
+final records. Disabled cards execute none of the new boundary-power,
+statistics, reduction, buffering, or file paths.
+
 ## Input-weight, numerical-preflight, and resource smoke tests
 
 A two-rank HDF5 v2 input with two records of relative weights 1:3 and a YAML

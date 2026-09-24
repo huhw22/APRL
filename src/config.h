@@ -163,6 +163,19 @@ namespace fel
     TrajectoryConfig();
   };
 
+  struct EnergyLedgerConfig
+  {
+    bool enabled;
+    std::string directory;
+    std::string filename;
+    std::size_t sampleIntervalSteps;
+    std::size_t bufferRecords;
+    unsigned int compression;
+    Double warningRelativeTolerance;
+
+    EnergyLedgerConfig();
+  };
+
   /* Experimental diagnostic route for removing charged-particle current
    * upstream of a radiation field plane. It is deliberately opt-in because
    * changing a net charge inside the Maxwell domain is not continuity exact;
@@ -275,6 +288,7 @@ namespace fel
     RuntimeConfig runtime;
     StopConfig stop;
     TrajectoryConfig trajectory;
+    EnergyLedgerConfig energyLedger;
     ParticleRetirementConfig particleRetirement;
     DetectorConfig detectors;
   };

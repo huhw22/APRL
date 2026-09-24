@@ -350,6 +350,37 @@ For compatibility with input cards from the preceding commits,
 `runtime.mode` is absent. New cards should use `runtime.mode`; specifying both
 with different values is an error.
 
+## Runtime energy ledger
+
+The optional global particle/field audit is independent of detector and
+trajectory output:
+
+```yaml
+energy_ledger:
+  enabled: true
+  directory: output/example
+  filename: energy-ledger.h5
+  sample_interval_steps: 10
+  buffer_records: 64
+  compression: 0
+  warning_relative_tolerance: 0.01
+```
+
+It records boosted-frame particle kinetic energy, physical-interior E/B
+energy, all six inner-CPML Poynting fluxes, removed-particle kinetic energy and
+prescribed-device work. Complete volume and particle statistics are evaluated
+only at `sample_interval_steps`; boundary power and prescribed work are
+accumulated every Maxwell step. Only MPI rank zero writes the small HDF5 file.
+Omitting or disabling the block removes all of this work and storage.
+
+The same records contain laboratory gamma mean/rms, a linear longitudinal
+chirp and the rms remaining after that chirp is removed. These momentum
+statistics share an equal-box-time slice and must not be added to the
+boosted-frame energy terms. Use fixed laboratory particle planes for rigorous
+accelerator entrance/exit or slice diagnostics. See
+[ENERGY_LEDGER.md](ENERGY_LEDGER.md) for the equation, schema, source-validity
+flags and current gamma-1000 control result.
+
 ## Stop strategy
 
 Exactly one physical stop strategy is selected in addition to `mesh.duration`,

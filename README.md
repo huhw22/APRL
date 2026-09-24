@@ -107,6 +107,13 @@ particle count with uniform weights. An optional root-only resource report
 gives a pre-run memory/time estimate, periodic batch-log progress, and measured
 peak resident memory and wall time without requiring a live terminal.
 
+An independent optional runtime energy ledger closes the boosted-frame budget
+across active and escaped particle kinetic energy, physical-interior E/B
+energy, six inner-CPML Poynting fluxes and prescribed-device work. It also
+tracks mean laboratory gamma, projected energy spread, linear chirp and the
+linearly detrended spread. Disabled mode adds no loops, collectives or files;
+enabled mode writes one small rank-zero HDF5 stream and has a C++ summary tool.
+
 
 The implementation is still a development solver. Compact CFS-CPML is
 available for no-seed Cowan runs, and a temporary distributed CIC/Poisson
@@ -116,7 +123,10 @@ raising the Maxwell cadence; grid E/B sampling, current deposition and field
 detectors intentionally remain on the field step. The generalized Cowan/CPML
 TF/SF seed-wave correction remains planned work. Production radiation results
 still require problem-scale convergence, initial-field box-padding
-convergence, reflection validation, and dense-bunch global energy closure.
+convergence, reflection validation, and convergence of the runtime energy
+ledger. The first dense-bunch ledger closes the driven boosted-frame exchange
+to about four percent, which validates the accounting path but is not yet a
+production tolerance.
 A controlled one-electron-equivalent test gives the correct loss sign and the
 same energy scale as its finite-band forward radiation, but the `10^6`-electron
 test is dominated by changing collective/bound-field energy. One downstream
@@ -147,6 +157,7 @@ or particle-boundary I/O.
 - [Particle-background field reconstruction](docs/FIELD_RECONSTRUCTION.md)
 - [Field-plane spectrum and coherence analysis](docs/FIELD_PLANE_ANALYSIS.md)
 - [Particle/field energy-closure diagnostic](docs/ENERGY_CLOSURE.md)
+- [Runtime particle/field energy ledger](docs/ENERGY_LEDGER.md)
 - [Particle retirement and matched power comparison](docs/FIELD_POWER_COMPARISON.md)
 - [Numerical validation status](docs/VALIDATION.md)
 - [Current release audit and production gates](docs/RELEASE_AUDIT.md)

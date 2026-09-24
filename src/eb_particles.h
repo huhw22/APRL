@@ -69,7 +69,8 @@ namespace fel
         const BoostFrameTransform& frame,
         Double timeBoxSI,
         Double fieldTimeStep,
-        unsigned int substeps);
+        unsigned int substeps,
+        Double* prescribedWorkJ = 0);
   };
 }
 

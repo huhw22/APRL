@@ -170,9 +170,16 @@ namespace fel
       globalOriginBox_(0.0), localOriginBox_(0.0), frame_(), sources_(),
       fields_(), halo_(), incident_(), particles_(), particleCPML_(),
       pmlCarriers_(), retirementCarriers_(), particleBoundary_(), detectors_(),
-      trajectoryWriter_(),
+      trajectoryWriter_(), energyLedgerWriter_(), lastEnergyLedgerRecord_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), particleSubsteps_(1),
+      energyLedgerPrescribedWork_(0.0L),
+      energyLedgerRemovedKinetic_(0.0L),
+      energyLedgerRemovedTotal_(0.0L),
+      energyLedgerInitialKinetic_(0.0L),
+      energyLedgerInitialField_(0.0L),
+      energyLedgerRemovedMacroparticles_(0),
+      energyLedgerLastSampleStep_(0), energyLedgerHasReference_(false),
       timeBoxSI_(0.0),
       totalTimeBoxSI_(0.0), step_(0), interrupted_(false),
       configuredStopReached_(false), loopWallStart_(0.0),
@@ -188,6 +195,8 @@ namespace fel
     MPI_Comm_size(communicator_, &size_);
     for (std::size_t face = 0; face < 6; ++face)
       {
+        energyLedgerPreviousPower_[face] = 0.0L;
+        energyLedgerOutwardEnergy_[face] = 0.0L;
         cpmlEntryCount_[face] = 0;
         cpmlEntryCharge_[face] = 0.0;
         directOuterCount_[face] = 0;
@@ -205,6 +214,8 @@ namespace fel
       sampleTrajectory();
     if (detectors_)
       detectors_->sampleFieldPlanes(*fields_, timeBoxSI_);
+    if (config_.energyLedger.enabled)
+      sampleEnergyLedger(true);
     loopWallStart_ = MPI_Wtime();
 
     while (timeBoxSI_ < totalTimeBoxSI_)
@@ -226,6 +237,9 @@ namespace fel
           incident_->correctAfterElectricUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
 
+        if (config_.energyLedger.enabled)
+          advanceEnergyLedgerStep();
+
         timeBoxSI_ += globalGeometry_.dt;
         ++step_;
         if (config_.trajectory.enabled &&
@@ -233,6 +247,8 @@ namespace fel
           sampleTrajectory();
         if (detectors_)
           detectors_->sampleFieldPlanes(*fields_, timeBoxSI_);
+        if (config_.energyLedger.enabled)
+          sampleEnergyLedger();
         if (config_.runtime.resourceReport &&
             config_.runtime.resourceProgressIntervalSteps > 0 &&
             step_ % config_.runtime.resourceProgressIntervalSteps == 0)
@@ -246,8 +262,11 @@ namespace fel
 
     if (!interrupted_) synchronizedStopRequested();
     const bool completed = !interrupted_ && configuredStopReached_;
+    if (config_.energyLedger.enabled)
+      sampleEnergyLedger(true);
     finalizeTrajectoryOutput(completed);
     if (detectors_) detectors_->close(completed);
+    finalizeEnergyLedger(completed);
     reportParticleBoundaryLosses();
     reportResourceProgress("final");
     if (configuredStopReached_ && rank_ == 0)
@@ -317,6 +336,7 @@ namespace fel
 
     initializeTrajectoryOutput();
     initializeDetectorOutput();
+    initializeEnergyLedger();
     reportResourceEstimate();
     const unsigned long long localBoundaryBytes =
       static_cast<unsigned long long>(
@@ -586,6 +606,7 @@ namespace fel
       static_cast<long double>(halo_->memoryBytes()) +
       static_cast<long double>(particleBoundary_->memoryBytes()) +
       static_cast<long double>(trajectoryWriter_.memoryBytes()) +
+      static_cast<long double>(energyLedgerWriter_.memoryBytes()) +
       static_cast<long double>(particles_.capacity()) *
         sizeof(RelativisticParticleSI) +
       static_cast<long double>(pmlCarriers_.capacity()) *
@@ -1568,6 +1589,431 @@ namespace fel
       }
   }
 
+  long double Simulation::localInteriorFieldEnergy() const
+  {
+    std::size_t layer[3] = {0, 0, 0};
+    if (config_.boundary.type == EBBoundaryType::Cpml)
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        layer[axis] = config_.boundary.cpml.cells[axis];
+
+    const std::size_t iBegin = layer[0];
+    const std::size_t iEnd = globalGeometry_.nx - layer[0];
+    const std::size_t jBegin = layer[1];
+    const std::size_t jEnd = globalGeometry_.ny - layer[1];
+    const std::size_t globalKBegin = layer[2];
+    const std::size_t globalKEnd = globalGeometry_.nz - layer[2];
+    const std::size_t localGlobalEnd = localZOffset_ + localGeometry_.nz;
+    const std::size_t ownedKBegin = std::max(globalKBegin, localZOffset_);
+    const std::size_t ownedKEnd = std::min(globalKEnd, localGlobalEnd);
+    if (iBegin >= iEnd || jBegin >= jEnd || ownedKBegin >= ownedKEnd)
+      return 0.0L;
+
+    const long double volume =
+      static_cast<long double>(globalGeometry_.dx) *
+      static_cast<long double>(globalGeometry_.dy) *
+      static_cast<long double>(globalGeometry_.dz);
+    long double energy = 0.0L;
+    for (std::size_t globalK = ownedKBegin;
+         globalK < ownedKEnd; ++globalK)
+      {
+        const std::size_t k = globalK - localZOffset_;
+        for (std::size_t j = jBegin; j < jEnd; ++j)
+          for (std::size_t i = iBegin; i < iEnd; ++i)
+            energy += static_cast<long double>(
+              fields_->radiationSampleCell(i, j, k).energyDensity) * volume;
+      }
+    return energy;
+  }
+
+  void Simulation::localInteriorBoundaryPower(long double power[6]) const
+  {
+    for (unsigned int face = 0; face < 6; ++face) power[face] = 0.0L;
+    if (config_.boundary.type != EBBoundaryType::Cpml) return;
+
+    const std::size_t cx = config_.boundary.cpml.cells[0];
+    const std::size_t cy = config_.boundary.cpml.cells[1];
+    const std::size_t cz = config_.boundary.cpml.cells[2];
+    const std::size_t iBegin = cx;
+    const std::size_t iEnd = globalGeometry_.nx - cx;
+    const std::size_t jBegin = cy;
+    const std::size_t jEnd = globalGeometry_.ny - cy;
+    const std::size_t globalKBegin = cz;
+    const std::size_t globalKEnd = globalGeometry_.nz - cz;
+    const std::size_t localGlobalEnd = localZOffset_ + localGeometry_.nz;
+    const std::size_t ownedKBegin = std::max(globalKBegin, localZOffset_);
+    const std::size_t ownedKEnd = std::min(globalKEnd, localGlobalEnd);
+    if (iBegin >= iEnd || jBegin >= jEnd || globalKBegin >= globalKEnd)
+      return;
+
+    if (ownedKBegin < ownedKEnd && cx > 0)
+      {
+        const long double area =
+          static_cast<long double>(globalGeometry_.dy) *
+          static_cast<long double>(globalGeometry_.dz);
+        const std::size_t lowerI = iBegin;
+        const std::size_t upperI = iEnd - 1;
+        for (std::size_t globalK = ownedKBegin;
+             globalK < ownedKEnd; ++globalK)
+          {
+            const std::size_t k = globalK - localZOffset_;
+            for (std::size_t j = jBegin; j < jEnd; ++j)
+              {
+                power[0] -= static_cast<long double>(
+                  fields_->radiationSampleCell(lowerI, j, k).poynting[0]) *
+                  area;
+                power[1] += static_cast<long double>(
+                  fields_->radiationSampleCell(upperI, j, k).poynting[0]) *
+                  area;
+              }
+          }
+      }
+
+    if (ownedKBegin < ownedKEnd && cy > 0)
+      {
+        const long double area =
+          static_cast<long double>(globalGeometry_.dx) *
+          static_cast<long double>(globalGeometry_.dz);
+        const std::size_t lowerJ = jBegin;
+        const std::size_t upperJ = jEnd - 1;
+        for (std::size_t globalK = ownedKBegin;
+             globalK < ownedKEnd; ++globalK)
+          {
+            const std::size_t k = globalK - localZOffset_;
+            for (std::size_t i = iBegin; i < iEnd; ++i)
+              {
+                power[2] -= static_cast<long double>(
+                  fields_->radiationSampleCell(i, lowerJ, k).poynting[1]) *
+                  area;
+                power[3] += static_cast<long double>(
+                  fields_->radiationSampleCell(i, upperJ, k).poynting[1]) *
+                  area;
+              }
+          }
+      }
+
+    if (cz > 0)
+      {
+        const long double area =
+          static_cast<long double>(globalGeometry_.dx) *
+          static_cast<long double>(globalGeometry_.dy);
+        const std::size_t lowerGlobalK = globalKBegin;
+        const std::size_t upperGlobalK = globalKEnd - 1;
+        if (lowerGlobalK >= localZOffset_ &&
+            lowerGlobalK < localGlobalEnd)
+          {
+            const std::size_t k = lowerGlobalK - localZOffset_;
+            for (std::size_t j = jBegin; j < jEnd; ++j)
+              for (std::size_t i = iBegin; i < iEnd; ++i)
+                power[4] -= static_cast<long double>(
+                  fields_->radiationSampleCell(i, j, k).poynting[2]) * area;
+          }
+        if (upperGlobalK >= localZOffset_ &&
+            upperGlobalK < localGlobalEnd)
+          {
+            const std::size_t k = upperGlobalK - localZOffset_;
+            for (std::size_t j = jBegin; j < jEnd; ++j)
+              for (std::size_t i = iBegin; i < iEnd; ++i)
+                power[5] += static_cast<long double>(
+                  fields_->radiationSampleCell(i, j, k).poynting[2]) * area;
+          }
+      }
+  }
+
+  void Simulation::initializeEnergyLedger()
+  {
+    if (!config_.energyLedger.enabled) return;
+    createDirectories(config_.energyLedger.directory, communicator_);
+    if (rank_ == 0)
+      energyLedgerWriter_.open(joinPath(config_.energyLedger.directory,
+          config_.energyLedger.filename), size_,
+        config_.energyLedger.bufferRecords,
+        config_.energyLedger.compression,
+        config_.runtime.interactive());
+    localInteriorBoundaryPower(energyLedgerPreviousPower_);
+    if (rank_ == 0)
+      {
+        std::ostringstream message;
+        message << "Energy ledger active: root-only HDF5='"
+                << joinPath(config_.energyLedger.directory,
+                            config_.energyLedger.filename)
+                << "', volume/spread sample interval="
+                << config_.energyLedger.sampleIntervalSteps
+                << " field steps. Boundary power is accumulated every step; "
+                   "analytic-device work is accumulated along Boris substeps.";
+        logRoot(communicator_, message.str());
+        if (sources_.maxwellIncidentWaveCount() > 0)
+          logRoot(communicator_,
+            "WARNING: energy-ledger closure_valid is false because incident-wave boundary work is not yet included.");
+      }
+  }
+
+  void Simulation::advanceEnergyLedgerStep()
+  {
+    long double currentPower[6] = {};
+    localInteriorBoundaryPower(currentPower);
+    const long double halfDt = 0.5L *
+      static_cast<long double>(globalGeometry_.dt);
+    for (unsigned int face = 0; face < 6; ++face)
+      {
+        energyLedgerOutwardEnergy_[face] += halfDt *
+          (energyLedgerPreviousPower_[face] + currentPower[face]);
+        energyLedgerPreviousPower_[face] = currentPower[face];
+      }
+  }
+
+  void Simulation::sampleEnergyLedger(bool force)
+  {
+    if (!config_.energyLedger.enabled) return;
+    if (energyLedgerHasReference_ && step_ == energyLedgerLastSampleStep_)
+      return;
+    if (!force &&
+        step_ % config_.energyLedger.sampleIntervalSteps != 0)
+      return;
+
+    long double local[16] = {};
+    Double localMinimumGamma = std::numeric_limits<Double>::infinity();
+    Double localMaximumGamma =
+      -std::numeric_limits<Double>::infinity();
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      {
+        const RelativisticParticleSI& particle = particles_[index];
+        const Double gammaBox =
+          BoostFrameTransform::gammaFromProperVelocity(
+            particle.properVelocity);
+        const long double mass =
+          static_cast<long double>(particle.mass);
+        const long double c = static_cast<long double>(SI::c);
+        const long double rest = mass * c * c;
+        const long double u2 = static_cast<long double>(
+          particle.properVelocity.norm2());
+        local[0] += rest * u2 /
+          static_cast<long double>(gammaBox + 1.0);
+        local[1] += rest * static_cast<long double>(gammaBox);
+        const long double represented = mass /
+          static_cast<long double>(SI::electronMass);
+        local[2] += represented;
+        FieldVector<Double> properVelocityLab(0.0);
+        frame_.properVelocityBoxToLab(
+          particle.properVelocity, properVelocityLab);
+        const Double gammaLab =
+          BoostFrameTransform::gammaFromProperVelocity(properVelocityLab);
+        local[3] += represented * static_cast<long double>(gammaLab);
+        local[4] += represented * static_cast<long double>(gammaBox);
+        local[5] += represented * static_cast<long double>(
+          frame_.labZFromBoxZT(particle.position[2], timeBoxSI_));
+        localMinimumGamma = std::min(localMinimumGamma, gammaLab);
+        localMaximumGamma = std::max(localMaximumGamma, gammaLab);
+      }
+    local[6] = localInteriorFieldEnergy();
+    local[7] = energyLedgerRemovedKinetic_;
+    local[8] = energyLedgerRemovedTotal_;
+    local[9] = energyLedgerPrescribedWork_;
+    for (unsigned int face = 0; face < 6; ++face)
+      local[10 + face] = energyLedgerOutwardEnergy_[face];
+
+    long double global[16] = {};
+    MPI_Allreduce(local, global, 16, MPI_LONG_DOUBLE, MPI_SUM,
+                  communicator_);
+    unsigned long long localCounts[3] = {
+      static_cast<unsigned long long>(particles_.size()),
+      energyLedgerRemovedMacroparticles_, retirementEntryCount_
+    };
+    unsigned long long globalCounts[3] = {};
+    MPI_Allreduce(localCounts, globalCounts, 3,
+      MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+    Double globalMinimumGamma = 0.0;
+    Double globalMaximumGamma = 0.0;
+    MPI_Allreduce(&localMinimumGamma, &globalMinimumGamma, 1,
+                  MPI_DOUBLE, MPI_MIN, communicator_);
+    MPI_Allreduce(&localMaximumGamma, &globalMaximumGamma, 1,
+                  MPI_DOUBLE, MPI_MAX, communicator_);
+
+    const long double weight = global[2];
+    const long double meanGammaLab = weight > 0.0L ?
+      global[3] / weight : 0.0L;
+    const long double meanGammaBox = weight > 0.0L ?
+      global[4] / weight : 0.0L;
+    const long double meanZLab = weight > 0.0L ?
+      global[5] / weight : 0.0L;
+    long double localCentred[4] = {};
+    if (weight > 0.0L)
+      for (std::size_t index = 0; index < particles_.size(); ++index)
+        {
+          const RelativisticParticleSI& particle = particles_[index];
+          const long double represented =
+            static_cast<long double>(particle.mass) /
+            static_cast<long double>(SI::electronMass);
+          const Double gammaBox =
+            BoostFrameTransform::gammaFromProperVelocity(
+              particle.properVelocity);
+          FieldVector<Double> properVelocityLab(0.0);
+          frame_.properVelocityBoxToLab(
+            particle.properVelocity, properVelocityLab);
+          const Double gammaLab =
+            BoostFrameTransform::gammaFromProperVelocity(
+              properVelocityLab);
+          const long double deltaGamma =
+            static_cast<long double>(gammaLab) - meanGammaLab;
+          const long double deltaGammaBox =
+            static_cast<long double>(gammaBox) - meanGammaBox;
+          const long double deltaZ = static_cast<long double>(
+            frame_.labZFromBoxZT(particle.position[2], timeBoxSI_)) -
+            meanZLab;
+          localCentred[0] += represented * deltaGamma * deltaGamma;
+          localCentred[1] += represented * deltaGammaBox * deltaGammaBox;
+          localCentred[2] += represented * deltaZ * deltaZ;
+          localCentred[3] += represented * deltaZ * deltaGamma;
+        }
+    long double globalCentred[4] = {};
+    MPI_Allreduce(localCentred, globalCentred, 4, MPI_LONG_DOUBLE,
+                  MPI_SUM, communicator_);
+
+    if (!energyLedgerHasReference_)
+      {
+        energyLedgerInitialKinetic_ = global[0];
+        energyLedgerInitialField_ = global[6];
+        energyLedgerHasReference_ = true;
+      }
+    const long double particleAccounted = global[0] + global[7];
+    const long double initialDynamic =
+      energyLedgerInitialKinetic_ + energyLedgerInitialField_;
+    const long double currentDynamic = particleAccounted + global[6];
+    long double outward = 0.0L;
+    for (unsigned int face = 0; face < 6; ++face)
+      outward += global[10 + face];
+    const long double residual = currentDynamic - initialDynamic +
+      outward - global[9];
+    const long double deltaParticle =
+      particleAccounted - energyLedgerInitialKinetic_;
+    const long double deltaField = global[6] - energyLedgerInitialField_;
+    const long double exchangeScale = std::abs(deltaParticle) +
+      std::abs(deltaField) + std::abs(outward) + std::abs(global[9]);
+    long double varianceGamma = weight > 0.0L ?
+      std::max(0.0L, globalCentred[0] / weight) : 0.0L;
+    long double varianceGammaBox = weight > 0.0L ?
+      std::max(0.0L, globalCentred[1] / weight) : 0.0L;
+    const long double varianceZ = weight > 0.0L ?
+      std::max(0.0L, globalCentred[2] / weight) : 0.0L;
+    const long double covariance = weight > 0.0L ?
+      globalCentred[3] / weight : 0.0L;
+    const long double gammaResolution = 64.0L *
+      static_cast<long double>(std::numeric_limits<Double>::epsilon()) *
+      std::max(1.0L, std::abs(meanGammaLab));
+    if (varianceGamma < gammaResolution * gammaResolution)
+      varianceGamma = 0.0L;
+    const long double gammaBoxResolution = 64.0L *
+      static_cast<long double>(std::numeric_limits<Double>::epsilon()) *
+      std::max(1.0L, std::abs(meanGammaBox));
+    if (varianceGammaBox < gammaBoxResolution * gammaBoxResolution)
+      varianceGammaBox = 0.0L;
+    const long double chirp = varianceZ > 0.0L && varianceGamma > 0.0L ?
+      covariance / varianceZ : 0.0L;
+    const long double uncorrelatedVariance =
+      varianceZ > 0.0L && varianceGamma > 0.0L ?
+      std::max(0.0L, varianceGamma - covariance * covariance /
+        varianceZ) : varianceGamma;
+
+    EnergyLedgerRecord record;
+    record.step = static_cast<std::uint64_t>(step_);
+    record.activeMacroparticles = globalCounts[0];
+    record.removedMacroparticles = globalCounts[1];
+    record.closureValid =
+      sources_.maxwellIncidentWaveCount() == 0 && globalCounts[2] == 0 ? 1 : 0;
+    record.timeBox = timeBoxSI_;
+    record.activeRepresentedElectrons = static_cast<Double>(global[2]);
+    record.particleKineticActive = static_cast<Double>(global[0]);
+    record.particleTotalActive = static_cast<Double>(global[1]);
+    record.particleKineticRemoved = static_cast<Double>(global[7]);
+    record.particleTotalRemoved = static_cast<Double>(global[8]);
+    record.fieldEnergyInterior = static_cast<Double>(global[6]);
+    for (unsigned int face = 0; face < 6; ++face)
+      record.outwardFieldEnergyFace[face] =
+        static_cast<Double>(global[10 + face]);
+    record.outwardFieldEnergy = static_cast<Double>(outward);
+    record.prescribedWork = static_cast<Double>(global[9]);
+    record.balanceResidual = static_cast<Double>(residual);
+    record.relativeBalanceExchange = exchangeScale > 0.0L ?
+      static_cast<Double>(residual / exchangeScale) : 0.0;
+    record.relativeBalanceInitial = initialDynamic != 0.0L ?
+      static_cast<Double>(residual / std::abs(initialDynamic)) : 0.0;
+    const long double kineticDenominator = global[0] + global[6];
+    record.fieldFractionKinetic = kineticDenominator != 0.0L ?
+      static_cast<Double>(global[6] / kineticDenominator) : 0.0;
+    const long double totalDenominator = global[1] + global[6];
+    record.fieldFractionIncludingRest = totalDenominator != 0.0L ?
+      static_cast<Double>(global[6] / totalDenominator) : 0.0;
+    record.meanGammaLab = static_cast<Double>(meanGammaLab);
+    record.sigmaGammaLab = static_cast<Double>(std::sqrt(varianceGamma));
+    record.relativeEnergySpreadLab = meanGammaLab != 0.0L ?
+      static_cast<Double>(std::sqrt(varianceGamma) / meanGammaLab) : 0.0;
+    record.minimumGammaLab = globalCounts[0] > 0 ? globalMinimumGamma : 0.0;
+    record.maximumGammaLab = globalCounts[0] > 0 ? globalMaximumGamma : 0.0;
+    record.linearChirpGammaPerM = static_cast<Double>(chirp);
+    record.uncorrelatedSigmaGammaLab =
+      static_cast<Double>(std::sqrt(uncorrelatedVariance));
+    record.meanGammaBox = static_cast<Double>(meanGammaBox);
+    record.sigmaGammaBox =
+      static_cast<Double>(std::sqrt(varianceGammaBox));
+    lastEnergyLedgerRecord_ = record;
+    if (rank_ == 0) energyLedgerWriter_.append(record);
+    energyLedgerLastSampleStep_ = step_;
+  }
+
+  void Simulation::finalizeEnergyLedger(bool completed)
+  {
+    if (!config_.energyLedger.enabled) return;
+    if (rank_ == 0)
+      {
+        energyLedgerWriter_.close(completed);
+        std::ostringstream message;
+        message << std::setprecision(10)
+          << "[energy] step=" << lastEnergyLedgerRecord_.step
+          << " closure_valid="
+          << static_cast<unsigned int>(lastEnergyLedgerRecord_.closureValid)
+          << " particle_kinetic_active_J="
+          << lastEnergyLedgerRecord_.particleKineticActive
+          << " removed_particle_kinetic_J="
+          << lastEnergyLedgerRecord_.particleKineticRemoved
+          << " field_energy_J="
+          << lastEnergyLedgerRecord_.fieldEnergyInterior
+          << " outward_field_energy_J="
+          << lastEnergyLedgerRecord_.outwardFieldEnergy
+          << " prescribed_work_J="
+          << lastEnergyLedgerRecord_.prescribedWork
+          << " residual_J="
+          << lastEnergyLedgerRecord_.balanceResidual
+          << " relative_exchange="
+          << lastEnergyLedgerRecord_.relativeBalanceExchange
+          << " field_fraction_kinetic="
+          << lastEnergyLedgerRecord_.fieldFractionKinetic
+          << " mean_gamma_lab=" << lastEnergyLedgerRecord_.meanGammaLab
+          << " relative_energy_spread_lab="
+          << lastEnergyLedgerRecord_.relativeEnergySpreadLab
+          << " uncorrelated_sigma_gamma_lab="
+          << lastEnergyLedgerRecord_.uncorrelatedSigmaGammaLab
+          << " chirp_gamma_per_m="
+          << lastEnergyLedgerRecord_.linearChirpGammaPerM << ".";
+        logRoot(communicator_, message.str());
+        if (lastEnergyLedgerRecord_.closureValid &&
+            std::abs(lastEnergyLedgerRecord_.relativeBalanceInitial) >
+              config_.energyLedger.warningRelativeTolerance)
+          {
+            std::ostringstream warning;
+            warning << std::setprecision(6)
+              << "WARNING: energy-ledger residual is "
+              << std::abs(lastEnergyLedgerRecord_.relativeBalanceInitial)
+              << " of the initial boosted-frame kinetic-plus-field energy, "
+                 "above warning_relative_tolerance="
+              << config_.energyLedger.warningRelativeTolerance
+              << ". Refine the field grid/time step, increase macro-particle "
+                 "count, enlarge the initial-field padding, and check that "
+                 "the residual converges before interpreting small radiation "
+                 "or energy-spread changes.";
+            logRoot(communicator_, warning.str());
+          }
+      }
+  }
+
   void Simulation::sampleTrajectory()
   {
     if (!trajectoryWriter_.isOpen()) return;
@@ -2226,9 +2672,11 @@ namespace fel
       {
         RelativisticParticleSI particle = particles_[index];
         const FieldVector<Double> start(particle.position);
+        Double prescribedWork = 0.0;
         RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
           particle, *fields_, localOriginBox_, sources_, frame_,
-          timeBoxSI_, globalGeometry_.dt, particleSubsteps_);
+          timeBoxSI_, globalGeometry_.dt, particleSubsteps_,
+          config_.energyLedger.enabled ? &prescribedWork : 0);
 
         ParticleBoundaryHit diagnosticHit;
         ParticleBoundaryHit cpmlHit;
@@ -2263,6 +2711,11 @@ namespace fel
                        TrajectoryEvent::CpmlEntry);
         selectTerminal(entersRetirement, retirementHit,
                        TrajectoryEvent::RetirementEntry);
+        if (config_.energyLedger.enabled)
+          energyLedgerPrescribedWork_ +=
+            static_cast<long double>(prescribedWork) *
+            static_cast<long double>(hasTerminalEvent ?
+              terminalFraction : 1.0);
 
         RelativisticParticleSI diagnosticEnd(particle);
         Double diagnosticTime = timeBoxSI_ + globalGeometry_.dt;
@@ -2271,6 +2724,34 @@ namespace fel
             diagnosticEnd.position = diagnosticHit.position;
             diagnosticTime = timeBoxSI_ +
               diagnosticHit.fraction * globalGeometry_.dt;
+            if (config_.energyLedger.enabled)
+              {
+                const RelativisticParticleSI& beginning = particles_[index];
+                const Double gammaBeginning =
+                  BoostFrameTransform::gammaFromProperVelocity(
+                    beginning.properVelocity);
+                const Double gammaEnd =
+                  BoostFrameTransform::gammaFromProperVelocity(
+                    particle.properVelocity);
+                const long double mass =
+                  static_cast<long double>(particle.mass);
+                const long double c = static_cast<long double>(SI::c);
+                const long double rest = mass * c * c;
+                const long double kineticBeginning = rest *
+                  static_cast<long double>(beginning.properVelocity.norm2()) /
+                  static_cast<long double>(gammaBeginning + 1.0);
+                const long double kineticEnd = rest *
+                  static_cast<long double>(particle.properVelocity.norm2()) /
+                  static_cast<long double>(gammaEnd + 1.0);
+                const long double fraction = static_cast<long double>(
+                  diagnosticHit.fraction);
+                energyLedgerRemovedKinetic_ += kineticBeginning + fraction *
+                  (kineticEnd - kineticBeginning);
+                energyLedgerRemovedTotal_ += rest *
+                  (static_cast<long double>(gammaBeginning) + fraction *
+                   static_cast<long double>(gammaEnd - gammaBeginning));
+                ++energyLedgerRemovedMacroparticles_;
+              }
           }
         if (detectors_)
           detectors_->captureParticleStep(

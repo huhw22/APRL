@@ -24,6 +24,7 @@ set(DIRECT_EB_SOURCES
   src/eb_mpi.cpp
   src/eb_particles.cpp
   src/eb_sources.cpp
+  src/energy_ledger.cpp
   src/lab_detectors.cpp
   src/particle_file.cpp
   src/particle_initializer.cpp
@@ -74,5 +75,12 @@ target_compile_options(undulator_resonance PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
+add_executable(energy_ledger_report utilities/energy_ledger_report.cpp)
+target_link_libraries(energy_ledger_report PRIVATE direct_eb_core)
+target_compile_options(energy_ledger_report PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
+)
+
 install(TARGETS simulator particle_text_to_hdf5 undulator_resonance
+  energy_ledger_report
   RUNTIME DESTINATION bin)

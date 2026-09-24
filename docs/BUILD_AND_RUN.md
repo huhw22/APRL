@@ -19,8 +19,19 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-This produces `build/simulator`, `build/particle_text_to_hdf5`, and
-`build/undulator_resonance`.
+This produces `build/simulator`, `build/particle_text_to_hdf5`,
+`build/undulator_resonance`, and `build/energy_ledger_report`.
+
+Summarize a complete or cleanly interrupted runtime energy ledger without any
+Python dependency:
+
+```bash
+./build/energy_ledger_report output/run-name/energy-ledger.h5
+```
+
+It reads only the committed HDF5 prefix and prints the initial/final balance,
+field fractions, mean gamma and energy-spread decomposition. See
+[ENERGY_LEDGER.md](ENERGY_LEDGER.md).
 
 Before choosing a retirement protection band, inspect the characteristic
 planar-undulator resonance:

@@ -12,7 +12,7 @@ is production-ready.
 | Generated beam | Implemented for tests | Deterministic, uncorrelated Gaussian with total electrons and macro-particle count; it is not a beam-preparation model. |
 | Relativistic transform | Implemented and audited | Free-drift simultaneity placement, SI E/B transforms and light-front longitudinal momentum transforms are checked by a lab/boost round trip. |
 | Mesh geometry | Implemented and audited | YAML supplies integer `cells` and physical `cell_size`; extents use multiplication and MPI slab offsets/counts remain integer. Old length/resolution inference is rejected. |
-| Maxwell/particle loop | Implemented for the no-seed path | Direct SI E/B Cowan-z or Yee update, Boris push, charge-conserving current deposition and MPI slab migration. Weak-collective particle/radiation energy agrees in sign and scale; dense-bunch global energy closure is not yet established. |
+| Maxwell/particle loop | Implemented for the no-seed path | Direct SI E/B Cowan-z or Yee update, Boris push, charge-conserving current deposition and MPI slab migration. Weak-collective particle/radiation energy agrees in sign and scale; the dense-bunch ledger is measurable but not yet converged. |
 | Field boundary | Implemented for no-seed Cowan runs | Compact CFS-CPML with checked geometry and particle-carrier treatment. Seed-wave TF/SF plus Cowan/CPML is not implemented. |
 | Particle boundary | Implemented | Physical histories stop at CPML entry; output-free carriers damp current and export residual charge at the outer face. |
 | Stops and partial output | Implemented | Element-aware and reference-centre stops; interactive SIGINT/SIGTERM closes readable incomplete output, throughput avoids that polling. |
@@ -21,7 +21,7 @@ is production-ready.
 | Trajectory radiation analysis | Implemented for small tests | Angular/integrated spectra, polarization/Stokes and optional window/ensemble cross-spectral density are available. |
 | Field-plane background tools | Implemented with model choices | Uniform-motion background reconstruction and matched-baseline amplitude subtraction/power comparison exist; retirement remains experimental. |
 | Full field-plane radiation analysis | Implemented for downstream forward modes | Threaded FFTW analysis provides angular/integrated spectra, Stokes data, Hann-window coherent/fluctuation splitting, global transverse coherence/Gram eigenvalues, selected spatial CSD and two-frequency CSD with memory/output guards. |
-| Particle/field energy closure | Implemented as a validation report | Stable per-particle delta-gamma, matched baseline subtraction and field-plane or trajectory radiation inputs are supported. A single forward plane is not a full-domain energy ledger. |
+| Particle/field energy closure | Runtime ledger plus downstream validation report implemented | The optional rank-zero HDF5 ledger contains boosted-frame particle kinetic energy, interior E/B energy, six inner-CPML fluxes, removed-particle energy, prescribed work and energy-spread moments. The first dense driven control has a 3.9% exchange-normalized residual, so convergence remains a production gate. The downstream report still compares fixed-lab particle planes with a finite forward radiation aperture. |
 | Initial particle self-field | Implemented with boundary caveats | A distributed CIC/Poisson projection enforces the interior discrete Gauss law and releases all potential state before E/B advance. Box padding and the near-rest-frame electrostatic assumption still require convergence. |
 | Particle subcycling | Implemented for prescribed devices | Automatic Boris substeps resolve analytical laboratory devices. Grid E/B, current deposition and detector cadence remain on the Maxwell step, which still sets radiation bandwidth. |
 | Laser/seed injection | **Missing on the target kernel** | The generalized Cowan/CPML TF/SF injection remains the principal unimplemented source path. |
@@ -30,9 +30,10 @@ is production-ready.
 The remaining missing functional path is generalized laser/seed injection on
 the Cowan/CPML target kernel. The no-seed solver and field-plane diagnostics
 are implemented, but production conclusions still require the convergence and
-model checks listed below. In particular, dense-bunch global energy closure
-now remains an explicit numerical production gate; experimental retirement is
-not promoted by this capability audit.
+model checks listed below. In particular, dense-bunch global energy closure is
+now measurable rather than missing, but remains an explicit numerical
+production gate; experimental retirement is not promoted by this capability
+audit.
 
 ## Numerical preflight policy
 
@@ -73,6 +74,8 @@ physics target:
 - disabling the Gauss-consistent initial field, or using its electrostatic
   approximation in a boost frame far from the bunch mean rest frame;
 - experimental retirement use.
+- an enabled runtime energy ledger whose final residual relative to initial
+  boosted kinetic-plus-field energy exceeds its configured warning tolerance.
 
 Detector sample cadence is stored exactly and band tools reject requests above
 their Nyquist limit. The simulator cannot itself prove that an unspecified
@@ -89,9 +92,12 @@ one-electron-equivalent test has the correct sign and scale: a 50--100 eV,
 `+/-0.26 mrad` trajectory far field contained 48.13% of the kinetic loss, and
 `+/-2 mrad` contained 54.88%. The `10^6`-electron test was dominated by a
 different collective/near-field energy change between signal and `K=0`; it
-cannot be reduced to kinetic loss equals one forward-plane flux. Production
-therefore still needs a full-domain stored-field plus boundary-flux ledger and
-dense-bunch convergence.
+cannot be reduced to kinetic loss equals one forward-plane flux. The runtime
+ledger now supplies the missing stored-field, six-face flux, removed-particle
+and prescribed-work terms. Its three-period driven control closed to 3.85% of
+the summed exchange scale (7.996% of initial boosted kinetic-plus-field
+energy), so dense-bunch mesh, macro-particle and initial-padding convergence is
+still required.
 
 ## Resource report
 
@@ -101,7 +107,8 @@ contains:
 
 - current and peak resident memory measured from the operating system;
 - modeled maximum-per-rank and aggregate allocated memory, including field,
-  CPML, halo, particle-capacity, detector and trajectory buffers, plus the
+  CPML, halo, particle-capacity, detector, trajectory and energy-ledger
+  buffers, plus the
   transient four-slab initial Poisson solve when enabled;
 - upper estimates for uncompressed field-plane and trajectory output;
 - a short non-mutating step benchmark and a safety-factored wall-time upper

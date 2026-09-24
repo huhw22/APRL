@@ -102,7 +102,8 @@ namespace fel
       const BoostFrameTransform& frame,
       Double timeBoxSI,
       Double fieldTimeStep,
-      unsigned int substeps)
+      unsigned int substeps,
+      Double* prescribedWorkJ)
   {
     if (substeps == 0 || !(fieldTimeStep > 0.0) ||
         !std::isfinite(fieldTimeStep))
@@ -114,15 +115,36 @@ namespace fel
                                 gridElectric, gridMagnetic);
     const Double particleDt = fieldTimeStep /
       static_cast<Double>(substeps);
+    Double work = 0.0;
     for (unsigned int substep = 0; substep < substeps; ++substep)
       {
+        const FieldVector<Double> startPosition(particle.position);
         FieldVector<Double> electric(gridElectric);
         FieldVector<Double> magnetic(gridMagnetic);
+        FieldVector<Double> prescribedElectric(0.0);
+        FieldVector<Double> prescribedMagnetic(0.0);
         const Double substepTime = std::fma(
           static_cast<Double>(substep), particleDt, timeBoxSI);
-        sources.addPrescribedBox(particle.position, substepTime, frame,
-                                 electric, magnetic);
+        sources.addPrescribedBox(startPosition, substepTime, frame,
+                                 prescribedElectric, prescribedMagnetic);
+        electric += prescribedElectric;
+        magnetic += prescribedMagnetic;
         push(particle, electric, magnetic, particleDt);
+        if (prescribedWorkJ)
+          {
+            FieldVector<Double> endElectric(0.0);
+            FieldVector<Double> endMagnetic(0.0);
+            sources.addPrescribedBox(particle.position,
+              substepTime + particleDt, frame,
+              endElectric, endMagnetic);
+            FieldVector<Double> displacement(particle.position);
+            displacement -= startPosition;
+            prescribedElectric += endElectric;
+            prescribedElectric *= 0.5;
+            work = std::fma(particle.charge,
+              prescribedElectric * displacement, work);
+          }
       }
+    if (prescribedWorkJ) *prescribedWorkJ = work;
   }
 }

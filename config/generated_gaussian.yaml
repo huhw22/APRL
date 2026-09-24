@@ -79,3 +79,14 @@ trajectory:
   buffer_records: 64
   flush_every_samples: 1
   compression: 0
+
+# Optional global particle/field conservation audit. Disabled means no
+# boundary-power loop, MPI reduction, HDF5 buffer, or file.
+energy_ledger:
+  enabled: false
+  directory: output/generated-gaussian
+  filename: energy-ledger.h5
+  sample_interval_steps: 2
+  buffer_records: 64
+  compression: 0
+  warning_relative_tolerance: 0.01
