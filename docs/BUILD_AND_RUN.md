@@ -97,6 +97,22 @@ fields, or a matched signal/baseline pair. Working-memory and output-size
 guards are checked before output creation. See
 [FIELD_PLANE_ANALYSIS.md](FIELD_PLANE_ANALYSIS.md).
 
+The particle/radiation energy-closure report is another lightweight,
+read-only build:
+
+```bash
+cmake -S postprocess/energy_closure -B build-energy-closure \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=mpic++
+cmake --build build-energy-closure -j
+./build-energy-closure/energy_closure \
+  postprocess/energy_closure/example.yaml
+```
+
+It joins two particle planes by ID, performs stable high-gamma kinetic-energy
+differencing, optionally subtracts a matched `K=0` result per particle, and
+compares with either field-plane or trajectory far-field energy. See
+[ENERGY_CLOSURE.md](ENERGY_CLOSURE.md).
+
 ## Convert a legacy text particle file
 
 ```bash

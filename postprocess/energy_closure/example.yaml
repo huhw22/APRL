@@ -1,0 +1,17 @@
+# Compare a forward far-field energy with the particle energy lost between
+# two laboratory particle planes. Paths are relative to this card.
+input:
+  signal_entry_particle_plane: ../../output/signal/detectors/energy-entry.h5
+  signal_exit_particle_plane: ../../output/signal/detectors/energy-exit.h5
+  # These two files are optional as a pair. A matched zero-radiation run is
+  # strongly recommended whenever the expected loss is small.
+  baseline_entry_particle_plane: ../../output/baseline/detectors/energy-entry.h5
+  baseline_exit_particle_plane: ../../output/baseline/detectors/energy-exit.h5
+  # May also be a complete trajectory_radiation /far_field file for a
+  # small-particle cross-check.
+  field_analysis: ../../output/field-plane-analysis.h5
+  require_complete: true
+  require_all_particles: true
+
+output:
+  report: energy-closure-report.yaml

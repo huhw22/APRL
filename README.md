@@ -56,6 +56,12 @@ and selected two-frequency coherence. Stable portions of one run can be
 divided into energy-normalized Hann windows, keeping this large-run radiation
 path independent of trajectory storage.
 
+A lightweight energy-closure diagnostic joins two laboratory particle planes
+by particle ID and compares their stable per-particle kinetic-energy loss with
+the forward field-plane radiation energy. It supports a matched zero-radiation
+run and subtracts that baseline per particle before summation, so high-gamma
+roundoff is not amplified by subtracting two total beam energies.
+
 An alternative, explicitly experimental radiation path ends physical particle
 push/output after the magnetic system and tapers a compact ballistic current
 carrier to zero before the field plane. It does not change the Maxwell kernel
@@ -110,7 +116,12 @@ raising the Maxwell cadence; grid E/B sampling, current deposition and field
 detectors intentionally remain on the field step. The generalized Cowan/CPML
 TF/SF seed-wave correction remains planned work. Production radiation results
 still require problem-scale convergence, initial-field box-padding
-convergence, and reflection validation.
+convergence, reflection validation, and dense-bunch global energy closure.
+A controlled one-electron-equivalent test gives the correct loss sign and the
+same energy scale as its finite-band forward radiation, but the `10^6`-electron
+test is dominated by changing collective/bound-field energy. One downstream
+plane alone cannot close that ledger; stored E/B energy and all boundary fluxes
+remain a production gate.
 
 The inner CPML surface is also the physical particle boundary. A physical
 trajectory ends exactly there and becomes a compact, output-free ballistic
@@ -135,6 +146,7 @@ or particle-boundary I/O.
 - [Field-detector ballistic reference region](docs/FIELD_DETECTOR_REFERENCE.md)
 - [Particle-background field reconstruction](docs/FIELD_RECONSTRUCTION.md)
 - [Field-plane spectrum and coherence analysis](docs/FIELD_PLANE_ANALYSIS.md)
+- [Particle/field energy-closure diagnostic](docs/ENERGY_CLOSURE.md)
 - [Particle retirement and matched power comparison](docs/FIELD_POWER_COMPARISON.md)
 - [Numerical validation status](docs/VALIDATION.md)
 - [Current release audit and production gates](docs/RELEASE_AUDIT.md)

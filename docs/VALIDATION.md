@@ -244,7 +244,70 @@ This benchmark is deliberately a three-period coherent fundamental test, not a
 production approval for high harmonics. Time step, longitudinal and transverse
 resolution, retirement length/gap, aperture, CPML, and long-undulator
 convergence are still required for a physical run. The current simulator also
-warns that a Gauss-consistent initial self-field has not yet been implemented.
+requires box-padding convergence for its Gauss-consistent electrostatic
+initial self-field.
+
+## Particle/field energy closure
+
+A dedicated closure test used the same `gamma=1000`, three-period `K=0.5`,
+30 mm undulator and 128 transverse Gaussian macro-particles. Laboratory
+particle planes bracketed the complete compact fringe support. Energy loss was
+formed per particle from
+
+```text
+(|u_in|^2-|u_out|^2)/(gamma_in+gamma_out)
+```
+
+in extended precision and then accumulated with a compensated sum. This avoids
+subtracting two rounded total beam energies.
+
+The full-charge (`10^6` represented electrons) test is not a two-term energy
+balance. With the Gauss-consistent initial field enabled, the signal particles
+gained `1.82555 nJ`, while the matched `K=0` bunch gained `65.2575 nJ` from
+its evolving collective/near field. Their per-particle difference is therefore
+a nominal `63.4320 nJ` loss, but the matched, background-cleaned forward field
+contains only `3.63257 nJ` over 0--300 eV. The difference includes a large
+change in bound/self-field energy and cannot be labelled radiation loss. It
+shows why a dense charged bunch requires a global ledger containing kinetic
+energy, stored E/B energy and flux through every boundary; a single downstream
+plane is insufficient.
+
+A weak-collective control reduced the total represented charge to one electron
+while retaining 128 fractional macro-particles and the Gauss-consistent initial
+field. Its matched `K=0` kinetic change was zero at the reported precision. The
+undulator case lost
+
+```text
+5.939857680e-21 J.
+```
+
+The independent trajectory far field from the same run gave
+`2.858701852e-21 J` in 50--100 eV and the paraxial `+/-0.26 mrad` rectangle,
+or 48.13% of the particle loss. Expanding the rectangle to `+/-2 mrad` gave
+`3.259794048e-21 J`, or 54.88%. The field-plane/trajectory benchmark above is
+already closed to about one percent for the `+/-0.26 mrad` acceptance. Thus
+the controlled particle loss has the correct sign and order of magnitude, and
+the deliberately finite forward band is smaller as expected. The residual may
+contain frequencies outside 50--100 eV, non-forward flux, bound-field change
+and discretization error; this test does not claim exact global conservation.
+
+Turning off the initial field was useful only as a diagnostic and is not a
+physical closure test. In that path, the undulator run gained `30.4231 nJ`
+while `K=0` stayed unchanged. Reducing total charge from `10^6` electrons to
+one changed the gain to approximately `3.044e-20 J`, demonstrating the
+expected quadratic charge scaling of the grid-mediated term. Increasing
+prescribed-device sampling from about 75 to 270 samples per period did not
+remove it, because particle subcycling does not refine the Maxwell/current
+cadence. Raising macro-particles from 128 to 512 reduced the gain by only about
+12%, not as `1/N`. These runs confirm that disabling the Gauss-consistent field
+creates a large startup/self-field artifact and must not be used to approve
+energy conservation.
+
+The reusable `postprocess/energy_closure` tool generated these reports. It can
+read either a complete field-plane analysis or a complete trajectory far-field
+file. Production approval remains blocked on a full-domain Poynting ledger and
+convergence of the dense-bunch bound-field term, even though the controlled
+weak-collective result is physically consistent at the requested scale.
 
 ## Input-weight, numerical-preflight, and resource smoke tests
 
