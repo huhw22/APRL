@@ -5,6 +5,14 @@ between two fixed laboratory particle planes with the forward radiation energy
 integrated by `field_plane_analysis`. It is a read-only, standalone C++ tool;
 it adds no simulation communication, memory, or output when not run.
 
+The report is explicitly a laboratory-frame observer. It does not mix the
+particle planes with the boosted-frame runtime ledger. Format version 2 also
+reports laboratory mean gamma and rms energy spread at both planes, the
+zero-magnet control exchange, the signal-minus-control device-associated
+particle change, and the part not explained by the collected forward band.
+See `LAB_FRAME_ENERGY_DIAGNOSTICS.md` for the interpretation and the fast
+50 A analytical scale tool.
+
 ## Recommended experiment
 
 Use an entrance plane before the first magnetic interaction boundary and an
@@ -62,6 +70,12 @@ particle kinetic-energy loss should therefore be comparable to emitted
 electromagnetic energy. A single field plane measures only its resolved
 forward band and aperture, so it should normally be no larger than the
 particle loss.
+
+The matched `K=0` particle change is reported as a space-charge plus numerical
+control. It is not renamed as stored near-field energy: an exact near/radiative
+split needs a closed lab surface or equal-lab-time 3D fields. The remaining
+`device_associated_particle_loss - collected_forward_radiation` is therefore
+reported as unresolved rather than assigned to one mechanism.
 
 The comparison is not a universal exact identity. The residual also contains
 radiation through transverse/backward boundaries, frequencies outside the

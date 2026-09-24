@@ -147,6 +147,7 @@ or particle-boundary I/O.
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
 - [Cowan-z kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
 - [Gauss-consistent initial particle self-field](docs/INITIAL_SELF_FIELD.md)
+- [Laboratory-frame energy diagnostics and 50 A scale estimate](docs/LAB_FRAME_ENERGY_DIAGNOSTICS.md)
 - [Particle subcycling and its field-step limits](docs/PARTICLE_SUBCYCLING.md)
 - [CPML-aware particle boundary](docs/PARTICLE_OPEN_BOUNDARY.md)
 - [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)

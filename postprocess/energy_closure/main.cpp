@@ -338,6 +338,10 @@ namespace
     long double total;
     long double positive;
     long double negative;
+    long double meanGammaEntry;
+    long double meanGammaExit;
+    long double sigmaGammaEntry;
+    long double sigmaGammaExit;
     std::size_t missingEntry;
     std::size_t missingExit;
   };
@@ -353,10 +357,15 @@ namespace
   {
     Losses result;
     result.total = result.positive = result.negative = 0.0L;
+    result.meanGammaEntry = result.meanGammaExit = 0.0L;
+    result.sigmaGammaEntry = result.sigmaGammaExit = 0.0L;
     result.missingEntry = result.missingExit = 0;
     CompensatedSum total;
     CompensatedSum positive;
     CompensatedSum negative;
+    CompensatedSum representedMass;
+    CompensatedSum entryGammaMoment;
+    CompensatedSum exitGammaMoment;
     for (std::map<std::uint64_t, ParticleRecord>::const_iterator iterator =
          entry.downstream.begin(); iterator != entry.downstream.end();
          ++iterator)
@@ -397,6 +406,10 @@ namespace
         total.add(energy);
         if (energy >= 0.0L) positive.add(energy);
         else negative.add(energy);
+        const long double weight = before.mass;
+        representedMass.add(weight);
+        entryGammaMoment.add(weight * gammaBefore);
+        exitGammaMoment.add(weight * gammaAfter);
       }
     for (std::map<std::uint64_t, ParticleRecord>::const_iterator iterator =
          exit.downstream.begin(); iterator != exit.downstream.end(); ++iterator)
@@ -413,6 +426,43 @@ namespace
     result.total = total.value();
     result.positive = positive.value();
     result.negative = negative.value();
+    if (representedMass.value() > 0.0L)
+      {
+        result.meanGammaEntry =
+          entryGammaMoment.value() / representedMass.value();
+        result.meanGammaExit =
+          exitGammaMoment.value() / representedMass.value();
+        CompensatedSum entryVarianceMoment;
+        CompensatedSum exitVarianceMoment;
+        for (std::map<std::uint64_t, ParticleRecord>::const_iterator iterator =
+             entry.downstream.begin(); iterator != entry.downstream.end();
+             ++iterator)
+          {
+            const std::map<std::uint64_t, ParticleRecord>::const_iterator found =
+              exit.downstream.find(iterator->first);
+            if (found == exit.downstream.end()) continue;
+            long double entrySquared = 0.0L;
+            long double exitSquared = 0.0L;
+            for (std::size_t axis = 0; axis < 3; ++axis)
+              {
+                const long double entryU = iterator->second.properVelocity[axis];
+                const long double exitU = found->second.properVelocity[axis];
+                entrySquared += entryU * entryU;
+                exitSquared += exitU * exitU;
+              }
+            const long double entryGamma = std::sqrt(1.0L + entrySquared);
+            const long double exitGamma = std::sqrt(1.0L + exitSquared);
+            const long double entryDelta = entryGamma - result.meanGammaEntry;
+            const long double exitDelta = exitGamma - result.meanGammaExit;
+            const long double weight = iterator->second.mass;
+            entryVarianceMoment.add(weight * entryDelta * entryDelta);
+            exitVarianceMoment.add(weight * exitDelta * exitDelta);
+          }
+        result.sigmaGammaEntry = std::sqrt(std::max(0.0L,
+          entryVarianceMoment.value() / representedMass.value()));
+        result.sigmaGammaExit = std::sqrt(std::max(0.0L,
+          exitVarianceMoment.value() / representedMass.value()));
+      }
     return result;
   }
 
@@ -511,8 +561,19 @@ namespace
     const long double ratio = correctedLoss > 0.0L ?
       field.energy / correctedLoss :
       std::numeric_limits<long double>::quiet_NaN();
+    const long double baselineMagnitudeRatio = baseline &&
+      std::abs(correctedLoss) > 0.0L ?
+      std::abs(baseline->total) / std::abs(correctedLoss) :
+      std::numeric_limits<long double>::quiet_NaN();
+    const long double unresolvedFraction = correctedLoss > 0.0L ?
+      residual / correctedLoss :
+      std::numeric_limits<long double>::quiet_NaN();
     output << std::setprecision(18) << std::scientific;
-    output << "format_version: 1\n"
+    output << "format_version: 2\n"
+           << "observer_frame: laboratory\n"
+           << "particle_hypersurface: fixed laboratory-z detector planes\n"
+           << "boosted_runtime_ledger_used: false\n"
+           << "static_magnetic_device_lab_work_J: 0\n"
            << "method: per-particle stable delta-gamma with compensated sums\n"
            << "signal:\n"
            << "  entry_file: " << config.signalEntry << "\n"
@@ -525,7 +586,13 @@ namespace
            << signalExit.upstream << "\n"
            << "  particle_energy_loss_J: " << signal.total << "\n"
            << "  positive_particle_loss_J: " << signal.positive << "\n"
-           << "  negative_particle_loss_J: " << signal.negative << "\n";
+           << "  negative_particle_loss_J: " << signal.negative << "\n"
+           << "  entry_mean_gamma_lab: " << signal.meanGammaEntry << "\n"
+           << "  exit_mean_gamma_lab: " << signal.meanGammaExit << "\n"
+           << "  entry_sigma_gamma_lab: " << signal.sigmaGammaEntry << "\n"
+           << "  exit_sigma_gamma_lab: " << signal.sigmaGammaExit << "\n"
+           << "  delta_sigma_gamma_lab: "
+           << signal.sigmaGammaExit - signal.sigmaGammaEntry << "\n";
     if (baseline && baselineEntry && baselineExit)
       output << "baseline:\n"
              << "  entry_file: " << config.baselineEntry << "\n"
@@ -538,7 +605,13 @@ namespace
              << baselineExit->upstream << "\n"
              << "  particle_energy_loss_J: " << baseline->total << "\n"
              << "  positive_particle_loss_J: " << baseline->positive << "\n"
-             << "  negative_particle_loss_J: " << baseline->negative << "\n";
+             << "  negative_particle_loss_J: " << baseline->negative << "\n"
+             << "  entry_mean_gamma_lab: " << baseline->meanGammaEntry << "\n"
+             << "  exit_mean_gamma_lab: " << baseline->meanGammaExit << "\n"
+             << "  entry_sigma_gamma_lab: " << baseline->sigmaGammaEntry << "\n"
+             << "  exit_sigma_gamma_lab: " << baseline->sigmaGammaExit << "\n"
+             << "  delta_sigma_gamma_lab: "
+             << baseline->sigmaGammaExit - baseline->sigmaGammaEntry << "\n";
     output << "closure:\n"
            << "  baseline_corrected_particle_loss_J: " << correctedLoss << "\n"
            << "  radiation_source: " << field.source << "\n"
@@ -548,7 +621,28 @@ namespace
            << "  radiation_band_min_eV: " << field.minimumPhotonEnergy << "\n"
            << "  radiation_band_max_eV: " << field.maximumPhotonEnergy << "\n"
            << "  field_plane_nyquist_eV: " << field.nyquistPhotonEnergy << "\n"
-           << "interpretation: finite forward aperture and frequency band may make the field energy smaller; equality also requires negligible side/backward flux and matched near-field energy\n";
+           << "lab_energy_budget:\n"
+           << "  observed_signal_particle_loss_J: " << signal.total << "\n";
+    if (baseline)
+      output << "  zero_magnet_control_particle_loss_J: "
+             << baseline->total << "\n";
+    output << "  device_associated_particle_loss_J: " << correctedLoss << "\n"
+           << "  collected_forward_radiation_band_J: " << field.energy << "\n"
+           << "  unresolved_device_associated_energy_J: " << residual << "\n"
+           << "  forward_fraction_of_device_associated_loss: " << ratio << "\n"
+           << "  unresolved_fraction_of_device_associated_loss: "
+           << unresolvedFraction << "\n"
+           << "  abs_control_exchange_to_abs_device_associated_loss: "
+           << baselineMagnitudeRatio << "\n"
+           << "  has_zero_magnet_control: "
+           << (baseline ? "true" : "false") << "\n"
+           << "  near_field_change_directly_measured: false\n"
+           << "  energy_spread_is_a_reservoir: false\n"
+           << "interpretation:\n"
+           << "  - the zero-magnet particle change is a space-charge plus numerical control, not a direct stored-near-field measurement\n"
+           << "  - the unresolved term contains differential bound-field change, side or backward radiation, missed aperture or frequency, and numerical residual\n"
+           << "  - sigma_gamma describes redistribution inside particle kinetic energy and is not added as a separate energy term\n"
+           << "  - only a lab closed-surface flux or equal-lab-time 3D field diagnostic can separate total radiation from retained bound field without this residual\n";
   }
 }
 

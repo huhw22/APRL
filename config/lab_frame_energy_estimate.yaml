@@ -1,0 +1,31 @@
+# Laboratory-frame order-of-magnitude estimate. This is deliberately separate
+# from the boosted-frame runtime ledger.
+beam:
+  average_current_A: 50.0
+  mean_gamma: 1174.0
+  sigma_x_m: 60.0e-6
+  sigma_y_m: 60.0e-6
+  # Optional: when nonzero, also convert per-bunch-metre values to one
+  # equivalent flat-top bunch. Zero leaves the result length-normalized.
+  effective_flat_top_duration_s: 0.0
+
+undulator:
+  period_m: 2.34e-2
+  strength_parameter: 1.093
+  # The user did not specify a device length for this estimate. One hundred
+  # periods is an explicit illustration; the report also gives per-period
+  # values so this number can be rescaled without ambiguity.
+  periods: 100
+
+estimate:
+  # The absolute energy of a long bunch's bound field requires an outer scale.
+  # Ten rms radii is used only as a compact reference. Changes caused by a
+  # radius change are independent of this cutoff in the long-beam model.
+  outer_radius_m: 600.0e-6
+  # 1 means the ordinary incoherent single-electron sum. A coherent estimate
+  # must be supplied manually from a separately justified form factor.
+  manual_coherent_enhancement: 1.0
+  relative_sigma_changes: [0.01, 0.10]
+
+output:
+  report: ../output/lab-frame-energy-estimate.yaml

@@ -81,6 +81,14 @@ target_compile_options(energy_ledger_report PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
+add_executable(lab_frame_energy_estimate
+  utilities/lab_frame_energy_estimate.cpp
+)
+target_link_libraries(lab_frame_energy_estimate PRIVATE yaml-cpp)
+target_compile_options(lab_frame_energy_estimate PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
+)
+
 install(TARGETS simulator particle_text_to_hdf5 undulator_resonance
-  energy_ledger_report
+  energy_ledger_report lab_frame_energy_estimate
   RUNTIME DESTINATION bin)
