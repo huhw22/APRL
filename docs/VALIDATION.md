@@ -42,6 +42,32 @@ against a physically matched analytical solution. A matched high-gamma
 benchmark is reported below. It diagnoses the power-comparison path but does
 not replace a production high-harmonic convergence study.
 
+## Prescribed-device particle subcycling
+
+An eight-particle, `gamma=4` planar-undulator test deliberately used only
+`1.667701552` Maxwell steps per one-micrometre period. Requesting eight
+particle samples selected five Boris substeps and realized `8.33850776`
+analytical-device samples per period. A reference run reduced Cowan-z `dz`
+and its time step by five, retained the same physical box and detector, and
+therefore needed one particle step per Maxwell step.
+
+At the fixed laboratory particle plane, all eight particle IDs matched. The
+coarse-grid five-substep result differed from the five-times-refined reference
+by at most:
+
+```text
+position norm                         5.90055e-13 m
+arrival time                          2.79510e-23 s
+relative proper velocity              6.33332e-5
+relative gamma                         2.01306e-7
+```
+
+With the same coarse Maxwell step but no particle subdivision, those maxima
+were `4.72221e-8 m`, `6.44754e-18 s`, `2.73793e-3`, and `2.39028e-5`,
+respectively. This validates the intended analytical-device orbit use, not a
+relaxation of Maxwell sampling: grid E/B, current deposition and detector
+cadence were still evaluated at the field step.
+
 ## Field reconstruction
 
 Two checks have been completed:

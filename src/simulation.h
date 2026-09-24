@@ -101,6 +101,7 @@ namespace fel
     Double trajectoryRhythmSI_;
     Double nextTrajectorySampleTime_;
     unsigned int trajectorySamplesSinceFlush_;
+    unsigned int particleSubsteps_;
 
     Double timeBoxSI_;
     Double totalTimeBoxSI_;

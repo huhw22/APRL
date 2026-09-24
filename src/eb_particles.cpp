@@ -93,4 +93,36 @@ namespace fel
                              electric, magnetic);
     push(particle, electric, magnetic, timeStep);
   }
+
+  void RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
+      RelativisticParticleSI& particle,
+      const EBFieldGrid& fields,
+      const FieldVector<Double>& gridOriginSI,
+      const SIFieldSourceSet& sources,
+      const BoostFrameTransform& frame,
+      Double timeBoxSI,
+      Double fieldTimeStep,
+      unsigned int substeps)
+  {
+    if (substeps == 0 || !(fieldTimeStep > 0.0) ||
+        !std::isfinite(fieldTimeStep))
+      throw std::invalid_argument(
+        "Particle subcycling needs positive finite dt and substeps");
+    FieldVector<Double> gridElectric(0.0);
+    FieldVector<Double> gridMagnetic(0.0);
+    fields.sampleFieldsPosition(particle.position, gridOriginSI,
+                                gridElectric, gridMagnetic);
+    const Double particleDt = fieldTimeStep /
+      static_cast<Double>(substeps);
+    for (unsigned int substep = 0; substep < substeps; ++substep)
+      {
+        FieldVector<Double> electric(gridElectric);
+        FieldVector<Double> magnetic(gridMagnetic);
+        const Double substepTime = std::fma(
+          static_cast<Double>(substep), particleDt, timeBoxSI);
+        sources.addPrescribedBox(particle.position, substepTime, frame,
+                                 electric, magnetic);
+        push(particle, electric, magnetic, particleDt);
+      }
+  }
 }

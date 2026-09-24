@@ -28,6 +28,7 @@ mesh:
   duration: 0.01
   boost_gamma: 2.0
   particle_steps_per_undulator_period: 32
+  maximum_particle_substeps: 4096
 ```
 
 `field_solver` is required. Use `cowan-z` for the z-priority controlled-
@@ -67,16 +68,23 @@ integer quotient/remainder offsets; ranks may own counts differing by one, but
 no floating-point division determines a slab boundary. Startup prints the
 counts, cell sizes, derived extents and per-rank z-count range.
 
-`duration` is boosted-frame time. `particle_steps_per_undulator_period` is a
-required hard lower bound, not a subcycling request. After the real particles
-are read and boosted, the program derives the largest laboratory z advance
-made by any particle in one field step and checks it against the shortest
-configured undulator period. A violation exits before field allocation and
-reports the maximum time step and, for Cowan-z, the maximum z `cell_size` in
-both SI and input units. The current solver has no particle subcycling:
-achieving a large value such as the 1000-or-more samples needed by some
-high-harmonic studies therefore requires refining the field time step. The
-value `1` in the committed examples is only for smoke testing.
+`duration` is boosted-frame time. `particle_steps_per_undulator_period` is the
+minimum requested Boris sampling of the shortest configured undulator. After
+the real particles are read and boosted, the program derives the largest
+laboratory z advance made by any particle in one Maxwell step and chooses the
+smallest integer number of particle substeps that meets the request.
+`maximum_particle_substeps` is a positive safety/cost ceiling (default 4096).
+Exceeding it is a hard preflight error with both the required ceiling and a
+field-step/z-cell refinement suggestion.
+
+The substeps resample analytical laboratory devices along the evolving
+particle orbit. The staggered grid E/B sample is held fixed during the
+enclosing Maxwell step, and charge-conserving current deposition and detector
+output use the start-to-final-position field-step chord. Thus this setting
+improves orbit integration through prescribed devices, but it does not raise
+the Maxwell Nyquist frequency, resolve intra-step radiation current, or permit
+a coarser radiation grid. The value `1` in the committed examples is only for
+smoke testing. See `docs/PARTICLE_SUBCYCLING.md` for the numerical contract.
 
 ## Field boundary
 

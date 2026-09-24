@@ -172,7 +172,8 @@ namespace fel
       pmlCarriers_(), retirementCarriers_(), particleBoundary_(), detectors_(),
       trajectoryWriter_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
-      trajectorySamplesSinceFlush_(0), timeBoxSI_(0.0),
+      trajectorySamplesSinceFlush_(0), particleSubsteps_(1),
+      timeBoxSI_(0.0),
       totalTimeBoxSI_(0.0), step_(0), interrupted_(false),
       configuredStopReached_(false), loopWallStart_(0.0),
       estimatedStepSeconds_(0.0), estimatedMaximumSteps_(0),
@@ -447,8 +448,6 @@ namespace fel
         if (!config_.initialSelfField.enabled)
           logRoot(communicator_,
             "WARNING: initial_self_field is disabled; the Maxwell state does not satisfy Gauss's law for the input bunch and startup radiation can contaminate the result.");
-        logRoot(communicator_,
-          "WARNING: particle subcycling is not implemented; the E/B field step must resolve every prescribed device field.");
       }
   }
 
@@ -541,9 +540,9 @@ namespace fel
         {
           RelativisticParticleSI particle(particles_[index]);
           const FieldVector<Double> start(particle.position);
-          RelativisticBorisPusher::pushFromGridAndPrescribedLab(
+          RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
             particle, *fields_, localOriginBox_, sources_, frame_,
-            timeBoxSI_, globalGeometry_.dt);
+            timeBoxSI_, globalGeometry_.dt, particleSubsteps_);
           bool local = true;
           for (unsigned int axis = 0; axis < 3; ++axis)
             {
@@ -1084,6 +1083,7 @@ namespace fel
     Double maximumAdvance = 0.0;
     MPI_Allreduce(&localMaximumAdvance, &maximumAdvance, 1, MPI_DOUBLE,
                   MPI_MAX, communicator_);
+    particleSubsteps_ = 1;
     Double minimumUndulatorPeriod =
       std::numeric_limits<Double>::infinity();
     for (std::size_t magnet = 0; magnet < config_.magnets.size(); ++magnet)
@@ -1095,25 +1095,44 @@ namespace fel
       {
         if (!(maximumAdvance > 0.0) || !std::isfinite(maximumAdvance))
           throw std::runtime_error(
-            "Cannot derive a positive lab advance per particle step for undulator sampling");
-        const Double actualSteps =
+            "Cannot derive a positive lab advance per Maxwell step for undulator sampling");
+        const Double fieldSteps =
           minimumUndulatorPeriod / maximumAdvance;
         const Double requestedSteps = static_cast<Double>(
           config_.mesh.particleStepsPerUndulatorPeriod);
-        if (actualSteps + 128.0 *
-              std::numeric_limits<Double>::epsilon() * requestedSteps <
-            requestedSteps)
+        const Double substepRatio = requestedSteps / fieldSteps;
+        const Double roundingTolerance = 128.0 *
+          std::numeric_limits<Double>::epsilon() *
+          std::max(1.0, std::abs(substepRatio));
+        const Double requiredSubstepsReal = std::max(
+          1.0, std::ceil(substepRatio - roundingTolerance));
+        if (!std::isfinite(requiredSubstepsReal) ||
+            requiredSubstepsReal > static_cast<Double>(
+              std::numeric_limits<unsigned int>::max()))
+          throw std::runtime_error(
+            "Required particle substep count is outside the supported unsigned-int range; refine the Maxwell time step");
+        const unsigned int requiredSubsteps =
+          static_cast<unsigned int>(requiredSubstepsReal);
+        if (requiredSubsteps > config_.mesh.maximumParticleSubsteps)
           {
-            const Double maximumDt = globalGeometry_.dt *
-              actualSteps / requestedSteps;
+            const Double maximumDt = globalGeometry_.dt * fieldSteps *
+              static_cast<Double>(config_.mesh.maximumParticleSubsteps) /
+              requestedSteps;
             const Double maximumDz = SI::c * maximumDt;
             std::ostringstream message;
             message << std::setprecision(10)
-                    << "Undulator sampling has only " << actualSteps
-                    << " particle steps per shortest period "
-                    << minimumUndulatorPeriod << " m, below the requested "
+                    << "Undulator integration requires "
+                    << requiredSubsteps
+                    << " particle substeps per Maxwell step, above "
+                       "mesh.maximum_particle_substeps="
+                    << config_.mesh.maximumParticleSubsteps
+                    << ". The shortest period has " << fieldSteps
+                    << " Maxwell steps and requests "
                     << config_.mesh.particleStepsPerUndulatorPeriod
-                    << ". Reduce the field time step to at most "
+                    << " particle samples. Increase "
+                       "mesh.maximum_particle_substeps to at least "
+                    << requiredSubsteps
+                    << ", or reduce the Maxwell time step to at most "
                     << maximumDt << " s";
             if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
               message << " by setting mesh.cell_size z to at most "
@@ -1126,16 +1145,23 @@ namespace fel
                          "derived from all three spacings.";
             throw std::runtime_error(message.str());
           }
+        particleSubsteps_ = requiredSubsteps;
         if (rank_ == 0)
           {
             std::ostringstream message;
             message << std::setprecision(10)
-                    << "Particle-device sampling guard passed: minimum "
-                       "steps per undulator period=" << actualSteps
-                    << ", required="
+                    << "Particle subcycling: Maxwell steps per shortest "
+                       "undulator period=" << fieldSteps
+                    << ", Boris substeps per Maxwell step="
+                    << particleSubsteps_
+                    << ", realized prescribed-device samples per period="
+                    << fieldSteps * static_cast<Double>(particleSubsteps_)
+                    << ", requested="
                     << config_.mesh.particleStepsPerUndulatorPeriod
                     << ", shortest period=" << minimumUndulatorPeriod
-                    << " m.";
+                    << " m. Grid E/B, charge-conserving current deposition, "
+                       "and detector cadence remain on the Maxwell step; "
+                       "subcycling does not relax radiation-band field sampling.";
             logRoot(communicator_, message.str());
           }
       }
@@ -2200,9 +2226,9 @@ namespace fel
       {
         RelativisticParticleSI particle = particles_[index];
         const FieldVector<Double> start(particle.position);
-        RelativisticBorisPusher::pushFromGridAndPrescribedLab(
+        RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
           particle, *fields_, localOriginBox_, sources_, frame_,
-          timeBoxSI_, globalGeometry_.dt);
+          timeBoxSI_, globalGeometry_.dt, particleSubsteps_);
 
         ParticleBoundaryHit diagnosticHit;
         ParticleBoundaryHit cpmlHit;

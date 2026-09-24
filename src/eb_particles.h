@@ -56,6 +56,20 @@ namespace fel
         const BoostFrameTransform& frame,
         Double timeBoxSI,
         Double timeStep);
+
+    /* Hold the staggered Maxwell sample fixed over one field step while
+     * resolving PrescribedLab devices with smaller Boris steps. This keeps
+     * MPI ownership independent of the substep count; Maxwell current and
+     * detector cadence remain tied to the enclosing field step. */
+    static void pushFromGridAndPrescribedLabSubcycled(
+        RelativisticParticleSI& particle,
+        const EBFieldGrid& fields,
+        const FieldVector<Double>& gridOriginSI,
+        const SIFieldSourceSet& sources,
+        const BoostFrameTransform& frame,
+        Double timeBoxSI,
+        Double fieldTimeStep,
+        unsigned int substeps);
   };
 }
 

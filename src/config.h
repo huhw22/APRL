@@ -29,6 +29,7 @@ namespace fel
     Double duration;
     Double boostGamma;
     unsigned int particleStepsPerUndulatorPeriod;
+    unsigned int maximumParticleSubsteps;
     EBMaxwellSolver fieldSolver;
 
     MeshConfig();

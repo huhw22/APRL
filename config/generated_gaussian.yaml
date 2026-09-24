@@ -25,6 +25,7 @@ mesh:
   boost_gamma: 2.0
   # Smoke-test minimum only; production high-harmonic cards need much more.
   particle_steps_per_undulator_period: 1
+  maximum_particle_substeps: 4096
 
 boundary:
   type: cpml

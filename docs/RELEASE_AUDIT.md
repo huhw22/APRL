@@ -22,13 +22,13 @@ is production-ready.
 | Field-plane background tools | Partially implemented | Uniform-motion background reconstruction and matched-baseline band power/energy comparison exist. |
 | Full field-plane radiation analysis | **Missing** | There is no durable detector-to-full-spectrum, mutual spectral density and spatial-coherence pipeline yet. Existing power comparison is not a substitute. |
 | Initial particle self-field | Implemented with boundary caveats | A distributed CIC/Poisson projection enforces the interior discrete Gauss law and releases all potential state before E/B advance. Box padding and the near-rest-frame electrostatic assumption still require convergence. |
-| Particle subcycling | **Missing** | Particle and field steps are identical. The new undulator sampling guard can force a fine field grid but cannot reduce that cost. |
+| Particle subcycling | Implemented for prescribed devices | Automatic Boris substeps resolve analytical laboratory devices. Grid E/B, current deposition and detector cadence remain on the Maxwell step, which still sets radiation bandwidth. |
 | Laser/seed injection | **Missing on the target kernel** | The generalized Cowan/CPML TF/SF injection remains the principal unimplemented source path. |
 | Particle retirement | Experimental | It is not exactly charge-continuous and requires a matched zero-radiation baseline plus convergence tests. |
 
-The release therefore is **not** complete apart from laser injection. It is a
-coherent no-seed development solver with working diagnostics, but the two
-other bold missing areas are production gates separate from laser injection.
+The release is therefore **not** complete. It is a coherent no-seed
+development solver with working diagnostics, but full field-plane radiation
+analysis remains a production gate separate from laser injection.
 
 ## Numerical preflight policy
 
@@ -47,8 +47,10 @@ violate the selected model or input contract:
 - convergence and post-check residual of the enabled CIC/Poisson initial
   Gauss-field projection, with all CIC charge confined to interior
   zero-potential-solver vertices;
-- at least `mesh.particle_steps_per_undulator_period` actual steps across the
-  shortest undulator period, computed from the fastest loaded particle;
+- enough automatically selected Boris substeps to satisfy
+  `mesh.particle_steps_per_undulator_period` across the shortest undulator for
+  the fastest loaded particle, without exceeding
+  `mesh.maximum_particle_substeps`;
 - detector, retirement, magnetic interaction, stop and frequency-protection
   placement rules documented by the input-card specification.
 
@@ -66,7 +68,7 @@ physics target:
   accumulation instead of subtracting two rounded total beam energies;
 - disabling the Gauss-consistent initial field, or using its electrostatic
   approximation in a boost frame far from the bunch mean rest frame;
-- absence of particle subcycling and experimental retirement use.
+- experimental retirement use.
 
 Detector sample cadence is stored exactly and band tools reject requests above
 their Nyquist limit. The simulator cannot itself prove that an unspecified

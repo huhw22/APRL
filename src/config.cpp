@@ -277,6 +277,7 @@ namespace fel
   MeshConfig::MeshConfig()
     : cellSize(0.0), extent(0.0), center(0.0), duration(0.0),
       boostGamma(1.0), particleStepsPerUndulatorPeriod(1024),
+      maximumParticleSubsteps(4096),
       fieldSolver(EBMaxwellSolver::CowanZ)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -465,10 +466,25 @@ namespace fel
     result.mesh.boostGamma = finiteDouble(required(mesh, "boost_gamma"),
       "boost gamma");
     result.mesh.fieldSolver = fieldSolver(required(mesh, "field_solver"));
+    const std::size_t particleSteps = positiveSize(
+      required(mesh, "particle_steps_per_undulator_period"),
+      "particle_steps_per_undulator_period");
+    if (particleSteps > std::numeric_limits<unsigned int>::max())
+      throw configError(mesh["particle_steps_per_undulator_period"],
+        "particle_steps_per_undulator_period exceeds the unsigned-int range");
     result.mesh.particleStepsPerUndulatorPeriod =
-      static_cast<unsigned int>(positiveSize(
-        required(mesh, "particle_steps_per_undulator_period"),
-        "particle_steps_per_undulator_period"));
+      static_cast<unsigned int>(particleSteps);
+    if (mesh["maximum_particle_substeps"])
+      {
+        const std::size_t maximumSubsteps = positiveSize(
+          mesh["maximum_particle_substeps"],
+          "maximum_particle_substeps");
+        if (maximumSubsteps > std::numeric_limits<unsigned int>::max())
+          throw configError(mesh["maximum_particle_substeps"],
+            "maximum_particle_substeps exceeds the unsigned-int range");
+        result.mesh.maximumParticleSubsteps =
+          static_cast<unsigned int>(maximumSubsteps);
+      }
 
     const YAML::Node boundary = required(root, "boundary");
     if (!boundary.IsMap())
