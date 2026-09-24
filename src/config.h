@@ -22,8 +22,9 @@ namespace fel
 
   struct MeshConfig
   {
-    FieldVector<Double> lengths;
-    FieldVector<Double> resolution;
+    std::size_t cells[3];
+    FieldVector<Double> cellSize;
+    FieldVector<Double> extent; /* derived once as cells * cellSize */
     FieldVector<Double> center;
     Double duration;
     Double boostGamma;

@@ -22,8 +22,8 @@ Particle HDF5 positions are always metres and do not inherit the YAML unit.
 ```yaml
 mesh:
   field_solver: cowan-z
-  lengths: [40.0, 40.0, 12.0]
-  resolution: [1.0, 1.0, 0.2]
+  cells: [40, 40, 60]
+  cell_size: [1.0, 1.0, 0.2]
   center: [0.0, 0.0, 0.0]
   duration: 0.01
   boost_gamma: 2.0
@@ -36,10 +36,10 @@ the same staggered E/B lattice; neither allocates A/phi. The Cowan path applies
 the transverse smoothing directly while evaluating Faraday's law, rather than
 storing three extra smoothed-field volumes.
 
-For `cowan-z`, z must have the smallest mesh spacing: `dx >= dz` and
+For `cowan-z`, z must have the smallest cell size: `dx >= dz` and
 `dy >= dz`. The program checks this before allocating fields or reading the
-particle file, exits on violation, and reports a valid transverse cell-count
-and spacing suggestion derived from the configured `dz`. Its time step is
+particle file, exits on violation, and reports the minimum valid transverse
+`cell_size` derived from the configured `dz`. Its time step is
 `dt = dz/c`, which makes resolved vacuum propagation exactly dispersion-free
 on the z axis. Startup logging reports the squared aspect ratios, all Cowan
 stencil coefficients, and transverse-axis phase/group velocity ratios at 16
@@ -51,19 +51,32 @@ configuration that combines `cowan-z` with a nonempty `incident_waves` list is
 rejected before particle input. Use `yee` for seed-injection regression until
 the generalized Cowan TF/SF correction is implemented.
 
-`lengths`, `resolution`, and `center` describe the boosted computational box.
-Each length must be an integral number of cells, every dimension needs at
-least three cells, and z needs at least two cells per MPI rank. `duration` is
-boosted-frame time. `particle_steps_per_undulator_period` is a required hard
-lower bound, not a subcycling request. After the real particles are read and
-boosted, the program derives the largest laboratory z advance made by any
-particle in one field step and checks it against the shortest configured
-undulator period. A violation exits before field allocation and reports the
-maximum time step and, for Cowan-z, the maximum `dz` in both SI and input
-units. The current solver has no particle subcycling: achieving a large value
-such as the 1000-or-more samples needed by some high-harmonic studies therefore
-requires refining the field time step. The value `1` in the committed examples
-is only for smoke testing.
+`cells`, `cell_size`, and `center` describe the boosted computational box.
+`cells` contains the authoritative integer counts and each direction needs at
+least three cells; z additionally needs at least two cells per MPI rank.
+`cell_size` is converted to SI once. The full physical extent is then derived
+only by multiplication:
+
+```text
+extent_i = cells_i * cell_size_i.
+```
+
+The obsolete `lengths` and `resolution` keys are rejected rather than mixed
+with the new contract. MPI z slabs are formed from the integer z count using
+integer quotient/remainder offsets; ranks may own counts differing by one, but
+no floating-point division determines a slab boundary. Startup prints the
+counts, cell sizes, derived extents and per-rank z-count range.
+
+`duration` is boosted-frame time. `particle_steps_per_undulator_period` is a
+required hard lower bound, not a subcycling request. After the real particles
+are read and boosted, the program derives the largest laboratory z advance
+made by any particle in one field step and checks it against the shortest
+configured undulator period. A violation exits before field allocation and
+reports the maximum time step and, for Cowan-z, the maximum z `cell_size` in
+both SI and input units. The current solver has no particle subcycling:
+achieving a large value such as the 1000-or-more samples needed by some
+high-harmonic studies therefore requires refining the field time step. The
+value `1` in the committed examples is only for smoke testing.
 
 ## Field boundary
 
@@ -407,7 +420,9 @@ protected, not necessarily the undulator resonance centre. The same detector
 also reserves the conservative left causal interval
 
 ```text
-rho_guard       = sqrt(mesh.lengths.x^2 + mesh.lengths.y^2)
+extent_x        = mesh.cells.x * mesh.cell_size.x
+extent_y        = mesh.cells.y * mesh.cell_size.y
+rho_guard       = sqrt(extent_x^2 + extent_y^2)
 causal_distance = gamma_max * rho_guard
 causal_z         = detector_z - causal_distance
 ```
@@ -493,13 +508,15 @@ its sampling plane. Detector names are unique and may contain letters, digits,
 After laboratory particles are read, the field detector derives
 
 ```text
-rho_guard         = sqrt(mesh.lengths.x^2 + mesh.lengths.y^2)
+extent_x          = mesh.cells.x * mesh.cell_size.x
+extent_y          = mesh.cells.y * mesh.cell_size.y
+rho_guard         = sqrt(extent_x^2 + extent_y^2)
 gamma_guard       = maximum initial laboratory particle gamma
 reference_length  = gamma_guard * rho_guard
 reference_z       = detector_z - reference_length
 ```
 
-The mesh lengths are full transverse widths, so this is a deliberately
+The multiplied mesh extents are full transverse widths, so this is a deliberately
 conservative full-diagonal rule. When a physical particle crosses
 `reference_z` downstream, the detector records one laboratory position,
 proper velocity, charge, mass, and weight. This record defines a virtual

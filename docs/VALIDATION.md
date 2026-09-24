@@ -219,3 +219,20 @@ transform. The reported individual-electron lab-energy roundoff scale was
 by itself validate a small radiative energy loss, which still requires
 per-particle gamma differences and compensated or extended-precision
 accumulation.
+
+## Integer mesh and unequal-slab regression
+
+The committed mesh cards now use `cells: [40, 40, 60]` and
+`cell_size: [1.0, 1.0, 0.2]`. The global physical extent is produced by
+multiplication; no length/spacing quotient is rounded into a cell count.
+
+A seven-rank generated-Gaussian run deliberately divided 60 z cells into
+unequal slabs. Startup reported integer slab counts in `[8, 9]` with remainder
+4, and the run reached its configured stop after 13 steps. The same migrated
+card also completed the two-rank HDF5 field/particle-detector smoke test.
+
+Additional negative tests rejected a fractional cell count, rejected the old
+`lengths`/`resolution` keys with a direct migration message, and rejected a
+Cowan card with `dx < dz` while recommending the required x `cell_size`.
+These checks validate deterministic grid construction and input diagnostics;
+they are not a claim that every MPI decomposition has identical performance.

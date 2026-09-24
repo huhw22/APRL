@@ -254,12 +254,14 @@ namespace fel
       const FieldVector<Double>& localOriginSI,
       const EBGridGeometry& globalGeometry,
       const FieldVector<Double>& globalOriginSI,
+      std::size_t localZOffset,
       bool retainSpatialFlux)
     : localGeometry_(localGeometry), localOriginSI_(localOriginSI),
       globalGeometry_(globalGeometry), globalOriginSI_(globalOriginSI),
-      localLowerZSI_(localOriginSI[2]),
-      localUpperZSI_(localOriginSI[2] +
-        static_cast<Double>(localGeometry.nz) * localGeometry.dz),
+      localLowerZSI_(std::fma(static_cast<Double>(localZOffset),
+        globalGeometry.dz, globalOriginSI[2])),
+      localUpperZSI_(std::fma(static_cast<Double>(localZOffset +
+        localGeometry.nz), globalGeometry.dz, globalOriginSI[2])),
       retainSpatialFlux_(retainSpatialFlux)
   {
     const Double spacing[3] = {
@@ -271,8 +273,8 @@ namespace fel
     for (unsigned int axis = 0; axis < 3; ++axis)
       {
         globalLowerSI_[axis] = globalOriginSI_[axis];
-        globalUpperSI_[axis] = globalOriginSI_[axis] +
-          static_cast<Double>(cells[axis]) * spacing[axis];
+        globalUpperSI_[axis] = std::fma(
+          static_cast<Double>(cells[axis]), spacing[axis], globalOriginSI_[axis]);
         globalToleranceSI_[axis] = coordinateTolerance(
           globalLowerSI_[axis], globalUpperSI_[axis]);
       }

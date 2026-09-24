@@ -13,6 +13,11 @@ for the configured z direction; the standard Yee update remains as a
 regression option. Particles are advanced self-consistently with those fields
 while laboratory seed fields and magnetic devices are converted through an
 explicit Lorentz boost. A/phi is not part of the evolution state.
+The mesh input treats integer cell counts and physical cell sizes as the only
+authoritative geometry. Full extents are obtained by multiplication, and MPI z
+slabs use integer quotient/remainder offsets, avoiding a floating length/spacing
+division when constructing unequal-rank partitions.
+
 
 The main radiation result is a fixed laboratory field plane. Each field plane
 can own a diagnostic-only ballistic-reference region on its left: particles

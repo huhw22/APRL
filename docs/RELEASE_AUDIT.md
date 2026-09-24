@@ -11,6 +11,7 @@ is production-ready.
 | Particle input | Implemented | Parallel HDF5 v2 supports per-record relative weights; v1 remains equal-weight compatible. A bounded-memory text converter is provided. |
 | Generated beam | Implemented for tests | Deterministic, uncorrelated Gaussian with total electrons and macro-particle count; it is not a beam-preparation model. |
 | Relativistic transform | Implemented and audited | Free-drift simultaneity placement, SI E/B transforms and light-front longitudinal momentum transforms are checked by a lab/boost round trip. |
+| Mesh geometry | Implemented and audited | YAML supplies integer `cells` and physical `cell_size`; extents use multiplication and MPI slab offsets/counts remain integer. Old length/resolution inference is rejected. |
 | Maxwell/particle loop | Implemented for the no-seed path | Direct SI E/B Cowan-z or Yee update, Boris push, charge-conserving current deposition and MPI slab migration. |
 | Field boundary | Implemented for no-seed Cowan runs | Compact CFS-CPML with checked geometry and particle-carrier treatment. Seed-wave TF/SF plus Cowan/CPML is not implemented. |
 | Particle boundary | Implemented | Physical histories stop at CPML entry; output-free carriers damp current and export residual charge at the outer face. |
@@ -35,6 +36,8 @@ The following conditions are hard errors because continuing would knowingly
 violate the selected model or input contract:
 
 - Cowan-z geometry/stability restrictions and CPML/MPI layer geometry;
+- positive integer mesh counts, positive finite cell sizes, finite multiplied
+  extents and at least two longitudinal cells on every MPI rank;
 - initial bunch placement outside the first element interaction region and
   inside the boosted longitudinal box;
 - positive finite particle weights, preserved electron charge-to-mass ratio,

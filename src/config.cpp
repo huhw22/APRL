@@ -94,6 +94,25 @@ namespace fel
         }
     }
 
+    void meshCells(const YAML::Node& node, std::size_t result[3])
+    {
+      if (!node.IsSequence() || node.size() != 3)
+        throw configError(node,
+          "mesh cells must contain exactly three positive integers");
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          result[axis] = positiveSize(node[axis], "mesh cells");
+          if (result[axis] < 3)
+            throw configError(node[axis],
+              "each mesh direction needs at least three cells");
+          if (static_cast<long double>(result[axis]) >
+              std::ldexp(1.0L, std::numeric_limits<Double>::digits))
+            throw configError(node[axis],
+              "mesh cell count exceeds the exactly representable double "
+              "index range");
+        }
+    }
+
     template<typename T>
     FieldVector<T> vector3(const YAML::Node& node, const std::string& name)
     {
@@ -256,10 +275,12 @@ namespace fel
   UnitSystem::UnitSystem() : length(1.0), time(1.0) {}
 
   MeshConfig::MeshConfig()
-    : lengths(0.0), resolution(0.0), center(0.0), duration(0.0),
+    : cellSize(0.0), extent(0.0), center(0.0), duration(0.0),
       boostGamma(1.0), particleStepsPerUndulatorPeriod(1024),
       fieldSolver(EBMaxwellSolver::CowanZ)
-  {}
+  {
+    cells[0] = cells[1] = cells[2] = 0;
+  }
 
   BoundaryConfig::BoundaryConfig()
     : type(EBBoundaryType::Pec), cpml()
@@ -409,10 +430,28 @@ namespace fel
       }
 
     const YAML::Node mesh = required(root, "mesh");
-    result.mesh.lengths = finiteVector3(required(mesh, "lengths"),
-      "mesh lengths", result.inputUnits.length);
-    result.mesh.resolution = finiteVector3(required(mesh, "resolution"),
-      "mesh resolution", result.inputUnits.length);
+    if (mesh["lengths"] || mesh["resolution"])
+      throw configError(mesh,
+        "mesh.lengths and mesh.resolution are obsolete; specify integer "
+        "mesh.cells and physical mesh.cell_size instead");
+    meshCells(required(mesh, "cells"), result.mesh.cells);
+    result.mesh.cellSize = finiteVector3(required(mesh, "cell_size"),
+      "mesh cell_size", result.inputUnits.length);
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        if (!(result.mesh.cellSize[axis] > 0.0))
+          throw configError(mesh["cell_size"][axis],
+            "mesh cell_size values must be positive");
+        const long double length =
+          static_cast<long double>(result.mesh.cells[axis]) *
+          static_cast<long double>(result.mesh.cellSize[axis]);
+        if (!(length > 0.0L) ||
+            length > static_cast<long double>(
+              std::numeric_limits<Double>::max()))
+          throw configError(mesh["cells"][axis],
+            "mesh cells * cell_size produces an invalid physical extent");
+        result.mesh.extent[axis] = static_cast<Double>(length);
+      }
     result.mesh.center = mesh["center"] ?
       finiteVector3(mesh["center"], "mesh center", result.inputUnits.length) :
       FieldVector<Double>(0.0);
@@ -922,7 +961,7 @@ namespace fel
           lastMagneticExit = std::max(lastMagneticExit,
             result.magnets[i].interactionExitLab());
         const Double margin = result.mesh.boostGamma *
-          result.mesh.resolution[2];
+          result.mesh.cellSize[2];
         if (!result.magnets.empty() &&
             result.particleRetirement.entranceZ <
               lastMagneticExit + margin)

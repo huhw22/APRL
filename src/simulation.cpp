@@ -125,50 +125,6 @@ namespace fel
       return carrier;
     }
 
-    std::size_t exactCells(Double length, Double resolution,
-                           const char* axis)
-    {
-      if (!(length > 0.0) || !(resolution > 0.0) ||
-          !std::isfinite(length) || !std::isfinite(resolution))
-        throw std::invalid_argument("E/B mesh lengths and resolutions must be positive");
-      const Double requested = length / resolution;
-      const std::size_t cells = static_cast<std::size_t>(
-        std::llround(requested));
-      const Double error = std::abs(static_cast<Double>(cells) - requested);
-      if (cells < 3 || error > 1.0e-9 * std::max(1.0, requested))
-        throw std::invalid_argument(std::string("E/B mesh on axis ") + axis +
-          " must contain an integer number of at least three cells");
-      return cells;
-    }
-
-    std::string transverseGridRecommendation(
-        const char* axis, Double length, Double dz, Double inputLengthUnit)
-    {
-      const Double cellsReal = length / dz;
-      const Double tolerance = 64.0 *
-        std::numeric_limits<Double>::epsilon() *
-        std::max(1.0, std::abs(cellsReal));
-      const std::size_t maximumCells = cellsReal >= 1.0 ?
-        static_cast<std::size_t>(std::floor(cellsReal + tolerance)) : 0;
-      std::ostringstream message;
-      message << axis << " spacing must be >= dz=" << dz << " m";
-      if (maximumCells >= 3)
-        {
-          const Double recommended = length /
-            static_cast<Double>(maximumCells);
-          message << "; for the configured " << axis
-                  << " length use at most " << maximumCells
-                  << " cells, for example resolution="
-                  << recommended << " m ("
-                  << recommended / inputLengthUnit
-                  << " in the configured length unit)";
-        }
-      else
-        message << "; this transverse length cannot contain three valid cells, so increase it to at least "
-                << 3.0 * dz << " m";
-      return message.str();
-    }
-
     int checkedBytes(std::size_t records, std::size_t recordBytes)
     {
       if (records > static_cast<std::size_t>(INT_MAX) / recordBytes)
@@ -331,7 +287,8 @@ namespace fel
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
     particleBoundary_.reset(new ParticleOpenBoundary(
-      localGeometry_, localOriginBox_, globalGeometry_, globalOriginBox_));
+      localGeometry_, localOriginBox_, globalGeometry_, globalOriginBox_,
+      localZOffset_));
     if (config_.boundary.type == EBBoundaryType::Cpml)
       fields_->setBoundary(std::unique_ptr<EBBoundaryOperator>(
         new EBConvolutionalPML(
@@ -374,6 +331,23 @@ namespace fel
           "Runtime strategy: HPC throughput mode; no signal polling or periodic durability flushes.");
         logRoot(communicator_,
           "Direct SI E/B simulation active; no A/phi state is allocated.");
+        const std::size_t slabBase = globalGeometry_.nz /
+          static_cast<std::size_t>(size_);
+        const std::size_t slabRemainder = globalGeometry_.nz %
+          static_cast<std::size_t>(size_);
+        std::ostringstream meshMessage;
+        meshMessage << std::setprecision(10)
+          << "Mesh contract: cells=(" << globalGeometry_.nx << ", "
+          << globalGeometry_.ny << ", " << globalGeometry_.nz
+          << "), cell_size_m=(" << globalGeometry_.dx << ", "
+          << globalGeometry_.dy << ", " << globalGeometry_.dz
+          << "), derived_extent_m=(" << config_.mesh.extent[0] << ", "
+          << config_.mesh.extent[1] << ", " << config_.mesh.extent[2]
+          << "); z slabs use integer offsets with cells/rank in ["
+          << slabBase << ", "
+          << slabBase + (slabRemainder > 0 ? 1 : 0)
+          << "] and remainder=" << slabRemainder << ".";
+        logRoot(communicator_, meshMessage.str());
         if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
           {
             const EBCowanCoefficients& coefficient =
@@ -785,12 +759,12 @@ namespace fel
 
   void Simulation::initializeGeometry()
   {
-    const Double dx = config_.mesh.resolution[0];
-    const Double dy = config_.mesh.resolution[1];
-    const Double dz = config_.mesh.resolution[2];
-    const std::size_t nx = exactCells(config_.mesh.lengths[0], dx, "x");
-    const std::size_t ny = exactCells(config_.mesh.lengths[1], dy, "y");
-    const std::size_t nz = exactCells(config_.mesh.lengths[2], dz, "z");
+    const Double dx = config_.mesh.cellSize[0];
+    const Double dy = config_.mesh.cellSize[1];
+    const Double dz = config_.mesh.cellSize[2];
+    const std::size_t nx = config_.mesh.cells[0];
+    const std::size_t ny = config_.mesh.cells[1];
+    const std::size_t nz = config_.mesh.cells[2];
     if (nz < 2 * static_cast<std::size_t>(size_))
       throw std::invalid_argument(
         "Direct E/B grid requires at least two z cells per MPI rank");
@@ -839,15 +813,19 @@ namespace fel
         if (dx + tolerance < dz || dy + tolerance < dz)
           {
             std::ostringstream message;
-            message << "Cowan-z requires z to have the smallest grid spacing so that c*dt=dz is stable and dispersion-free. ";
+            message << std::setprecision(10)
+              << "Cowan-z requires z to have the smallest cell_size so "
+                 "c*dt=dz is stable and dispersion-free.";
             if (dx + tolerance < dz)
-              message << transverseGridRecommendation(
-                "x", config_.mesh.lengths[0], dz,
-                config_.inputUnits.length) << ". ";
+              message << " Set mesh.cell_size x to at least " << dz
+                      << " m (" << dz / config_.inputUnits.length
+                      << " in the configured length unit).";
             if (dy + tolerance < dz)
-              message << transverseGridRecommendation(
-                "y", config_.mesh.lengths[1], dz,
-                config_.inputUnits.length) << ".";
+              message << " Set mesh.cell_size y to at least " << dz
+                      << " m (" << dz / config_.inputUnits.length
+                      << " in the configured length unit).";
+            message << " Keep mesh.cells as explicit integers; the physical "
+                       "extent will be recomputed by multiplication.";
             throw std::invalid_argument(message.str());
           }
       }
@@ -870,12 +848,11 @@ namespace fel
                                     config_.mesh.fieldSolver);
 
     for (unsigned int axis = 0; axis < 3; ++axis)
-      globalOriginBox_[axis] =
-        config_.mesh.center[axis] -
-        0.5 * static_cast<Double>(axis == 0 ? nx : (axis == 1 ? ny : nz)) *
-        (axis == 0 ? dx : (axis == 1 ? dy : dz));
+      globalOriginBox_[axis] = std::fma(
+        -0.5, config_.mesh.extent[axis], config_.mesh.center[axis]);
     localOriginBox_ = globalOriginBox_;
-    localOriginBox_[2] += static_cast<Double>(localZOffset_) * dz;
+    localOriginBox_[2] = std::fma(
+      static_cast<Double>(localZOffset_), dz, globalOriginBox_[2]);
     totalTimeBoxSI_ = config_.mesh.duration;
     if (!(totalTimeBoxSI_ > 0.0) || !std::isfinite(totalTimeBoxSI_))
       throw std::invalid_argument(
@@ -1099,7 +1076,7 @@ namespace fel
                     << ". Reduce the field time step to at most "
                     << maximumDt << " s";
             if (config_.mesh.fieldSolver == EBMaxwellSolver::CowanZ)
-              message << " by setting mesh.resolution z to at most "
+              message << " by setting mesh.cell_size z to at most "
                       << maximumDz << " m (" << maximumDz /
                            config_.inputUnits.length
                       << " in the configured length unit); keep dx and dy "
@@ -1227,8 +1204,8 @@ namespace fel
     /* size_x and size_y are full mesh widths.  Using their complete diagonal
      * is deliberately more conservative than the centre-to-corner radius and
      * also leaves room for a modest off-axis bunch envelope. */
-    const Double rho = std::hypot(config_.mesh.lengths[0],
-                                  config_.mesh.lengths[1]);
+    const Double rho = std::hypot(config_.mesh.extent[0],
+                                  config_.mesh.extent[1]);
     if (!(rho > 0.0) || !std::isfinite(rho))
       throw std::runtime_error(
         "Field-detector reference radius must be finite and positive");
@@ -1712,8 +1689,9 @@ namespace fel
     std::vector<CarrierTransferPacket> sendRetirementLower;
     std::vector<CarrierTransferPacket> sendRetirementUpper;
     const Double lowerZ = localOriginBox_[2];
-    const Double upperZ = lowerZ +
-      static_cast<Double>(localGeometry_.nz) * localGeometry_.dz;
+    const Double upperZ = std::fma(
+      static_cast<Double>(localZOffset_ + localGeometry_.nz),
+      globalGeometry_.dz, globalOriginBox_[2]);
     const Double crossingTolerance = 64.0 *
       std::numeric_limits<Double>::epsilon();
     const Double carrierCutoff = 64.0 *
@@ -2528,9 +2506,12 @@ namespace fel
   void Simulation::validateParticlesInsideGlobalBox() const
   {
     const Double upper[3] = {
-      globalOriginBox_[0] + static_cast<Double>(globalGeometry_.nx) * globalGeometry_.dx,
-      globalOriginBox_[1] + static_cast<Double>(globalGeometry_.ny) * globalGeometry_.dy,
-      globalOriginBox_[2] + static_cast<Double>(globalGeometry_.nz) * globalGeometry_.dz
+      std::fma(static_cast<Double>(globalGeometry_.nx), globalGeometry_.dx,
+               globalOriginBox_[0]),
+      std::fma(static_cast<Double>(globalGeometry_.ny), globalGeometry_.dy,
+               globalOriginBox_[1]),
+      std::fma(static_cast<Double>(globalGeometry_.nz), globalGeometry_.dz,
+               globalOriginBox_[2])
     };
     int localInvalid = 0;
     int localInCpml = 0;

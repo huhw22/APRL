@@ -18,8 +18,8 @@ runtime:
 mesh:
   # z-priority Cowan/CKC stencil; use yee only for regression runs.
   field_solver: cowan-z
-  lengths: [40.0, 40.0, 12.0]
-  resolution: [1.0, 1.0, 0.2]
+  cells: [40, 40, 60]
+  cell_size: [1.0, 1.0, 0.2]
   center: [0.0, 0.0, 0.0]
   duration: 0.01
   boost_gamma: 2.0

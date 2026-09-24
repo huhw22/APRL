@@ -103,6 +103,7 @@ namespace fel
                          const FieldVector<Double>& localOriginSI,
                          const EBGridGeometry& globalGeometry,
                          const FieldVector<Double>& globalOriginSI,
+                         std::size_t localZOffset,
                          bool retainSpatialFlux = false);
 
     void beginStep();
