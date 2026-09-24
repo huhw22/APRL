@@ -8,7 +8,8 @@
 - HDF5 development libraries, with parallel HDF5 required for multi-rank
   particle input;
 - yaml-cpp development libraries;
-- FFTW3, including its threads library, for field reconstruction only.
+- FFTW3, including its threads library, for field reconstruction and
+  field-plane spectrum/coherence analysis.
 
 ## Build
 
@@ -79,6 +80,22 @@ It streams small transverse batches from two matching detector files, performs
 field-amplitude subtraction and band filtering, and can compare peak power and
 energy with a one-shot trajectory far field. See
 [FIELD_POWER_COMPARISON.md](FIELD_POWER_COMPARISON.md).
+
+The complete field-plane spectrum/coherence path is a fourth independent
+build:
+
+```bash
+cmake -S postprocess/field_plane_analysis -B build-field-plane-analysis \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=mpic++
+cmake --build build-field-plane-analysis -j
+./build-field-plane-analysis/field_plane_analysis \
+  postprocess/field_plane_analysis/example.yaml
+```
+
+It accepts raw detector fields, reconstructed particle-background-subtracted
+fields, or a matched signal/baseline pair. Working-memory and output-size
+guards are checked before output creation. See
+[FIELD_PLANE_ANALYSIS.md](FIELD_PLANE_ANALYSIS.md).
 
 ## Convert a legacy text particle file
 

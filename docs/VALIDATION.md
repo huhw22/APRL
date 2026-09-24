@@ -87,6 +87,43 @@ The `-20.63%` number is a diagnostic result for that test window, not a
 universal correction. Production cards must repeat padding, smoothing,
 aperture, time-step, and transverse-resolution convergence studies.
 
+## Field-plane spectrum and coherence normalization
+
+A uniform forward plane wave was generated on an `8x8` aperture with 256
+samples, exactly 16 samples per optical cycle. The analytical accepted energy
+is
+
+```text
+epsilon0 c E0^2 A T / 2 = 2.174499822e-14 J.
+```
+
+The full-record angular-spectrum tool returned `2.174499822e-14 J`, a relative
+difference of `5.8e-16`. The angular coherent fraction, spatial reference CSD
+and one-frequency temporal CSD were all one; the fluctuation spectrum was
+zero.
+
+The same signal was divided into four nonoverlapping 64-sample Hann windows.
+After the documented `sqrt(N/sum(w^2))` normalization and integration over all
+positive-frequency side-lobes, the mean window energy was
+`5.436153658e-15 J`, versus `5.436249555e-15 J` analytically (relative
+`1.76e-5`). The residual is the finite Hann/end-bin discretization. Coherent
+fraction and both normalized CSD checks remained one, while maximum numerical
+fluctuation density was `2.1e-25 J/eV/sr`.
+
+A second four-window test alternated two equal-energy, exactly orthogonal
+transverse FFT modes. Both the Gram-matrix global degree of transverse
+coherence and the integrated ensemble-mean-field fraction were `0.5`, as
+expected. This separately checks that the global metric is not hard-wired to
+the rank-one reference tests.
+
+Two I/O regressions also passed: subtracting an identical field/baseline pair
+gave exactly zero band energy, and an existing `/reconstructed_field` file was
+read and analyzed without conversion. These checks validate FFT
+normalization, discrete solid-angle Jacobian, time-window normalization,
+amplitude subtraction and both accepted HDF5 layouts. They do not validate a
+finite-aperture FEL result; detector distance, aperture and grid convergence
+remain problem-specific.
+
 ## Experimental retirement power closure
 
 A two-macroparticle CPML run used `gamma=4`, boost gamma 2, a three-period

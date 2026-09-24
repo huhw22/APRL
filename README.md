@@ -48,6 +48,14 @@ reports the change in forward Poynting power and energy. This keeps the
 production simulation light while retaining a reproducible field-based
 radiation path on the analysis server.
 
+The cleaned or raw laboratory plane can then be passed to a threaded C++/FFTW
+analysis tool. It writes the forward propagating angular energy spectrum,
+Stokes data, integrated spectrum, coherent/fluctuation split, selected spatial
+cross-spectral densities, a global transverse-coherence/Gram-matrix diagnostic
+and selected two-frequency coherence. Stable portions of one run can be
+divided into energy-normalized Hann windows, keeping this large-run radiation
+path independent of trajectory storage.
+
 An alternative, explicitly experimental radiation path ends physical particle
 push/output after the magnetic system and tapers a compact ballistic current
 carrier to zero before the field plane. It does not change the Maxwell kernel
@@ -126,6 +134,7 @@ or particle-boundary I/O.
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [Field-detector ballistic reference region](docs/FIELD_DETECTOR_REFERENCE.md)
 - [Particle-background field reconstruction](docs/FIELD_RECONSTRUCTION.md)
+- [Field-plane spectrum and coherence analysis](docs/FIELD_PLANE_ANALYSIS.md)
 - [Particle retirement and matched power comparison](docs/FIELD_POWER_COMPARISON.md)
 - [Numerical validation status](docs/VALIDATION.md)
 - [Current release audit and production gates](docs/RELEASE_AUDIT.md)

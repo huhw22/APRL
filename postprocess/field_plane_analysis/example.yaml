@@ -1,0 +1,41 @@
+# Offline angular spectrum and first-order coherence from one laboratory field
+# plane. Paths are relative to this card.
+input:
+  field_file: ../../output/example/detectors/exit-fields.h5
+  # Optional amplitude-level retirement baseline:
+  # zero_radiation_baseline: ../../output/baseline/detectors/exit-fields.h5
+  require_complete: true
+
+analysis:
+  photon_energy_band_eV: [0.1, 2.0]
+  # none preserves the recorded aperture; hann suppresses aperture-edge
+  # leakage but deliberately changes the accepted field.
+  transverse_window: none
+  # Zero padding interpolates the kx/ky grid; it adds no physical resolution.
+  angular_zero_padding: [2, 2]
+  # Disabled means one rectangular full-record sample (necessarily coherent).
+  # Enable only inside a stationary or slowly evolving interval.
+  time_windows:
+    enabled: false
+    # interval_s: [0.0, 2.0e-14]
+    # duration_s: 4.0e-15
+    # step_s: 2.0e-15
+
+calculation:
+  frequency_block: 8
+  spatial_batch_points: 32
+  fft_threads: 8
+  maximum_working_mib: 4096
+  maximum_output_gib: 64.0
+
+coherence:
+  spatial_photon_energy_eV: [1.0]
+  spatial_reference_angles_rad:
+    - [0.0, 0.0]
+  temporal_photon_energy_eV: [0.8, 0.9, 1.0, 1.1, 1.2]
+  temporal_reference_angles_rad:
+    - [0.0, 0.0]
+
+output:
+  file: field-plane-analysis.h5
+  compression: 0

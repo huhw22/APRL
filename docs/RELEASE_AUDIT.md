@@ -19,16 +19,18 @@ is production-ready.
 | Lab detector planes | Implemented | Rank zero alone writes buffered fixed-lab field and particle planes; disabled detectors allocate and communicate nothing. |
 | Particle trajectories | Implemented as an optional diagnostic | Complete enough for small-particle far-field validation, but intentionally unsuitable as the primary `10^7`-particle radiation record. |
 | Trajectory radiation analysis | Implemented for small tests | Angular/integrated spectra, polarization/Stokes and optional window/ensemble cross-spectral density are available. |
-| Field-plane background tools | Partially implemented | Uniform-motion background reconstruction and matched-baseline band power/energy comparison exist. |
-| Full field-plane radiation analysis | **Missing** | There is no durable detector-to-full-spectrum, mutual spectral density and spatial-coherence pipeline yet. Existing power comparison is not a substitute. |
+| Field-plane background tools | Implemented with model choices | Uniform-motion background reconstruction and matched-baseline amplitude subtraction/power comparison exist; retirement remains experimental. |
+| Full field-plane radiation analysis | Implemented for downstream forward modes | Threaded FFTW analysis provides angular/integrated spectra, Stokes data, Hann-window coherent/fluctuation splitting, global transverse coherence/Gram eigenvalues, selected spatial CSD and two-frequency CSD with memory/output guards. |
 | Initial particle self-field | Implemented with boundary caveats | A distributed CIC/Poisson projection enforces the interior discrete Gauss law and releases all potential state before E/B advance. Box padding and the near-rest-frame electrostatic assumption still require convergence. |
 | Particle subcycling | Implemented for prescribed devices | Automatic Boris substeps resolve analytical laboratory devices. Grid E/B, current deposition and detector cadence remain on the Maxwell step, which still sets radiation bandwidth. |
 | Laser/seed injection | **Missing on the target kernel** | The generalized Cowan/CPML TF/SF injection remains the principal unimplemented source path. |
 | Particle retirement | Experimental | It is not exactly charge-continuous and requires a matched zero-radiation baseline plus convergence tests. |
 
-The release is therefore **not** complete. It is a coherent no-seed
-development solver with working diagnostics, but full field-plane radiation
-analysis remains a production gate separate from laser injection.
+The remaining missing functional path is generalized laser/seed injection on
+the Cowan/CPML target kernel. The no-seed solver and field-plane diagnostics
+are implemented, but production conclusions still require the convergence and
+model checks listed below; experimental retirement is not promoted by this
+capability audit.
 
 ## Numerical preflight policy
 

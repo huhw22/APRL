@@ -70,6 +70,12 @@ for both the raw and particle-background-subtracted fields and stores their
 forward power and time-integrated energy. See
 [FIELD_RECONSTRUCTION.md](FIELD_RECONSTRUCTION.md).
 
+The independent `field_plane_analysis` tool uses the electric field to form a
+forward vacuum angular spectrum, integrated energy spectrum, Stokes data and
+window-ensemble cross-spectral densities. It can read this raw group directly
+or the cleaned `/reconstructed_field` output. See
+[FIELD_PLANE_ANALYSIS.md](FIELD_PLANE_ANALYSIS.md).
+
 ## Ballistic particle-background reference
 
 For a field plane named `<name>`, enabling `particle_background` creates
