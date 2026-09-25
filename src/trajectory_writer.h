@@ -9,7 +9,7 @@
 #include "hdf5.h"
 #include "run_metadata.h"
 
-namespace fel
+namespace aprl
 {
   enum class TrajectoryEvent : std::uint8_t
   {

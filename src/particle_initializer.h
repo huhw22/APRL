@@ -8,7 +8,7 @@
 #include "config.h"
 #include "eb_particles.h"
 
-namespace fel
+namespace aprl
 {
   struct ParticleInitializationReport
   {

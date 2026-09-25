@@ -7,7 +7,7 @@
 #include "eb_sources.h"
 #include "fieldvector.h"
 
-namespace fel
+namespace aprl
 {
   struct RelativisticParticleSI
   {

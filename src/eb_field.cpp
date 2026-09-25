@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <utility>
 
-namespace fel
+namespace aprl
 {
   namespace SI
   {

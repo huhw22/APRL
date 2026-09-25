@@ -11,7 +11,7 @@
 #include "eb_particles.h"
 #include "run_metadata.h"
 
-namespace fel
+namespace aprl
 {
   /* Detector-only subtraction hook for a known laboratory background such as
    * a future analytical injected laser.  It is deliberately separate from

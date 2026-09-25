@@ -7,7 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 
-namespace fel
+namespace aprl
 {
   SIBunchPlacement::SIBunchPlacement()
     : hasFirstInteractionEntrance(false),

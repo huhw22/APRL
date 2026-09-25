@@ -3,7 +3,7 @@
 
 #include <cmath>
 
-namespace fel
+namespace aprl
 {
   typedef double Double;
 

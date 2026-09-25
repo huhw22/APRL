@@ -221,7 +221,7 @@ namespace
     writeStringAttribute(group, "position_unit", "m");
     writeStringAttribute(group, "proper_velocity_unit", "gamma*v/c");
     writeStringAttribute(group, "macro_weight_definition",
-                         "positive relative weight normalized by simulator to beam.input.electrons");
+                         "positive relative weight normalized by APRL to beam.input.electrons");
     writeStringAttribute(group, "source_id_definition",
                          "one-based input data row");
 

@@ -6,7 +6,7 @@
 #include "eb_field.h"
 #include "fieldvector.h"
 
-namespace fel
+namespace aprl
 {
   struct CurrentDepositResult
   {

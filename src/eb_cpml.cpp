@@ -6,7 +6,7 @@
 #include <stdexcept>
 #include <vector>
 
-namespace fel
+namespace aprl
 {
   namespace
   {

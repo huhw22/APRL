@@ -506,7 +506,7 @@ namespace
     return EXIT_SUCCESS;
   }
 
-  bool finiteLedger(const fel::EnergyLedgerRecord& record)
+  bool finiteLedger(const aprl::EnergyLedgerRecord& record)
   {
     const double values[] = {
       record.timeBox, record.activeRepresentedElectrons,
@@ -549,9 +549,9 @@ namespace
     const std::vector<hsize_t> shape = dimensions(dataset);
     require(shape.size() == 1 && shape[0] == committed,
       "Energy-ledger extent does not equal committed_records");
-    std::vector<fel::EnergyLedgerRecord> records(
+    std::vector<aprl::EnergyLedgerRecord> records(
       static_cast<std::size_t>(committed));
-    hid_t memoryType = fel::EnergyLedgerWriter::createMemoryRecordType();
+    hid_t memoryType = aprl::EnergyLedgerWriter::createMemoryRecordType();
     requireStatus(H5Dread(dataset, memoryType, H5S_ALL, H5S_ALL,
       H5P_DEFAULT, records.data()), "Cannot read energy-ledger records");
     H5Tclose(memoryType);
@@ -593,7 +593,7 @@ int main(int argc, char** argv)
   try
     {
       require(argc >= 2,
-        "usage: fel_output_checks <detector|compare-particles|ledger|postprocess|field-routes> ...");
+        "usage: aprl_output_checks <detector|compare-particles|ledger|postprocess|field-routes> ...");
       const std::string command(argv[1]);
       if (command == "detector")
         {

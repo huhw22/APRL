@@ -8,7 +8,7 @@
 #include "eb_field.h"
 #include "fieldvector.h"
 
-namespace fel
+namespace aprl
 {
   enum class ParticleBoundaryFace
   {

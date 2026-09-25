@@ -1,11 +1,11 @@
 input:
-  signal_field: "@FEL_VERIFY_WORK@/postprocess/signal/detectors/exit-field.h5"
-  zero_radiation_baseline: "@FEL_VERIFY_WORK@/postprocess/baseline/detectors/exit-field.h5"
+  signal_field: "@APRL_VERIFY_WORK@/postprocess/signal/detectors/exit-field.h5"
+  zero_radiation_baseline: "@APRL_VERIFY_WORK@/postprocess/baseline/detectors/exit-field.h5"
   require_complete: true
 analysis:
   photon_energy_band_eV: [0.1, 5.0]
   spatial_batch_points: 8
 output:
-  file: "@FEL_VERIFY_WORK@/postprocess/power.h5"
+  file: "@APRL_VERIFY_WORK@/postprocess/power.h5"
   compression: 0
   overwrite: true

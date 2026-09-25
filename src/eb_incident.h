@@ -5,7 +5,7 @@
 
 #include "eb_sources.h"
 
-namespace fel
+namespace aprl
 {
   /* Node-aligned closed total-field volume.  lower and upper are inclusive
    * primal-node indices and must leave at least one scattered-field cell

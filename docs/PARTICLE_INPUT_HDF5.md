@@ -42,7 +42,7 @@ ux = xp*uz
 uy = yp*uz.
 ```
 
-Here `p=beta*gamma` is the momentum magnitude. At startup the simulator uses
+Here `p=beta*gamma` is the momentum magnitude. At startup APRL uses
 each record's own velocity and crossing time to construct one common-lab-time
 snapshot. The common time is chosen so that the macro-weighted longitudinal
 centroid lies at `beam.reference.initial_center_z`; correlations between
@@ -56,7 +56,7 @@ r_i(T) = r_i(tau_i) + beta_i*c*(T-tau_i),
 where `tau=arrival_time_offset_s`. Every particle must have positive `uz`, and
 `T-tau_i` must be nonnegative. A violation stops before field allocation and
 reports the minimum valid centre position. This ballistic synchronization is
-the only Elegant-to-snapshot transport performed by the simulator; it does not
+the only Elegant-to-snapshot transport performed by APRL; it does not
 retrack the upstream Elegant lattice.
 
 Version 3 remains readable for the former
@@ -75,7 +75,7 @@ inspection.
 
 ## MPI read behavior
 
-For N records and P ranks, the simulator assigns one contiguous, nearly equal
+For N records and P ranks, APRL assigns one contiguous, nearly equal
 hyperslab to each rank and performs a collective MPI-IO dataset read. It does
 not make rank zero read and redistribute the whole file. A multi-rank run
 therefore requires a parallel-HDF5 build; a serial HDF5 build is accepted only
@@ -88,7 +88,7 @@ represented by the complete dataset. For versions 2 through 4, record `i` repres
 electrons_i = beam.input.electrons * macro_weight_i / sum(macro_weight).
 ```
 
-The simulator evaluates the global weight sum collectively. Macro-particle
+APRL evaluates the global weight sum collectively. Macro-particle
 charge and mass scale together, leaving the physical charge-to-mass ratio
 unchanged. Startup independently sums the represented electron count with
 extended precision and exits if normalization or charge-to-mass invariance is

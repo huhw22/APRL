@@ -7,7 +7,7 @@
 
 #include <hdf5.h>
 
-namespace fel
+namespace aprl
 {
   namespace
   {

@@ -9,7 +9,7 @@
 #include "hdf5.h"
 #include "run_metadata.h"
 
-namespace fel
+namespace aprl
 {
   /* One global, boosted-frame energy audit sample.  The accelerator
    * statistics are laboratory momenta evaluated on the same box-time slice;

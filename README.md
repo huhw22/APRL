@@ -1,9 +1,10 @@
-# Unnamed boosted-frame FEL program
+# APRL — Accelerator Particles and Radiation in Lorentz Frames
 
 [中文说明](README.zh-CN.md)
 
-The program intentionally has no final public name yet. `simulator` is only a
-temporary executable name.
+**APRL** is a compact accelerator-radiation code whose name reflects its three
+core objects: accelerator particles, radiation, and Lorentz-frame simulation.
+The main executable is `aprl`.
 
 ## Basic idea
 

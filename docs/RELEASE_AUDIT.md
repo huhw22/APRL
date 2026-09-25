@@ -25,7 +25,7 @@ is production-ready.
 | Initial particle self-field | Relativistic rigid-beam initialization implemented; convergence still required | A distributed CIC/Vay relativistic-Poisson solve initializes E and current-consistent B, enforces the interior discrete Gauss law, and releases all potential state before E/B advance. CPML starts outside a zero-potential static boundary at its inner surface, preventing Coulomb-tail/CPML startup flow. Velocity spread, macro-particle sampling and distance to that boundary still require convergence. |
 | Particle subcycling | Implemented for prescribed devices | Automatic Boris substeps resolve analytical laboratory devices. Grid E/B, current deposition and detector cadence remain on the Maxwell step, which still sets radiation bandwidth. |
 | Radiation-band preflight | Implemented as an optional on-axis guard | A user-declared maximum laboratory photon energy is Lorentz-transformed into the box frame. Longitudinal grid, Maxwell/current and field-plane cadence are hard-rejected only below strict Nyquist; configurable quality margins are warnings. Transverse envelope, aperture, CPML and macro-particle convergence remain explicit physics studies. |
-| Output safety and provenance | Implemented and release-gated | Existing simulator and post-process outputs are refused unless the relevant card explicitly enables overwrite. A root-only manifest preserves the exact card, source/build/MPI and particle-input identity; one `run_id` and configuration digest link all simulator HDF5 products. |
+| Output safety and provenance | Implemented and release-gated | Existing APRL and post-process outputs are refused unless the relevant card explicitly enables overwrite. A root-only manifest preserves the exact card, source/build/MPI and particle-input identity; one `run_id` and configuration digest link all APRL HDF5 products. |
 | End-to-end post-processing regression | Implemented and required | Lightweight simulations drive reconstruction, field-plane analysis, trajectory radiation, matched power comparison and lab-frame energy closure; completion markers and finite key outputs are checked. All post-processing YAML mappings reject unknown keys. |
 | Laser/seed injection | **Missing on the target kernel** | The generalized Cowan/CPML TF/SF injection remains the principal unimplemented source path. |
 | Particle retirement | Experimental | It is not exactly charge-continuous and requires a matched zero-radiation baseline plus convergence tests. |
@@ -93,7 +93,7 @@ physics target:
   initial particles in `after-last-element` mode.
 
 Detector sample cadence is stored exactly and band tools reject requests above
-their Nyquist limit. The simulator cannot itself prove that an unspecified
+their Nyquist limit. APRL cannot itself prove that an unspecified
 future analysis band, transverse aperture, CPML reflection level or macro-
 particle representation is converged; those remain required parameter scans.
 

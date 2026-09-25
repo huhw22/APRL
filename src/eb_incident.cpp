@@ -4,7 +4,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace fel
+namespace aprl
 {
   EBTFSFRegion::EBTFSFRegion()
   {

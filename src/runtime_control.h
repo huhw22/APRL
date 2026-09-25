@@ -1,7 +1,7 @@
 #ifndef DIRECT_EB_RUNTIME_CONTROL_H
 #define DIRECT_EB_RUNTIME_CONTROL_H
 
-namespace fel
+namespace aprl
 {
   namespace RuntimeControl
   {

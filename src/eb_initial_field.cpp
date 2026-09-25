@@ -9,7 +9,7 @@
 
 #include "eb_deposition.h"
 
-namespace fel
+namespace aprl
 {
   namespace
   {

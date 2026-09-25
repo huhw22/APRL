@@ -86,7 +86,7 @@ Paths are resolved relative to the card. A ballistic-reference record is
 propagated in a straight line from its left entrance to the field plane before
 deposition. A `/particle_plane` input must be colocated with the field plane.
 For either input, only the first valid downstream crossing of each particle ID
-is used. Duplicate detection uses the simulator's dense 1-based particle IDs
+is used. Duplicate detection uses APRL's dense 1-based particle IDs
 as an exact bitmap: it costs about 1.25 MB for `10^7` particles rather than the
 hundreds of MB typical of a hash table. Duplicates and invalid records are
 counted.

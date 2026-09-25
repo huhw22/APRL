@@ -5,7 +5,7 @@ cmake-build-*/
 CMakeFiles/
 CMakeCache.txt
 compile_commands.json
-simulator
+aprl
 *.o
 *.a
 *.so

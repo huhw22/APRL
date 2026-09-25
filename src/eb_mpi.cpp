@@ -4,7 +4,7 @@
 #include <climits>
 #include <stdexcept>
 
-namespace fel
+namespace aprl
 {
   namespace
   {

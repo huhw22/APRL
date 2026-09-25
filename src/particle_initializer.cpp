@@ -9,7 +9,7 @@
 #include "boostframe.h"
 #include "particle_file.h"
 
-namespace fel
+namespace aprl
 {
   ParticleInitializationReport::ParticleInitializationReport()
     : globalRecords(0), fileFormatVersion(0),

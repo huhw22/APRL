@@ -2,7 +2,7 @@
 
 #include <csignal>
 
-namespace fel
+namespace aprl
 {
   namespace RuntimeControl
   {

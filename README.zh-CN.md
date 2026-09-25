@@ -1,8 +1,11 @@
-# 未命名的相对论变换系 FEL 程序
+# APRL——洛伦兹参考系中的加速器粒子与辐射
 
 [English](README.md)
 
-本程序暂时不设正式名称，`simulator` 也只是临时可执行文件名。
+**APRL** 的英文全称是 **Accelerator Particles and Radiation in Lorentz
+Frames**，中文名称为“洛伦兹参考系中的加速器粒子与辐射”。名称直接概括了
+程序的三个核心对象：加速器粒子、辐射与 Lorentz 参考系模拟。主可执行文件名为
+`aprl`。
 
 ## 基本思想
 
@@ -80,4 +83,4 @@
 - [数值验证状态](docs/zh_CN/VALIDATION.md)
 - [当前发布审计与生产门禁](docs/zh_CN/RELEASE_AUDIT.md)
 
-英文文档仍是同步维护的另一语言版本。程序名称保持空缺，待正式命名后再统一替换项目名、可执行文件名和安装目录。
+英文文档仍是同步维护的另一语言版本。项目名、主可执行文件名与安装目录均统一使用 APRL 标识。

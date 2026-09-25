@@ -23,7 +23,7 @@
 #include "run_metadata.h"
 #include "trajectory_writer.h"
 
-namespace fel
+namespace aprl
 {
   /* Direct SI E/B application path. It deliberately owns no A/phi state. */
   class Simulation

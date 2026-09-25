@@ -18,7 +18,7 @@ int main(int argc, char** argv)
   if (argc != 2)
     {
       if (rank == 0)
-        std::cerr << "Usage: simulator <configuration.yaml>" << std::endl;
+        std::cerr << "Usage: aprl <configuration.yaml>" << std::endl;
       MPI_Finalize();
       return 1;
     }
@@ -26,14 +26,14 @@ int main(int argc, char** argv)
   const double start = MPI_Wtime();
   try
     {
-      const fel::SimulationConfig config =
-        fel::YamlConfigLoader::loadFile(argv[1]);
+      const aprl::SimulationConfig config =
+        aprl::YamlConfigLoader::loadFile(argv[1]);
       if (config.runtime.interactive())
-        fel::RuntimeControl::installSignalHandlers();
+        aprl::RuntimeControl::installSignalHandlers();
 
-      fel::logRoot(MPI_COMM_WORLD,
-        "Unnamed FEL simulator (temporary executable name: simulator)");
-      fel::Simulation simulation(config, MPI_COMM_WORLD);
+      aprl::logRoot(MPI_COMM_WORLD,
+        "APRL — Accelerator Particles and Radiation in Lorentz Frames");
+      aprl::Simulation simulation(config, MPI_COMM_WORLD);
       simulation.solve();
 
       if (rank == 0)

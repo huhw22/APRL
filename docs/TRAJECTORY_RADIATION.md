@@ -73,7 +73,7 @@ be added without changing the output contract.
 
 ## Build and run
 
-Build it independently of the simulator:
+Build it independently of APRL:
 
 ```bash
 cmake -S postprocess/trajectory_radiation \

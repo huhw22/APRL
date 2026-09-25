@@ -3,7 +3,7 @@
 
 #include "fieldvector.h"
 
-namespace fel
+namespace aprl
 {
   class BoostFrameTransform
   {

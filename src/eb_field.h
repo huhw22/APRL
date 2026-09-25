@@ -8,7 +8,7 @@
 #include "boostframe.h"
 #include "fieldvector.h"
 
-namespace fel
+namespace aprl
 {
   namespace SI
   {

@@ -6,7 +6,7 @@
 
 #include "eb_field.h"
 
-namespace fel
+namespace aprl
 {
   struct EBCPMLParameters
   {

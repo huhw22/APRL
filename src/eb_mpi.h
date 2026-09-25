@@ -9,7 +9,7 @@
 #include "eb_field.h"
 #include "eb_incident.h"
 
-namespace fel
+namespace aprl
 {
   /* z-slab communication for the staggered E/B layout.
    *

@@ -39,8 +39,8 @@ namespace
 
   void checkLorentzAndElegant(MPI_Comm communicator, int rank, int size)
   {
-    fel::BoostFrameTransform frame;
-    frame.setOriginsFromGamma(37.0, fel::SI::c,
+    aprl::BoostFrameTransform frame;
+    frame.setOriginsFromGamma(37.0, aprl::SI::c,
                               2.5e-12, -0.014, 0.003);
     const double times[] = {-1.0e-11, 2.5e-12, 9.0e-12};
     const double positions[] = {-0.12, -0.014, 0.21};
@@ -66,11 +66,11 @@ namespace
     double maximumMomentumError = 0.0;
     for (std::size_t i = 0; i < 3; ++i)
       {
-        fel::FieldVector<double> lab(0.0);
+        aprl::FieldVector<double> lab(0.0);
         for (unsigned int axis = 0; axis < 3; ++axis)
           lab[axis] = velocityData[i][axis];
-        fel::FieldVector<double> box(0.0);
-        fel::FieldVector<double> recovered(0.0);
+        aprl::FieldVector<double> box(0.0);
+        aprl::FieldVector<double> recovered(0.0);
         frame.properVelocityLabToBox(lab, box);
         frame.properVelocityBoxToLab(box, recovered);
         for (unsigned int axis = 0; axis < 3; ++axis)
@@ -78,18 +78,18 @@ namespace
             relativeError(recovered[axis], lab[axis]));
       }
 
-    fel::FieldVector<double> electricLab(0.0);
-    fel::FieldVector<double> magneticLab(0.0);
+    aprl::FieldVector<double> electricLab(0.0);
+    aprl::FieldVector<double> magneticLab(0.0);
     electricLab[0] = 1.2e7;
     electricLab[1] = -3.4e6;
     electricLab[2] = 7.0e5;
     magneticLab[0] = 1.0e-3;
     magneticLab[1] = 2.0e-3;
     magneticLab[2] = -4.0e-4;
-    fel::FieldVector<double> electricBox(0.0);
-    fel::FieldVector<double> magneticBox(0.0);
-    fel::FieldVector<double> electricRecovered(0.0);
-    fel::FieldVector<double> magneticRecovered(0.0);
+    aprl::FieldVector<double> electricBox(0.0);
+    aprl::FieldVector<double> magneticBox(0.0);
+    aprl::FieldVector<double> electricRecovered(0.0);
+    aprl::FieldVector<double> magneticRecovered(0.0);
     frame.fieldsLabToBox(electricLab, magneticLab,
                          electricBox, magneticBox);
     frame.fieldsBoxToLab(electricBox, magneticBox,
@@ -103,8 +103,8 @@ namespace
           relativeError(magneticRecovered[axis], magneticLab[axis]));
       }
 
-    std::vector<fel::RelativisticParticleSI> offsetParticles(1);
-    fel::RelativisticParticleSI& offset = offsetParticles[0];
+    std::vector<aprl::RelativisticParticleSI> offsetParticles(1);
+    aprl::RelativisticParticleSI& offset = offsetParticles[0];
     offset.position[0] = 1.0e-4 * (rank + 1);
     offset.position[1] = -2.0e-4 * (rank + 1);
     offset.position[2] = 2.0e-4 * rank;
@@ -116,8 +116,8 @@ namespace
     const double distance = 0.02 + offset.position[2];
     const double expectedX = originalX +
       offset.properVelocity[0] / offset.properVelocity[2] * distance;
-    const fel::SILabPlaneProjectionReport offsetReport =
-      fel::SIBunchPreprocessor::projectLabPlaneToSnapshot(
+    const aprl::SILabPlaneProjectionReport offsetReport =
+      aprl::SIBunchPreprocessor::projectLabPlaneToSnapshot(
         offsetParticles, 0.0, 0.02, communicator);
     require(offsetReport.particles ==
       static_cast<unsigned long long>(size),
@@ -125,10 +125,10 @@ namespace
     require(relativeError(offsetParticles[0].position[0], expectedX) < 1e-14,
       "Elegant v3 transverse projection is inaccurate");
 
-    std::vector<fel::RelativisticParticleSI> timedParticles(2);
+    std::vector<aprl::RelativisticParticleSI> timedParticles(2);
     for (std::size_t i = 0; i < timedParticles.size(); ++i)
       {
-        fel::RelativisticParticleSI& particle = timedParticles[i];
+        aprl::RelativisticParticleSI& particle = timedParticles[i];
         particle.position[0] = 2.0e-5 * (rank + 1) * (i + 1);
         particle.position[1] = -1.0e-5 * (i + 1);
         particle.position[2] = (rank * 2.0 + i - 1.0) * 1.0e-13;
@@ -138,8 +138,8 @@ namespace
         particle.weight = 1.0 + rank + i;
       }
     const double longitudinalOffset = 3.0e-4;
-    const fel::SILabPlaneProjectionReport timedReport =
-      fel::SIBunchPreprocessor::projectLabPlaneEventsToSnapshot(
+    const aprl::SILabPlaneProjectionReport timedReport =
+      aprl::SIBunchPreprocessor::projectLabPlaneEventsToSnapshot(
         timedParticles, 0.0, 0.025, longitudinalOffset, communicator);
     long double localWeight = 0.0L;
     long double localWeightedZ = 0.0L;
@@ -163,10 +163,10 @@ namespace
     require(std::abs(centroid - longitudinalOffset) < 2.0e-15,
       "Elegant v4 weighted longitudinal centroid is inaccurate");
 
-    fel::BoostFrameTransform bunchFrame;
-    bunchFrame.setOriginsFromGamma(8.0, fel::SI::c, 0.0, 0.025, 0.0);
-    const fel::SIBunchBoostReport boostReport =
-      fel::SIBunchPreprocessor::boostLabSnapshotToBoxTimeZero(
+    aprl::BoostFrameTransform bunchFrame;
+    bunchFrame.setOriginsFromGamma(8.0, aprl::SI::c, 0.0, 0.025, 0.0);
+    const aprl::SIBunchBoostReport boostReport =
+      aprl::SIBunchPreprocessor::boostLabSnapshotToBoxTimeZero(
         timedParticles, bunchFrame);
     require(boostReport.maximumRelativeMomentumRoundTripError < 2.0e-13,
       "Bunch Lorentz round trip exceeded tolerance");
@@ -198,26 +198,26 @@ namespace
 
   BorisResult borisOrbit(unsigned int steps)
   {
-    fel::FieldVector<double> properVelocity(0.0);
+    aprl::FieldVector<double> properVelocity(0.0);
     properVelocity[0] = 2.0;
     const double initialGamma =
-      fel::BoostFrameTransform::gammaFromProperVelocity(properVelocity);
-    fel::FieldVector<double> electric(0.0);
-    fel::FieldVector<double> magnetic(0.0);
+      aprl::BoostFrameTransform::gammaFromProperVelocity(properVelocity);
+    aprl::FieldVector<double> electric(0.0);
+    aprl::FieldVector<double> magnetic(0.0);
     magnetic[2] = 1.0;
-    const double omega = fel::SI::elementaryCharge /
-      (fel::SI::electronMass * initialGamma);
+    const double omega = aprl::SI::elementaryCharge /
+      (aprl::SI::electronMass * initialGamma);
     const double duration = 2.0 * pi / omega;
     const double dt = duration / static_cast<double>(steps);
     for (unsigned int step = 0; step < steps; ++step)
-      fel::RelativisticBorisPusher::pushMomentum(
+      aprl::RelativisticBorisPusher::pushMomentum(
         properVelocity, electric, magnetic,
-        -fel::SI::elementaryCharge, fel::SI::electronMass, dt);
+        -aprl::SI::elementaryCharge, aprl::SI::electronMass, dt);
     BorisResult result;
     result.phaseError = std::abs(std::atan2(
       properVelocity[1], properVelocity[0]));
     result.gammaError = std::abs(
-      fel::BoostFrameTransform::gammaFromProperVelocity(properVelocity) -
+      aprl::BoostFrameTransform::gammaFromProperVelocity(properVelocity) -
       initialGamma) / initialGamma;
     return result;
   }
@@ -243,32 +243,32 @@ namespace
 
   void checkChargeContinuity(int rank)
   {
-    const fel::EBGridGeometry geometry(
-      9, 8, 10, 0.2, 0.25, 0.15, 0.1 / fel::SI::c,
-      fel::EBMaxwellSolver::Yee);
-    fel::EBFieldGrid fields(geometry);
+    const aprl::EBGridGeometry geometry(
+      9, 8, 10, 0.2, 0.25, 0.15, 0.1 / aprl::SI::c,
+      aprl::EBMaxwellSolver::Yee);
+    aprl::EBFieldGrid fields(geometry);
     fields.clearCurrent();
-    fel::YeeComponent before(geometry.nx + 1,
+    aprl::YeeComponent before(geometry.nx + 1,
                              geometry.ny + 1,
                              geometry.nz + 1);
-    fel::YeeComponent after(geometry.nx + 1,
+    aprl::YeeComponent after(geometry.nx + 1,
                             geometry.ny + 1,
                             geometry.nz + 1);
     before.fill(0.0);
     after.fill(0.0);
-    const fel::FieldVector<double> origin(0.0);
-    fel::ChargeConservingCurrentDepositor depositor(fields, origin);
-    fel::FieldVector<double> start(0.0);
-    fel::FieldVector<double> end(0.0);
+    const aprl::FieldVector<double> origin(0.0);
+    aprl::ChargeConservingCurrentDepositor depositor(fields, origin);
+    aprl::FieldVector<double> start(0.0);
+    aprl::FieldVector<double> end(0.0);
     start[0] = 0.31; start[1] = 0.42; start[2] = 0.28;
     end[0] = 1.54; end[1] = 1.63; end[2] = 1.21;
     const double charge = 2.3e-9;
     depositor.depositCharge(start, charge, before);
-    const fel::CurrentDepositResult deposit =
+    const aprl::CurrentDepositResult deposit =
       depositor.depositSegment(start, end, charge);
     depositor.depositCharge(end, charge, after);
     const double residual =
-      fel::ChargeConservingCurrentDepositor::maxContinuityResidual(
+      aprl::ChargeConservingCurrentDepositor::maxContinuityResidual(
         fields, before, after);
     double scale = 0.0;
     for (std::size_t k = 0; k < before.nz(); ++k)
@@ -287,12 +287,12 @@ namespace
                 << " relative_residual=" << residual / scale << std::endl;
   }
 
-  class NoBoundary : public fel::EBBoundaryOperator
+  class NoBoundary : public aprl::EBBoundaryOperator
   {
   public:
     virtual void afterMagneticUpdate(
-        fel::EBFieldGrid&, const fel::EBElectricHaloView&) {}
-    virtual void afterElectricUpdate(fel::EBFieldGrid&) {}
+        aprl::EBFieldGrid&, const aprl::EBElectricHaloView&) {}
+    virtual void afterElectricUpdate(aprl::EBFieldGrid&) {}
     virtual std::size_t memoryBytes() const { return 0; }
   };
 
@@ -301,11 +301,11 @@ namespace
     const std::size_t nz = 256;
     const std::size_t ny = 128;
     const double dz = 1.0e-5;
-    const fel::EBGridGeometry geometry(
-      4, ny, nz, 4.0 * dz, 5.0 * dz, dz, dz / fel::SI::c,
-      fel::EBMaxwellSolver::CowanZ);
-    fel::EBFieldGrid fields(geometry);
-    fields.setBoundary(std::unique_ptr<fel::EBBoundaryOperator>(
+    const aprl::EBGridGeometry geometry(
+      4, ny, nz, 4.0 * dz, 5.0 * dz, dz, dz / aprl::SI::c,
+      aprl::EBMaxwellSolver::CowanZ);
+    aprl::EBFieldGrid fields(geometry);
+    fields.setBoundary(std::unique_ptr<aprl::EBBoundaryOperator>(
       new NoBoundary()));
     const double theta = 2.0 * pi / 16.0;
     for (std::size_t k = 0; k <= nz; ++k)
@@ -316,7 +316,7 @@ namespace
       for (std::size_t j = 0; j <= geometry.ny; ++j)
         for (std::size_t i = 0; i < geometry.nx; ++i)
           fields.by()(i, j, k) =
-            std::sin(theta * (k + 1.0)) / fel::SI::c;
+            std::sin(theta * (k + 1.0)) / aprl::SI::c;
 
     const unsigned int steps = 48;
     for (unsigned int step = 0; step < steps; ++step)
@@ -327,13 +327,13 @@ namespace
         std::abs(fields.ex()(1, ny / 2, k) -
                  std::sin(theta * (static_cast<double>(k) - steps))));
 
-    const fel::EBCowanCoefficients& coefficient =
+    const aprl::EBCowanCoefficients& coefficient =
       fields.cowanCoefficients();
     const double zNormalization = coefficient.alpha[2] +
       2.0 * coefficient.beta[0] + 2.0 * coefficient.beta[1] +
       4.0 * coefficient.deltaXY;
-    const double phase = fel::EBFieldGrid::axisPhaseVelocityRatio(1.0, 16.0);
-    const double group = fel::EBFieldGrid::axisGroupVelocityRatio(1.0, 16.0);
+    const double phase = aprl::EBFieldGrid::axisPhaseVelocityRatio(1.0, 16.0);
+    const double group = aprl::EBFieldGrid::axisGroupVelocityRatio(1.0, 16.0);
     if (rank == 0)
       std::cout << std::setprecision(12)
                 << "cowan_axial_max_error=" << maximumError
@@ -363,14 +363,14 @@ namespace
     const double dx = 100.0 * dz;
     const double dy = 100.0 * dz;
     const double dt = 0.98 /
-      (fel::SI::c * std::sqrt(1.0 / (dx * dx) +
+      (aprl::SI::c * std::sqrt(1.0 / (dx * dx) +
                               1.0 / (dy * dy) + 1.0 / (dz * dz)));
-    const fel::EBGridGeometry geometry(
-      2, 2, nz, dx, dy, dz, dt, fel::EBMaxwellSolver::Yee);
-    fel::EBFieldGrid fields(geometry);
+    const aprl::EBGridGeometry geometry(
+      2, 2, nz, dx, dy, dz, dt, aprl::EBMaxwellSolver::Yee);
+    aprl::EBFieldGrid fields(geometry);
     if (cpml)
       {
-        fel::EBCPMLParameters parameter;
+        aprl::EBCPMLParameters parameter;
         parameter.cells[0] = 0;
         parameter.cells[1] = 0;
         parameter.cells[2] = 20;
@@ -378,15 +378,15 @@ namespace
         parameter.targetReflection = 1.0e-8;
         parameter.kappaMax = 8.0;
         parameter.alphaFraction = 0.0;
-        fields.setBoundary(std::unique_ptr<fel::EBBoundaryOperator>(
-          new fel::EBConvolutionalPML(
+        fields.setBoundary(std::unique_ptr<aprl::EBBoundaryOperator>(
+          new aprl::EBConvolutionalPML(
             geometry, nz, 0, parameter, true, true)));
       }
 
     const double centre = 45.0;
     const double sigma = 10.0;
     const double waveNumber = 2.0 * pi / 20.0;
-    const double halfAdvance = 0.5 * fel::SI::c * dt / dz;
+    const double halfAdvance = 0.5 * aprl::SI::c * dt / dz;
     const auto pulse = [&](double coordinate) {
       const double offset = coordinate - centre;
       return std::exp(-0.5 * offset * offset / (sigma * sigma)) *
@@ -400,7 +400,7 @@ namespace
       for (std::size_t j = 0; j <= geometry.ny; ++j)
         for (std::size_t i = 0; i < geometry.nx; ++i)
           fields.by()(i, j, k) = pulse(
-            static_cast<double>(k) + 0.5 + halfAdvance) / fel::SI::c;
+            static_cast<double>(k) + 0.5 + halfAdvance) / aprl::SI::c;
 
     ReflectionResult result = {0.0, 0.0};
     const std::size_t probe = 75;
@@ -563,14 +563,14 @@ namespace
       {
         std::ostringstream filename;
         filename << directory << "/particles-v" << version << ".h5";
-        fel::FieldVector<double> offset(0.0);
+        aprl::FieldVector<double> offset(0.0);
         offset[0] = 0.1;
         offset[1] = 0.2;
         offset[2] = 0.3;
         unsigned long long records = 0;
         int detectedVersion = 0;
-        const std::vector<fel::RelativisticParticleSI> particles =
-          fel::ParticleHdf5File::readDistributed(
+        const std::vector<aprl::RelativisticParticleSI> particles =
+          aprl::ParticleHdf5File::readDistributed(
             filename.str(), 10.0, offset, communicator,
             records, detectedVersion);
         require(records == 4 && detectedVersion == version,
@@ -579,7 +579,7 @@ namespace
         unsigned long long localRecords = particles.size();
         for (std::size_t i = 0; i < particles.size(); ++i)
           {
-            const fel::RelativisticParticleSI& particle = particles[i];
+            const aprl::RelativisticParticleSI& particle = particles[i];
             localCharge += particle.charge;
             const double expectedWeight = version == 1 ? 1.0 :
               static_cast<double>(particle.sourceId);
@@ -605,7 +605,7 @@ namespace
         require(globalLocalRecords == records,
           "Distributed HDF5 hyperslabs do not cover every record once");
         const long double expectedCharge =
-          -10.0L * static_cast<long double>(fel::SI::elementaryCharge);
+          -10.0L * static_cast<long double>(aprl::SI::elementaryCharge);
         require(std::abs((globalCharge - expectedCharge) / expectedCharge) <
           2.0e-15L, "Particle HDF5 charge normalization failed");
       }
@@ -627,7 +627,7 @@ int main(int argc, char** argv)
     {
       if (argc < 2)
         throw std::invalid_argument(
-          "Usage: fel_core_checks <lorentz-elegant|boris-phase|"
+          "Usage: aprl_core_checks <lorentz-elegant|boris-phase|"
           "charge-continuity|cowan-dispersion|cpml-reflection|"
           "hdf5-versions> [work-directory]");
       const std::string check(argv[1]);

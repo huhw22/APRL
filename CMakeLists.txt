@@ -1,32 +1,31 @@
 cmake_minimum_required(VERSION 3.16)
 
-# Working project identifier only. The program's public name is intentionally
-# left undecided; the executable name "simulator" is also temporary.
-project(unnamed_fel_program LANGUAGES CXX)
+# APRL: Accelerator Particles and Radiation in Lorentz Frames.
+project(APRL LANGUAGES CXX)
 
 execute_process(COMMAND git rev-parse --verify HEAD
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-  OUTPUT_VARIABLE FEL_SOURCE_REVISION
+  OUTPUT_VARIABLE APRL_SOURCE_REVISION
   OUTPUT_STRIP_TRAILING_WHITESPACE
   ERROR_QUIET)
-if(NOT FEL_SOURCE_REVISION)
-  set(FEL_SOURCE_REVISION "unknown")
+if(NOT APRL_SOURCE_REVISION)
+  set(APRL_SOURCE_REVISION "unknown")
 else()
   execute_process(COMMAND git status --porcelain --untracked-files=normal
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    OUTPUT_VARIABLE FEL_SOURCE_DIRTY
+    OUTPUT_VARIABLE APRL_SOURCE_DIRTY
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET)
-  if(FEL_SOURCE_DIRTY)
-    string(APPEND FEL_SOURCE_REVISION "-dirty")
+  if(APRL_SOURCE_DIRTY)
+    string(APPEND APRL_SOURCE_REVISION "-dirty")
   endif()
 endif()
 
 include(CTest)
 
-option(FEL_REQUIRE_PARALLEL_HDF5
+option(APRL_REQUIRE_PARALLEL_HDF5
   "Reject serial HDF5; required for multi-rank particle input" ON)
-option(FEL_BUILD_POSTPROCESSORS
+option(APRL_BUILD_POSTPROCESSORS
   "Build the five production radiation post-processors" ON)
 
 find_package(MPI REQUIRED COMPONENTS CXX)
@@ -38,15 +37,15 @@ find_package(ZLIB QUIET)
 find_package(LibLZMA QUIET)
 find_package(GSL QUIET)
 
-set(FEL_BUILD_DESCRIPTION
+set(APRL_BUILD_DESCRIPTION
   "${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION},${CMAKE_BUILD_TYPE},HDF5-${HDF5_VERSION}")
 
-if(FEL_REQUIRE_PARALLEL_HDF5 AND NOT HDF5_IS_PARALLEL)
+if(APRL_REQUIRE_PARALLEL_HDF5 AND NOT HDF5_IS_PARALLEL)
   message(FATAL_ERROR
     "A serial HDF5 installation was selected. Multi-rank particle input "
     "requires parallel HDF5 built against the same MPI family used here. "
     "Load the matching MPI/HDF5 modules or set HDF5_ROOT explicitly. "
-    "Use -DFEL_REQUIRE_PARALLEL_HDF5=OFF only for single-rank local work.")
+    "Use -DAPRL_REQUIRE_PARALLEL_HDF5=OFF only for single-rank local work.")
 elseif(NOT HDF5_IS_PARALLEL)
   message(WARNING
     "Serial HDF5 accepted for a single-rank/local build; multi-rank HDF5 "
@@ -99,15 +98,15 @@ target_link_libraries(direct_eb_core
 target_compile_definitions(direct_eb_core
   PUBLIC OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX
   PRIVATE
-    FEL_SOURCE_REVISION="${FEL_SOURCE_REVISION}"
-    FEL_BUILD_DESCRIPTION="${FEL_BUILD_DESCRIPTION}"
+    APRL_SOURCE_REVISION="${APRL_SOURCE_REVISION}"
+    APRL_BUILD_DESCRIPTION="${APRL_BUILD_DESCRIPTION}"
 )
 target_compile_options(direct_eb_core PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
-add_executable(simulator src/main.cpp)
-target_link_libraries(simulator PRIVATE direct_eb_core)
+add_executable(aprl src/main.cpp)
+target_link_libraries(aprl PRIVATE direct_eb_core)
 
 add_executable(particle_text_to_hdf5
   utilities/particle_text_to_hdf5.cpp
@@ -214,21 +213,21 @@ target_compile_options(lab_frame_energy_estimate PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
-install(TARGETS simulator particle_text_to_hdf5 undulator_resonance
+install(TARGETS aprl particle_text_to_hdf5 undulator_resonance
   energy_ledger_report lab_frame_energy_estimate
   RUNTIME DESTINATION bin)
 if(HAVE_ELEGANT_SDDS_CONVERTER)
   install(TARGETS elegant_sdds_to_hdf5 RUNTIME DESTINATION bin)
 endif()
 
-install(FILES README.md DESTINATION share/unnamed_fel_program)
+install(FILES README.md README.zh-CN.md DESTINATION share/aprl)
 install(DIRECTORY docs config examples
-  DESTINATION share/unnamed_fel_program)
+  DESTINATION share/aprl)
 install(DIRECTORY postprocess/
-  DESTINATION share/unnamed_fel_program/postprocess
+  DESTINATION share/aprl/postprocess
   FILES_MATCHING PATTERN "example.yaml")
 
-if(FEL_BUILD_POSTPROCESSORS)
+if(APRL_BUILD_POSTPROCESSORS)
   add_subdirectory(postprocess/trajectory_radiation)
   add_subdirectory(postprocess/field_reconstruction)
   add_subdirectory(postprocess/field_plane_analysis)

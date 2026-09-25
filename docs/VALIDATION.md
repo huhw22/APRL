@@ -247,7 +247,7 @@ The resulting first-version policy is therefore:
 This benchmark is deliberately a three-period coherent fundamental test, not a
 production approval for high harmonics. Time step, longitudinal and transverse
 resolution, retirement length/gap, aperture, CPML, and long-undulator
-convergence are still required for a physical run. The current simulator also
+convergence are still required for a physical run. The APRL also
 requires box-padding convergence for its Gauss-consistent electrostatic
 initial self-field.
 

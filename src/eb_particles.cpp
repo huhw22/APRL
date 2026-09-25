@@ -3,7 +3,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace fel
+namespace aprl
 {
   RelativisticParticleSI::RelativisticParticleSI()
     : position(0.0), properVelocity(0.0), charge(0.0), mass(0.0),

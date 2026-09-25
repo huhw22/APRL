@@ -20,11 +20,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
 cmake --build build -j
 ```
 
-主构建默认优先并强制 parallel HDF5。严格单 rank 的本地版本可使用 `-DFEL_REQUIRE_PARALLEL_HDF5=OFF`，但所得程序不能用多 MPI rank 读取粒子 HDF5。
+主构建默认优先并强制 parallel HDF5。严格单 rank 的本地版本可使用 `-DAPRL_REQUIRE_PARALLEL_HDF5=OFF`，但所得程序不能用多 MPI rank 读取粒子 HDF5。
 
 构建得到：
 
-- `build/simulator`；
+- `build/aprl`；
 - `build/particle_text_to_hdf5`；
 - 找到 SDDS 时的 `build/elegant_sdds_to_hdf5`；
 - `build/undulator_resonance`；
@@ -179,8 +179,8 @@ cmake --build build-energy-closure -j
 ## 运行
 
 ```bash
-./build/simulator config/example.yaml
-mpirun -n 4 ./build/simulator config/example.yaml
+./build/aprl config/example.yaml
+mpirun -n 4 ./build/aprl config/example.yaml
 ```
 
 `config/generated_gaussian.yaml` 是无需粒子文件的测试输入。小服务器调试选择全局 `runtime.mode: interactive`；不间断批处理选择 `throughput`。这是全局策略，所以即使关闭轨迹、只开启探测面，交互模式信号停止仍然有效。
@@ -190,7 +190,7 @@ mpirun -n 4 ./build/simulator config/example.yaml
 ```bash
 sbatch --output=run-%j.log run.sh
 # run.sh 最终例如执行：
-srun ./build/simulator config/production.yaml
+srun ./build/aprl config/production.yaml
 ```
 
 启动计时只是本地短微基准，不保证调度时间；并行文件系统竞争、后续粒子迁移和提前物理停止均不在预测内。申请大型资源前，应在目标机器和 MPI 分解上校准内存/时间安全系数。

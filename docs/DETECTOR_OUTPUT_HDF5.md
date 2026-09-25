@@ -175,7 +175,7 @@ Particle energy loss and radiation collected by one field plane are not a
 universal hard equality: finite aperture, radiation through other faces,
 particles missing either plane, prescribed external fields and incomplete
 time windows all change the balance. Energy closure is therefore a
-problem-specific validation report rather than a simulator startup condition.
+problem-specific validation report rather than an APRL startup condition.
 Particle events are aggregated only on steps with crossings and transferred
 in bounded point-to-point batches. Rank zero serializes all detector writes;
 other ranks never open these files.

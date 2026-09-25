@@ -6,7 +6,7 @@
 
 #include <mpi.h>
 
-namespace fel
+namespace aprl
 {
   void logRoot(MPI_Comm communicator, const std::string& message);
   void createDirectories(const std::string& directory,

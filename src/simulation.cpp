@@ -14,7 +14,7 @@
 #include "runtime_control.h"
 #include "runtime_util.h"
 
-namespace fel
+namespace aprl
 {
   namespace
   {

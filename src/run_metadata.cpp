@@ -14,15 +14,15 @@
 
 #include "runtime_util.h"
 
-#ifndef FEL_SOURCE_REVISION
-#define FEL_SOURCE_REVISION "unknown"
+#ifndef APRL_SOURCE_REVISION
+#define APRL_SOURCE_REVISION "unknown"
 #endif
 
-#ifndef FEL_BUILD_DESCRIPTION
-#define FEL_BUILD_DESCRIPTION "unknown"
+#ifndef APRL_BUILD_DESCRIPTION
+#define APRL_BUILD_DESCRIPTION "unknown"
 #endif
 
-namespace fel
+namespace aprl
 {
   namespace
   {
@@ -105,8 +105,8 @@ namespace fel
 
   RunMetadata::RunMetadata()
     : runId(), configurationPath(), configurationDigest(), manifestPath(),
-      sourceRevision(FEL_SOURCE_REVISION),
-      buildDescription(FEL_BUILD_DESCRIPTION), mpiLibrary(),
+      sourceRevision(APRL_SOURCE_REVISION),
+      buildDescription(APRL_BUILD_DESCRIPTION), mpiLibrary(),
       inputParticleIdentity(), mpiSize(1)
   {}
 
@@ -156,7 +156,7 @@ namespace fel
             if (!stream)
               throw std::runtime_error("Cannot create run manifest: " +
                 metadata.manifestPath);
-            stream << "format: unnamed-fel-run-manifest-v1\n"
+            stream << "format: aprl-run-manifest-v1\n"
                    << "run_id: " << quoteYaml(metadata.runId) << "\n"
                    << "source_revision: "
                    << quoteYaml(metadata.sourceRevision) << "\n"

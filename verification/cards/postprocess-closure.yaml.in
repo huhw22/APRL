@@ -1,9 +1,9 @@
 input:
-  signal_entry_particle_plane: "@FEL_VERIFY_WORK@/postprocess/signal/detectors/entry-particles.h5"
-  signal_exit_particle_plane: "@FEL_VERIFY_WORK@/postprocess/signal/detectors/exit-particles.h5"
-  field_analysis: "@FEL_VERIFY_WORK@/postprocess/field-analysis.h5"
+  signal_entry_particle_plane: "@APRL_VERIFY_WORK@/postprocess/signal/detectors/entry-particles.h5"
+  signal_exit_particle_plane: "@APRL_VERIFY_WORK@/postprocess/signal/detectors/exit-particles.h5"
+  field_analysis: "@APRL_VERIFY_WORK@/postprocess/field-analysis.h5"
   require_complete: true
   require_all_particles: true
 output:
-  report: "@FEL_VERIFY_WORK@/postprocess/energy-closure.yaml"
+  report: "@APRL_VERIFY_WORK@/postprocess/energy-closure.yaml"
   overwrite: true

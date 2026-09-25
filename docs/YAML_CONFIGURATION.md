@@ -1,6 +1,6 @@
 # YAML input-card specification
 
-The simulator accepts one ordinary YAML document. Every mapping is checked
+APRL accepts one ordinary YAML document. Every mapping is checked
 against the documented schema before physical parsing: an unknown key is a
 hard error that reports its YAML line, mapping path, and the recognized keys.
 This catches misspellings even inside a disabled optional block. The five
@@ -29,7 +29,7 @@ output:
   manifest: output/run-manifest.yaml
 ```
 
-This top-level block controls every simulator output. Existing files are a
+This top-level block controls every APRL output. Existing files are a
 hard error by default; `overwrite: true` is required for intentional
 replacement. The root-only manifest preserves the exact card and records a
 unique run identity, source/build information, MPI environment and particle
@@ -222,7 +222,7 @@ initial_self_field:
 ```
 
 The block is optional and defaults to the values above. When enabled, the
-simulator deposits the boosted bunch with the production CIC shape, sums
+APRL deposits the boosted bunch with the production CIC shape, sums
 shared MPI vertex planes, and solves the discrete relativistic-Poisson
 equation before the first physical step. `relativistic-poisson` is the default:
 it derives the represented-mass-weighted mean axial velocity in the simulation
@@ -303,7 +303,7 @@ Production input uses HDF5:
 
 Relative `file` paths are resolved from the YAML file directory. `electrons`
 is always the total physical electron count represented by all records.
-HDF5 v2/v3/v4 records carry a positive relative `macro_weight`; the simulator
+HDF5 v2/v3/v4 records carry a positive relative `macro_weight`; APRL
 normalizes their sum to `electrons` and scales each macro charge and mass
 together. Legacy v1 files remain readable and imply equal weights.
 `position_offset` is optional and uses the YAML length unit. Its x/y components
@@ -781,7 +781,7 @@ trajectory:
 ```
 
 Trajectory output is intended for small-particle validation rather than the
-production radiation path. When disabled, the simulator opens no trajectory
+production radiation path. When disabled, APRL opens no trajectory
 file, reserves no record buffer, performs no periodic trajectory sampling,
 and skips terminal-record conversion. When enabled, each MPI rank writes one
 HDF5 file. `rhythm` uses the YAML time unit. In global

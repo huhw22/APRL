@@ -57,7 +57,7 @@ absolute_path() {
 prefix="$(absolute_path "$prefix")"
 build_dir="$(absolute_path "$build_dir")"
 [[ -n "$manifest" ]] ||
-  manifest="$prefix/share/unnamed_fel_program/install-manifest.txt"
+  manifest="$prefix/share/aprl/install-manifest.txt"
 manifest="$(absolute_path "$manifest")"
 
 if [[ -z "$prefix" || "$prefix" == "/" ]]; then
@@ -70,7 +70,7 @@ if [[ ! -f "$manifest" ]]; then
   exit 1
 fi
 
-manifest_copy="$(mktemp "${TMPDIR:-/tmp}/fel-uninstall-manifest.XXXXXX")"
+manifest_copy="$(mktemp "${TMPDIR:-/tmp}/aprl-uninstall-manifest.XXXXXX")"
 cp -- "$manifest" "$manifest_copy"
 trap 'rm -f -- "$manifest_copy"' EXIT
 
@@ -95,7 +95,7 @@ while IFS= read -r installed_path || [[ -n "$installed_path" ]]; do
   fi
 done < "$manifest_copy"
 
-data_dir="$prefix/share/unnamed_fel_program"
+data_dir="$prefix/share/aprl"
 if ! $dry_run && [[ -d "$data_dir" ]]; then
   find "$data_dir" -depth -type d -empty -exec rmdir -- {} \; 2>/dev/null || true
 fi

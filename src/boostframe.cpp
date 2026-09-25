@@ -5,7 +5,7 @@
 #include <limits>
 #include <stdexcept>
 
-namespace fel
+namespace aprl
 {
   BoostFrameTransform::BoostFrameTransform()
     : gamma_(1.0), beta_(0.0), gammaBeta_(0.0), c0_(1.0),

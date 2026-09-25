@@ -27,10 +27,10 @@ cmake --build build -j
 
 The main build now prefers and, by default, requires parallel HDF5. A strictly
 single-rank local build may opt out with
-`-DFEL_REQUIRE_PARALLEL_HDF5=OFF`; that binary cannot read particle HDF5 input
+`-DAPRL_REQUIRE_PARALLEL_HDF5=OFF`; that binary cannot read particle HDF5 input
 with multiple MPI ranks.
 
-This produces `build/simulator`, `build/particle_text_to_hdf5`,
+This produces `build/aprl`, `build/particle_text_to_hdf5`,
 `build/elegant_sdds_to_hdf5` when SDDS is found,
 `build/undulator_resonance`, `build/energy_ledger_report`, and
 `build/lab_frame_energy_estimate`.
@@ -103,7 +103,7 @@ boost_gamma_recommended = gamma_lab/sqrt(1+K^2/2),
 compares it with `mesh.boost_gamma`, and converts their velocity mismatch into
 the predicted boosted-frame z drift across the characteristic undulator core,
 in metres and z cells. The recommendation selects one constant inertial frame;
-the simulator never changes boost during a run. Free-drift shift, fringes,
+APRL never changes boost during a run. Free-drift shift, fringes,
 energy spread, emittance and collective evolution still require box margin.
 If a field plane enables
 `retirement_frequency_protection`, the same command reads its minimum photon
@@ -236,8 +236,8 @@ The committed example HDF5 can be regenerated with:
 ## Run
 
 ```bash
-./build/simulator config/example.yaml
-mpirun -n 4 ./build/simulator config/example.yaml
+./build/aprl config/example.yaml
+mpirun -n 4 ./build/aprl config/example.yaml
 ```
 
 Use `config/generated_gaussian.yaml` for the file-free test input. For a local
@@ -257,7 +257,7 @@ prefixed with `[resource]`, so ordinary batch redirection is sufficient:
 ```bash
 sbatch --output=run-%j.log run.sh
 # run.sh ultimately executes, for example:
-srun ./build/simulator config/production.yaml
+srun ./build/aprl config/production.yaml
 ```
 
 The startup timing is a short local microbenchmark, not a scheduler guarantee:

@@ -3,7 +3,7 @@
 #include <cmath>
 #include <stdexcept>
 
-namespace fel
+namespace aprl
 {
   namespace
   {

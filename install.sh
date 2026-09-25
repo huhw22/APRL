@@ -165,8 +165,8 @@ root_configure+=("${generator_args[@]}")
 root_configure+=("${common_cmake_args[@]}")
 root_configure+=(
   -DBUILD_TESTING="$testing"
-  -DFEL_REQUIRE_PARALLEL_HDF5="$parallel_requirement"
-  -DFEL_BUILD_POSTPROCESSORS=$([[ "$profile" == "full" ]] && echo ON || echo OFF)
+  -DAPRL_REQUIRE_PARALLEL_HDF5="$parallel_requirement"
+  -DAPRL_BUILD_POSTPROCESSORS=$([[ "$profile" == "full" ]] && echo ON || echo OFF)
 )
 [[ -n "$sdds_root" ]] && root_configure+=("-DSDDS_ROOT=$sdds_root")
 root_configure+=("${extra_cmake_args[@]}")
@@ -194,7 +194,7 @@ fi
 
 build_roots=("$build_dir/core")
 
-receipt_dir="$prefix/share/unnamed_fel_program"
+receipt_dir="$prefix/share/aprl"
 receipt="$receipt_dir/install-manifest.txt"
 install_info="$receipt_dir/install-info.txt"
 previous_manifest=""

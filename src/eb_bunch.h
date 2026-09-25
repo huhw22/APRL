@@ -8,7 +8,7 @@
 #include "boostframe.h"
 #include "eb_particles.h"
 
-namespace fel
+namespace aprl
 {
   struct SIBunchPlacement
   {

@@ -51,7 +51,7 @@ ctest --test-dir build --output-on-failure -L required
 配置时显式开启：
 
 ```bash
-cmake -S . -B build -DFEL_ENABLE_PHYSICS_ANALYSIS=ON
+cmake -S . -B build -DAPRL_ENABLE_PHYSICS_ANALYSIS=ON
 cmake --build build --target verify_physics
 ```
 

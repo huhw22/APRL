@@ -43,7 +43,7 @@ namespace
     return value;
   }
 
-  fel::EnergyLedgerRecord readRecord(hid_t dataset, hid_t memoryType,
+  aprl::EnergyLedgerRecord readRecord(hid_t dataset, hid_t memoryType,
                                      std::uint64_t index)
   {
     hid_t fileSpace = H5Dget_space(dataset);
@@ -54,7 +54,7 @@ namespace
       start, NULL, count, NULL), "Cannot select energy-ledger record");
     hid_t memorySpace = H5Screate_simple(1, count, NULL);
     requireHandle(memorySpace, "Cannot create record memory space");
-    fel::EnergyLedgerRecord record;
+    aprl::EnergyLedgerRecord record;
     const herr_t status = H5Dread(dataset, memoryType, memorySpace,
       fileSpace, H5P_DEFAULT, &record);
     H5Sclose(memorySpace);
@@ -63,7 +63,7 @@ namespace
     return record;
   }
 
-  void printRecord(const char* label, const fel::EnergyLedgerRecord& record)
+  void printRecord(const char* label, const aprl::EnergyLedgerRecord& record)
   {
     std::cout << label << ": step=" << record.step
       << " time_box_s=" << record.timeBox
@@ -117,14 +117,14 @@ int main(int argc, char** argv)
         throw std::runtime_error("Energy ledger has no committed records");
       dataset = H5Dopen2(group, "records", H5P_DEFAULT);
       requireHandle(dataset, "Cannot open energy-ledger records");
-      memoryType = fel::EnergyLedgerWriter::createMemoryRecordType();
-      const fel::EnergyLedgerRecord initial =
+      memoryType = aprl::EnergyLedgerWriter::createMemoryRecordType();
+      const aprl::EnergyLedgerRecord initial =
         readRecord(dataset, memoryType, 0);
-      const fel::EnergyLedgerRecord final =
+      const aprl::EnergyLedgerRecord final =
         readRecord(dataset, memoryType, committed - 1);
       bool hasSelected = argc == 3;
       std::uint64_t selectedIndex = 0;
-      fel::EnergyLedgerRecord selected;
+      aprl::EnergyLedgerRecord selected;
       if (hasSelected)
         {
           char* end = 0;

@@ -9,11 +9,11 @@
 #include <mpi.h>
 #include <yaml-cpp/yaml.h>
 
-#ifdef FEL_PROBE_FFTW
+#ifdef APRL_PROBE_FFTW
 #include <fftw3.h>
 #endif
 
-#ifdef FEL_PROBE_SDDS
+#ifdef APRL_PROBE_SDDS
 #include <SDDS.h>
 #endif
 
@@ -50,7 +50,7 @@ namespace
 #else
     const bool headerParallel = false;
 #endif
-    require(headerParallel == (FEL_PROBE_CMAKE_HDF5_PARALLEL != 0),
+    require(headerParallel == (APRL_PROBE_CMAKE_HDF5_PARALLEL != 0),
       "CMake and hdf5.h disagree about parallel-HDF5 support");
     if (!headerParallel && size > 1)
       throw std::runtime_error(
@@ -111,7 +111,7 @@ namespace
 
   void exerciseFftw(int rank)
   {
-#ifdef FEL_PROBE_FFTW
+#ifdef APRL_PROBE_FFTW
     require(fftw_init_threads() != 0, "fftw_init_threads failed");
     fftw_plan_with_nthreads(1);
     fftw_complex* values = static_cast<fftw_complex*>(
@@ -158,7 +158,7 @@ int main(int argc, char** argv)
         "fel-dependency-probe.h5";
       exerciseHdf5(filename, rank, size);
       exerciseFftw(rank);
-#ifdef FEL_PROBE_SDDS
+#ifdef APRL_PROBE_SDDS
       int32_t (*initializeInput)(SDDS_DATASET*, char*) =
         &SDDS_InitializeInput;
       require(initializeInput != nullptr, "SDDS link probe failed");

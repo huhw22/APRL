@@ -7,7 +7,7 @@ a fixed laboratory field detector. It runs independently of the simulation,
 uses threaded FFTW and serial HDF5 on an analysis node, and does not require
 particle trajectories. It accepts either:
 
-- the simulator's raw `/field_plane` file;
+- APRL's raw `/field_plane` file;
 - a particle-background-subtracted `/reconstructed_field` file; or
 - a raw/reconstructed signal plus a geometrically and temporally identical
   zero-radiation baseline, subtracted at electric-field amplitude level.

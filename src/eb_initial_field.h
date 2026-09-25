@@ -11,7 +11,7 @@
 #include "config.h"
 #include "fieldvector.h"
 
-namespace fel
+namespace aprl
 {
   struct EBGaussInitializationReport
   {

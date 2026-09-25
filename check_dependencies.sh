@@ -8,7 +8,7 @@ Usage: ./check_dependencies.sh [options]
 Compile and run a small dependency probe. No package is installed.
 
 Options:
-  --profile core|full       core: simulator; full: include FFTW tools (default)
+  --profile core|full       core: APRL; full: include FFTW tools (default)
   --report FILE             write the complete diagnostic report to FILE
   --mpi-cxx COMMAND         MPI C++ wrapper (default: $MPICXX or mpic++)
   --mpi-launcher COMMAND    launcher accepting '-n 2' (default: $MPIEXEC or mpiexec)
@@ -179,11 +179,11 @@ fi
 echo
 
 probe_parent="${TMPDIR:-/tmp}"
-probe_dir="$(mktemp -d "$probe_parent/fel-dependency-check.XXXXXX")"
+probe_dir="$(mktemp -d "$probe_parent/aprl-dependency-check.XXXXXX")"
 cleanup_probe() {
   if $keep_probe; then
     echo "probe_directory_retained=$probe_dir"
-  elif [[ -n "$probe_dir" && "$probe_dir" == "$probe_parent"/fel-dependency-check.* ]]; then
+  elif [[ -n "$probe_dir" && "$probe_dir" == "$probe_parent"/aprl-dependency-check.* ]]; then
     rm -rf -- "$probe_dir"
   fi
 }
@@ -202,9 +202,9 @@ configure_command=(
   -B "$probe_dir/build"
   -DCMAKE_BUILD_TYPE=Release
   -DCMAKE_CXX_COMPILER="$mpi_cxx"
-  -DFEL_PROBE_FULL="$probe_full"
-  -DFEL_PROBE_REQUIRE_PARALLEL_HDF5="$probe_parallel"
-  -DFEL_PROBE_SDDS="$probe_sdds"
+  -DAPRL_PROBE_FULL="$probe_full"
+  -DAPRL_PROBE_REQUIRE_PARALLEL_HDF5="$probe_parallel"
+  -DAPRL_PROBE_SDDS="$probe_sdds"
 )
 if [[ -n "$sdds_root" ]]; then
   configure_command+=("-DSDDS_ROOT=$sdds_root")
@@ -223,7 +223,7 @@ if ! cmake --build "$probe_dir/build" --parallel 2; then
   echo "RESULT=FAIL: the discovered headers and libraries do not compile/link together."
   exit 1
 fi
-probe_executable="$probe_dir/build/fel_dependency_probe"
+probe_executable="$probe_dir/build/aprl_dependency_probe"
 if command -v ldd >/dev/null 2>&1; then
   echo "--- resolved shared libraries ---"
   ldd "$probe_executable" || true
@@ -256,7 +256,7 @@ echo
 if [[ -z "$sdds_root" ]]; then
   echo "=== optional official SDDS converter ==="
   echo "NOT CHECKED: supply --sdds-root /path/to/built/SDDS."
-  echo "The simulator and HDF5-v3 text converter remain available without it."
+  echo "APRL and the HDF5-v3 text converter remain available without it."
   if $require_sdds; then
     echo "RESULT=FAIL: SDDS was required."
     exit 1

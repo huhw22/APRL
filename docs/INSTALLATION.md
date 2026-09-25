@@ -94,7 +94,7 @@ sudo ./install_dependencies.sh --profile full \
 若需要系统安装：
 
 ```bash
-sudo ./install.sh --prefix /opt/unnamed-fel-program
+sudo ./install.sh --prefix /opt/aprl
 ```
 
 如果需要原生 SDDS 转换器：
@@ -119,7 +119,7 @@ sudo ./install.sh --prefix /opt/unnamed-fel-program
 - `--cmake-arg ARG`：传递站点 toolchain 或依赖路径，可重复；
 - `--allow-serial-hdf5`：只构建单 rank 本地版本，并跳过 parallel-HDF5 专项测试。
 
-默认前缀是 `/usr/local`，默认一次性构建目录是源码下的 `build-install`。安装完成后，二进制位于 `<prefix>/bin`，文档、示例和绝对路径安装回执位于 `<prefix>/share/unnamed_fel_program`。这里的目录名只是当前内部维护标识，不占用程序的最终命名。
+默认前缀是 `/usr/local`，默认一次性构建目录是源码下的 `build-install`。安装完成后，二进制位于 `<prefix>/bin`，文档、示例和绝对路径安装回执位于 `<prefix>/share/aprl`。其中主程序为 `<prefix>/bin/aprl`。
 
 重复安装到同一前缀时，脚本会先保存并验证旧回执；新安装及新回执成功后，才删除旧版本中已经不存在的文件。这样更新不会因某个已移除的工具留下不可追踪的旧二进制。
 
@@ -142,7 +142,7 @@ sudo ./install.sh --prefix /opt/unnamed-fel-program
 系统前缀下卸载需要相同权限：
 
 ```bash
-sudo ./uninstall.sh --prefix /opt/unnamed-fel-program
+sudo ./uninstall.sh --prefix /opt/aprl
 ```
 
 自动依赖安装器安装的是系统共享软件包，因此普通程序卸载不会反向删除它们；这些库可能仍被其他程序使用。
