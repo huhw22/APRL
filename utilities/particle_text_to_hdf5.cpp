@@ -58,7 +58,7 @@ namespace
       {
         std::ostringstream message;
         message << "Line " << lineNumber
-                << " must contain x y z ux uy uz";
+                << " must contain x_plane y_plane zeta ux uy uz";
         throw std::runtime_error(message.str());
       }
     record.macroWeight = 1.0;
@@ -78,7 +78,7 @@ namespace
       {
         std::ostringstream message;
         message << "Line " << lineNumber
-                << " contains data after x y z ux uy uz [macro_weight]";
+                << " contains data after x_plane y_plane zeta ux uy uz [macro_weight]";
         throw std::runtime_error(message.str());
       }
     if (!(record.macroWeight > 0.0) ||
@@ -211,8 +211,13 @@ namespace
     hid_t group = H5Gcreate2(file, "/particles", H5P_DEFAULT,
                              H5P_DEFAULT, H5P_DEFAULT);
     requireHandle(group, "Cannot create /particles group");
-    writeIntAttribute(group, "format_version", 2);
-    writeStringAttribute(group, "coordinate_frame", "relative-lab");
+    writeIntAttribute(group, "format_version", 3);
+    writeStringAttribute(group, "coordinate_frame",
+                         "fixed-lab-plane-plus-longitudinal-offset");
+    writeStringAttribute(group, "transverse_sampling",
+                         "x-y-at-fixed-lab-input-plane");
+    writeStringAttribute(group, "longitudinal_sampling",
+                         "signed-offset-from-reconstructed-bunch-reference");
     writeStringAttribute(group, "position_unit", "m");
     writeStringAttribute(group, "proper_velocity_unit", "gamma*v/c");
     writeStringAttribute(group, "macro_weight_definition",
@@ -296,7 +301,7 @@ namespace
               << " --input particles.txt --output particles.h5 "
                  "[--length-unit m|mm|um|nm]\n"
               << "Each data line must contain: "
-                 "x y z ux uy uz [macro_weight]\n";
+                 "x_plane y_plane zeta ux uy uz [macro_weight]\n";
   }
 }
 

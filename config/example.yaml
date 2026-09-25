@@ -42,7 +42,10 @@ initial_self_field:
 
 beam:
   reference:
-    # The first physical element entrance is lab z=0; the bunch starts left.
+    # Absolute coordinates shared with the Elegant lattice.  The HDF5-v3
+    # records are sampled at input_plane_z and are advanced only forward to
+    # the reconstructed common-time bunch reference at initial_center_z.
+    input_plane_z: -2.0
     initial_center_z: -1.8
   input:
     type: hdf5

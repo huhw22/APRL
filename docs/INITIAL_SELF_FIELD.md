@@ -90,16 +90,26 @@ the box or the sampled distribution is physically adequate.
 
 A finite-length K=0 test used `gamma=boost_gamma=1174`, Gaussian peak current
 `50 A`, `sigma_x=sigma_y=60 um`, and `4096` macro-particles representing
-`10^6` electrons. A fixed laboratory observation plane was placed at `z=0`.
-Relativity of simultaneity required moving the input reference from `-50 mm`
-to `-2 m`: otherwise the front event on the common boosted-time slice lay
-downstream of the plane, and the preflight correctly rejected the card.
+`10^6` electrons. The reconstructed laboratory bunch reference remained at
+`-50 mm`; the first magnet's physical entrance was `34 mm` and its compact
+fringe interaction began at `10.0238 mm`. Head-anchored synchronization placed
+the common-time laboratory head at `-49.9987 mm`, leaving `60.0225 mm` to the
+interaction boundary versus an `11.74 mm` one-cell lab margin. The transformed
+bunch occupied only `3.2666 mm` in boosted z and fitted the configured box.
 
-At the entrance-adjacent ledger sample, CPML-safe initialization changed the
-physical-interior field energy from `0.202852 pJ` to `0.203123 pJ` (`0.134%`).
-The integrated CPML-interface flux was `-4.06e-6 pJ`, particle kinetic energy
-changed by `6.85e-5 pJ`, and mean laboratory gamma changed by `-2.60e-5`. The
-equal-grid PEC control changed field energy by `0.114%`.
+The corresponding laboratory events span `3.8349` light-metres because of
+relativity of simultaneity. This is logged as a diagnostic only: it is not a
+physical entrance drift and no longer forces the bunch reference to `-2 m`.
+For HDF5-v3 Elegant input, the separate physical requirement is that every
+record advances forward from `input_plane_z` to the reconstructed snapshot and
+that this snapshot fits before the first magnetic interaction region.
+
+The updated `-50 mm` CPML run initialized `0.202850 pJ` of field energy and
+reached the configured `200 mm` reference stop without a placement failure.
+The final field energy was `0.203168 pJ`; the integrated CPML-interface flux
+was `-3.92e-6 pJ`. These values retain the earlier conclusion that the residual
+sub-percent variation is a convergence target rather than a physical entrance
+drift requirement.
 
 Before moving the static boundary to the CPML entrance, the same CPML test
 changed field energy by about `17.5%` and showed `-0.035 pJ` flowing back from

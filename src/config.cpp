@@ -314,7 +314,7 @@ namespace fel
   }
 
   BeamReferenceConfig::BeamReferenceConfig()
-    : initialCenterZ(0.0)
+    : initialCenterZ(0.0), inputPlaneZ(0.0), inputPlaneZSet(false)
   {}
 
   BeamlineElementExtent::BeamlineElementExtent()
@@ -573,6 +573,13 @@ namespace fel
     result.reference.initialCenterZ = finiteDouble(
       required(reference, "initial_center_z"),
       "initial beam-center z") * result.inputUnits.length;
+    if (reference["input_plane_z"])
+      {
+        result.reference.inputPlaneZ = finiteDouble(
+          reference["input_plane_z"], "particle input-plane z") *
+          result.inputUnits.length;
+        result.reference.inputPlaneZSet = true;
+      }
 
     const YAML::Node input = required(beam, "input");
     result.beam.type = beamInputType(required(input, "type"));
@@ -1045,21 +1052,12 @@ namespace fel
     if (result.beamlineElements.empty())
       throw configError(sources,
         "beam placement and stopping require at least one beamline element");
-    Double firstPhysical = result.beamlineElements[0].physicalEntrance;
     Double lastInteraction = result.beamlineElements[0].interactionExit;
     for (std::size_t i = 1; i < result.beamlineElements.size(); ++i)
       {
-        firstPhysical = std::min(firstPhysical,
-          result.beamlineElements[i].physicalEntrance);
         lastInteraction = std::max(lastInteraction,
           result.beamlineElements[i].interactionExit);
       }
-    const Double originTolerance = 64.0 *
-      std::numeric_limits<Double>::epsilon() *
-      std::max(1.0, std::abs(firstPhysical));
-    if (std::abs(firstPhysical) > originTolerance)
-      throw configError(sources,
-        "the first physical beamline entrance must define lab z=0");
     if (result.stop.mode == StopMode::ReferenceCenterZ &&
         !(result.stop.referenceZ > lastInteraction))
       throw configError(stop["z"],

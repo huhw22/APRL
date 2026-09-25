@@ -149,12 +149,16 @@ compares with either field-plane or trajectory far-field energy. See
 ```
 
 The converter reads the source twice and writes HDF5 in bounded chunks, so its
-memory use does not grow with the full particle count. The text columns are
-`x y z ux uy uz [macro_weight]`; the optional seventh value is a positive
+memory use does not grow with the full particle count. The HDF5-v3 text columns
+are `x_plane y_plane zeta ux uy uz [macro_weight]`: x/y are sampled at the
+fixed Elegant plane and `zeta` is the signed longitudinal offset used to
+reconstruct the common-time bunch. The optional seventh value is a positive
 relative macro-particle weight and defaults to one. Blank lines and `#`
-comments are accepted. The utility is for preparation outside the expensive
-simulation allocation. Production runs read the resulting HDF5 file directly
-and collectively, one contiguous range per MPI rank.
+comments are accepted. Set `beam.reference.input_plane_z` and
+`initial_center_z` in the same laboratory coordinate system. The utility is
+for preparation outside the expensive simulation allocation. Production runs
+read the resulting HDF5 file directly and collectively, one contiguous range
+per MPI rank.
 
 The committed example HDF5 can be regenerated with:
 
@@ -221,9 +225,11 @@ prevents this diagnostic from being enabled accidentally on a production
 bunch.
 
 The current solver stops with an explicit error if its boosted initial bunch
-does not fit the longitudinal box or overlaps the finite interaction region of
-the first element. Increase the box or move `initial_center_z` upstream only
-after checking the reported physical and interaction boundaries.
+does not fit the longitudinal box. For HDF5-v3 input it also checks that every
+record is projected forward from the configured Elegant plane and that the
+reconstructed bunch fits between that plane and the first magnetic interaction
+region. The head-anchored Lorentz synchronization span is reported separately
+and is not treated as a physical entrance-drift requirement.
 
 The examples select `mesh.field_solver: cowan-z`. This requires `dx >= dz`
 and `dy >= dz`; an invalid card exits before field allocation and particle

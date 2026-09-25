@@ -179,21 +179,33 @@ Every particle position is relative to a laboratory-frame beam reference:
 ```yaml
 beam:
   reference:
+    input_plane_z: -2.0
     initial_center_z: -1.8
 ```
 
-The leftmost physical entrance of the first beamline element defines lab z=0.
-`initial_center_z` is the lab coordinate of the particle file's relative z=0
-reference at the input snapshot, so it is normally negative. It is also the
-initial point of the boost reference-centre worldline used by the fixed-z stop
-mode. Positive particle-relative z points downstream.
+All particle planes, magnetic elements and detector planes use the same
+absolute laboratory z coordinate. No element is forced to lie at zero.
+For production HDF5-v3 input, `input_plane_z` is the Elegant observation-plane
+coordinate. `initial_center_z` is the coordinate assigned to the reconstructed
+common-time bunch reference after straight-line forward projection. Positive
+particle longitudinal offset points downstream. Versions 1/2 and the generated
+Gaussian path are already common-time snapshots and ignore `input_plane_z`.
 
-The simulator performs the free-drift Lorentz simultaneity transform to
-boosted time zero and checks the transformed bunch front against the first
-element's **interaction** entrance, not merely its physical entrance. If the
-front touches that region, the run stops before field allocation and reports a
-recommended maximum (more negative) `initial_center_z`. The recommendation
-includes one lab-equivalent longitudinal cell as a safety margin.
+For HDF5-v3 records the program requires every reconstructed particle position
+to be at or downstream of `input_plane_z`. It then requires the snapshot bunch
+front, plus one lab-equivalent boosted z cell, to remain before the first
+magnetic-element **interaction** entrance. These bounds define an admissible
+interval for `initial_center_z`. If it is empty, the error reports both limits
+and recommends moving the Elegant plane, changing the magnetic fringe/action
+region, reducing the bunch span, or refining `dz`.
+
+The subsequent Lorentz transformation anchors boosted time zero to the
+downstream bunch-front event. Other particles are synchronized relative to
+that event and the transformed bunch is translated to the centre of the
+boosted numerical box. A potentially metre-scale span between the corresponding
+laboratory events is logged only as a relativity-of-simultaneity diagnostic; it
+is not interpreted as a required physical drift and does not move
+`initial_center_z` upstream.
 
 Production input uses HDF5:
 
@@ -207,7 +219,7 @@ Production input uses HDF5:
 
 Relative `file` paths are resolved from the YAML file directory. `electrons`
 is always the total physical electron count represented by all records.
-HDF5 v2 records carry a positive relative `macro_weight`; the simulator
+HDF5 v2/v3 records carry a positive relative `macro_weight`; the simulator
 normalizes their sum to `electrons` and scales each macro charge and mass
 together. Legacy v1 files remain readable and imply equal weights.
 `position_offset` is optional, uses the YAML length unit, and is added before

@@ -72,7 +72,8 @@ namespace fel
   std::vector<RelativisticParticleSI> ParticleHdf5File::readDistributed(
       const std::string& filename, Double totalElectrons,
       const FieldVector<Double>& positionOffsetSI,
-      MPI_Comm communicator, unsigned long long& globalRecords)
+      MPI_Comm communicator, unsigned long long& globalRecords,
+      int& inputFormatVersion)
   {
     if (communicator == MPI_COMM_NULL)
       throw std::invalid_argument("Particle input communicator is null");
@@ -109,13 +110,15 @@ namespace fel
         throw std::runtime_error("Particle file is missing /particles group");
       }
     const int version = readFormatVersion(group);
-    if (version != legacyFormatVersion && version != formatVersion)
+    if (version != legacyFormatVersion &&
+        version != snapshotFormatVersion && version != formatVersion)
       {
         H5Gclose(group);
         H5Fclose(file);
         throw std::runtime_error(
-          "Unsupported particle HDF5 format version; supported versions are 1 and 2");
+          "Unsupported particle HDF5 format version; supported versions are 1, 2 and 3");
       }
+    inputFormatVersion = version;
     hid_t dataset = H5Dopen2(group, "records", H5P_DEFAULT);
     if (dataset < 0)
       {
@@ -181,7 +184,7 @@ namespace fel
     requireStatus(H5Pset_dxpl_mpio(transfer, H5FD_MPIO_COLLECTIVE),
                   "Cannot enable collective particle dataset read");
 #endif
-    hid_t memoryType = memoryRecordType(version >= formatVersion);
+    hid_t memoryType = memoryRecordType(version >= snapshotFormatVersion);
     const herr_t readStatus = H5Dread(dataset, memoryType, memorySpace,
       fileSpace, transfer, input.empty() ? NULL : &input[0]);
     H5Tclose(memoryType);

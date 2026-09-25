@@ -43,6 +43,8 @@ initial_self_field:
 
 beam:
   reference:
+    # Generated particles already form a common-time relative snapshot, so
+    # this test path has no Elegant input_plane_z.
     initial_center_z: -1.8
   input:
     type: generated-gaussian

@@ -26,7 +26,8 @@ namespace fel
   {
   public:
     static const int legacyFormatVersion = 1;
-    static const int formatVersion = 2;
+    static const int snapshotFormatVersion = 2;
+    static const int formatVersion = 3;
 
     /* Reads one contiguous hyperslab per MPI rank. Parallel HDF5 uses one
      * collective file open and one collective dataset read. */
@@ -35,7 +36,8 @@ namespace fel
         Double totalElectrons,
         const FieldVector<Double>& positionOffsetSI,
         MPI_Comm communicator,
-        unsigned long long& globalRecords);
+        unsigned long long& globalRecords,
+        int& inputFormatVersion);
   };
 }
 

@@ -21,6 +21,7 @@ namespace fel
 
   struct SIBunchPlacementReport
   {
+    Double relativeTailLab;
     Double relativeHeadLab;
     Double referencePositionLab;
     Double headAfterLab;
@@ -29,6 +30,17 @@ namespace fel
     unsigned long long particles;
 
     SIBunchPlacementReport();
+  };
+
+  struct SILabPlaneProjectionReport
+  {
+    Double inputPlaneLab;
+    Double referencePositionLab;
+    Double minimumForwardDistance;
+    Double maximumForwardDistance;
+    unsigned long long particles;
+
+    SILabPlaneProjectionReport();
   };
 
   struct SIBunchBoostReport
@@ -47,6 +59,17 @@ namespace fel
   class SIBunchPreprocessor
   {
   public:
+    /* Version-3 HDF5 records give x/y at a fixed laboratory observation
+     * plane and a signed longitudinal offset from the bunch reference.  Form
+     * the common-lab-time snapshot by advancing every record to
+     * referencePositionLab + relative_z along its supplied straight-line
+     * velocity.  Backward projection is rejected. */
+    static SILabPlaneProjectionReport projectLabPlaneToSnapshot(
+        std::vector<RelativisticParticleSI>& particles,
+        Double inputPlaneLab,
+        Double referencePositionLab,
+        MPI_Comm communicator);
+
     /* Input z coordinates are relative to a user-defined laboratory bunch
      * centre. The physical beamline origin remains independent of the finite
      * interaction entrance created by an element fringe. */
@@ -55,9 +78,12 @@ namespace fel
         const SIBunchPlacement& placement,
         MPI_Comm communicator);
 
-    /* Free-drift every particle from the common lab snapshot to its event on
-     * the common t_box=0 simultaneity plane, then transform coordinates and
-     * proper velocity. */
+    /* Map every particle from the common lab snapshot to its event on the
+     * common t_box=0 simultaneity plane, then transform coordinates and
+     * proper velocity.  The caller selects the anchor event through frame's
+     * lab origins; production initialization anchors the downstream bunch
+     * front so the large relativity-of-simultaneity span remains a diagnostic
+     * rather than a fictitious required drift length. */
     static SIBunchBoostReport boostLabSnapshotToBoxTimeZero(
         std::vector<RelativisticParticleSI>& particles,
         const BoostFrameTransform& frame,

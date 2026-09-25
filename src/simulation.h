@@ -72,8 +72,8 @@ namespace fel
 
     Slab slabForRank(int rank) const;
     int ownerRank(Double boxZ) const;
-    Double firstBeamlinePhysicalEntranceLab() const;
-    Double firstBeamlineInteractionEntranceLab() const;
+    Double firstMagneticPhysicalEntranceLab() const;
+    Double firstMagneticInteractionEntranceLab() const;
     Double lastBeamlineInteractionExitLab() const;
     void validateParticlesInsideGlobalBox() const;
 
@@ -89,6 +89,7 @@ namespace fel
     std::size_t localZOffset_;
     FieldVector<Double> globalOriginBox_;
     FieldVector<Double> localOriginBox_;
+    Double referenceCenterBoxZ_;
     BoostFrameTransform frame_;
     SIFieldSourceSet sources_;
     std::unique_ptr<EBFieldGrid> fields_;

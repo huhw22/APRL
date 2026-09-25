@@ -92,9 +92,13 @@ namespace fel
 
   struct BeamReferenceConfig
   {
-    /* Lab coordinate of the particle file's relative z=0 reference at the
-     * input snapshot. The first physical beamline entrance defines z=0. */
+    /* Lab coordinate of the reconstructed snapshot's relative z=0 reference.
+     * All laboratory elements and an optional Elegant input plane use the
+     * same user-defined coordinate system; no beamline element is forced to
+     * define z=0. */
     Double initialCenterZ;
+    Double inputPlaneZ;
+    bool inputPlaneZSet;
 
     BeamReferenceConfig();
   };

@@ -11,6 +11,11 @@
 
 namespace fel
 {
+  ParticleInitializationReport::ParticleInitializationReport()
+    : globalRecords(0), fileFormatVersion(0),
+      laboratoryPlaneCoordinates(false)
+  {}
+
   namespace
   {
     const Double kPi = 3.141592653589793238462643383279502884;
@@ -102,22 +107,28 @@ namespace fel
   }
 
   std::vector<RelativisticParticleSI> ParticleInitializer::create(
-      const SimulationConfig& config, MPI_Comm communicator)
+      const SimulationConfig& config, MPI_Comm communicator,
+      ParticleInitializationReport& report)
   {
     if (communicator == MPI_COMM_NULL)
       throw std::invalid_argument("Particle initializer communicator is null");
     if (config.beam.type == BeamInputType::Hdf5)
       {
-        unsigned long long globalRecords = 0;
-        return ParticleHdf5File::readDistributed(
+        std::vector<RelativisticParticleSI> particles =
+          ParticleHdf5File::readDistributed(
           config.beam.file, config.beam.electrons,
-          config.beam.positionOffset, communicator, globalRecords);
+          config.beam.positionOffset, communicator,
+          report.globalRecords, report.fileFormatVersion);
+        report.laboratoryPlaneCoordinates =
+          report.fileFormatVersion >= ParticleHdf5File::formatVersion;
+        return particles;
       }
 
     int rank = 0;
     int size = 1;
     MPI_Comm_rank(communicator, &rank);
     MPI_Comm_size(communicator, &size);
+    report.globalRecords = config.beam.macroparticles;
     return generatedGaussian(config.beam, rank, size);
   }
 }

@@ -10,12 +10,22 @@
 
 namespace fel
 {
+  struct ParticleInitializationReport
+  {
+    unsigned long long globalRecords;
+    int fileFormatVersion;
+    bool laboratoryPlaneCoordinates;
+
+    ParticleInitializationReport();
+  };
+
   class ParticleInitializer
   {
   public:
     static std::vector<RelativisticParticleSI> create(
         const SimulationConfig& config,
-        MPI_Comm communicator);
+        MPI_Comm communicator,
+        ParticleInitializationReport& report);
   };
 }
 

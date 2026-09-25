@@ -8,9 +8,9 @@ is production-ready.
 
 | Area | Current status | Production note |
 |---|---|---|
-| Particle input | Implemented | Parallel HDF5 v2 supports per-record relative weights; v1 remains equal-weight compatible. A bounded-memory text converter is provided. |
+| Particle input | Implemented | Parallel HDF5 v3 represents a fixed Elegant lab plane plus longitudinal timing offsets and supports per-record relative weights. It is projected only forward to an explicitly placed common-time bunch reference. Legacy v1/v2 snapshots remain readable, and a bounded-memory text converter is provided. |
 | Generated beam | Implemented for tests | Deterministic, uncorrelated Gaussian with total electrons and macro-particle count; it is not a beam-preparation model. |
-| Relativistic transform | Implemented and audited | Free-drift simultaneity placement, SI E/B transforms and light-front longitudinal momentum transforms are checked by a lab/boost round trip. |
+| Relativistic transform | Implemented and audited | Boosted time zero is anchored to the reconstructed lab bunch front, the transformed bunch is centred in the numerical box, and the large virtual lab-event span is diagnostic rather than an entrance-drift constraint. SI E/B and light-front momentum transforms are checked by a lab/boost round trip. |
 | Mesh geometry | Implemented and audited | YAML supplies integer `cells` and physical `cell_size`; extents use multiplication and MPI slab offsets/counts remain integer. Old length/resolution inference is rejected. |
 | Maxwell/particle loop | Implemented for the no-seed path | Direct SI E/B Cowan-z or Yee update, Boris push, charge-conserving current deposition and MPI slab migration. Weak-collective particle/radiation energy agrees in sign and scale; the dense-bunch ledger is measurable but not yet converged. |
 | Field boundary | Implemented for no-seed Cowan runs | Compact CFS-CPML with checked geometry and particle-carrier treatment. Seed-wave TF/SF plus Cowan/CPML is not implemented. |

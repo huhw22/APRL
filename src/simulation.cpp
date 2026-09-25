@@ -167,7 +167,8 @@ namespace fel
       beamlineElements_(config.beamlineElements),
       communicator_(communicator), rank_(0), size_(1),
       globalGeometry_(), localGeometry_(), localZOffset_(0),
-      globalOriginBox_(0.0), localOriginBox_(0.0), frame_(), sources_(),
+      globalOriginBox_(0.0), localOriginBox_(0.0),
+      referenceCenterBoxZ_(0.0), frame_(), sources_(),
       fields_(), halo_(), incident_(), particles_(), particleCPML_(),
       pmlCarriers_(), retirementCarriers_(), particleBoundary_(), detectors_(),
       trajectoryWriter_(), energyLedgerWriter_(), lastEnergyLedgerRecord_(),
@@ -985,12 +986,9 @@ namespace fel
 
   void Simulation::initializeParticles()
   {
-    const Double boxReferenceZ = config_.mesh.center[2];
-    frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
-      config_.reference.initialCenterZ,
-      boxReferenceZ);
-
-    particles_ = ParticleInitializer::create(config_, communicator_);
+    ParticleInitializationReport inputReport;
+    particles_ = ParticleInitializer::create(
+      config_, communicator_, inputReport);
     const unsigned long long localCount =
       static_cast<unsigned long long>(particles_.size());
     unsigned long long idOffset = 0;
@@ -1084,12 +1082,26 @@ namespace fel
         logRoot(communicator_, message.str());
       }
 
+    SILabPlaneProjectionReport planeProjection;
+    if (inputReport.laboratoryPlaneCoordinates)
+      {
+        if (!config_.reference.inputPlaneZSet)
+          throw std::invalid_argument(
+            "Particle HDF5 format version 3 contains fixed-lab-plane records; beam.reference.input_plane_z is required in the shared laboratory coordinate system");
+        planeProjection = SIBunchPreprocessor::projectLabPlaneToSnapshot(
+          particles_, config_.reference.inputPlaneZ,
+          config_.reference.initialCenterZ, communicator_);
+      }
+    else if (config_.reference.inputPlaneZSet && rank_ == 0)
+      logRoot(communicator_,
+        "WARNING: beam.reference.input_plane_z is ignored because this particle input is a legacy common-time snapshot rather than an HDF5-v3 lab-plane record set.");
+
     initializeFieldDetectorRegions();
     validateBeamlineExclusionRules();
     const Double firstPhysicalEntrance =
-      firstBeamlinePhysicalEntranceLab();
+      firstMagneticPhysicalEntranceLab();
     const Double firstInteractionEntrance =
-      firstBeamlineInteractionEntranceLab();
+      firstMagneticInteractionEntranceLab();
 
     SIBunchPlacement placement;
     placement.firstInteractionEntranceLab = firstInteractionEntrance;
@@ -1102,6 +1114,55 @@ namespace fel
     const SIBunchPlacementReport placementReport =
       SIBunchPreprocessor::placeRelativeLabSnapshot(
         particles_, placement, communicator_);
+
+    const Double physicalHeadLimit = firstInteractionEntrance -
+      placement.recommendationMarginLab;
+    const Double placementScale = std::max(1.0,
+      std::max(std::abs(firstInteractionEntrance),
+               std::abs(placementReport.headAfterLab)));
+    const Double placementTolerance = 128.0 *
+      std::numeric_limits<Double>::epsilon() * placementScale;
+    if (placementReport.headAfterLab >=
+        physicalHeadLimit - placementTolerance)
+      {
+        const Double maximumCenter = physicalHeadLimit -
+          placementReport.relativeHeadLab;
+        std::ostringstream message;
+        message << std::setprecision(10)
+          << "The reconstructed common-time laboratory bunch does not fit "
+             "before the first magnetic interaction region: bunch_head_z="
+          << placementReport.headAfterLab
+          << " m, required_head_limit=" << physicalHeadLimit
+          << " m, magnetic_interaction_start_z="
+          << firstInteractionEntrance << " m. Set "
+             "beam.reference.initial_center_z to at most "
+          << maximumCenter << " m (" << maximumCenter /
+               config_.inputUnits.length
+          << " in the configured length unit)";
+        if (inputReport.laboratoryPlaneCoordinates)
+          {
+            const Double minimumCenter = config_.reference.inputPlaneZ -
+              placementReport.relativeTailLab;
+            message << "; forward projection from input_plane_z requires it "
+                       "to be at least " << minimumCenter << " m ("
+                    << minimumCenter / config_.inputUnits.length << ")";
+            if (minimumCenter >= maximumCenter - placementTolerance)
+              message << ". No admissible centre interval remains: move the "
+                         "Elegant plane upstream, move/redefine the magnetic "
+                         "interaction region downstream, reduce the bunch "
+                         "longitudinal span, or refine dz to reduce the "
+                         "one-cell safety margin";
+          }
+        message << ".";
+        throw std::runtime_error(message.str());
+      }
+
+    /* Anchor t_box=0 to the downstream bunch-front event at the reconstructed
+     * lab snapshot.  The remaining particles are synchronized relative to
+     * this event.  Their potentially large lab-time span is not interpreted
+     * as a required physical drift upstream of the input plane. */
+    frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
+      placementReport.headAfterLab, 0.0);
     const SIBunchBoostReport localBoostReport =
       SIBunchPreprocessor::boostLabSnapshotToBoxTimeZero(
         particles_, frame_);
@@ -1152,6 +1213,32 @@ namespace fel
                    "momenta remain representable in double precision.";
         throw std::runtime_error(message.str());
       }
+
+    Double localBoostedMinimum = std::numeric_limits<Double>::infinity();
+    Double localBoostedMaximum = -std::numeric_limits<Double>::infinity();
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      {
+        localBoostedMinimum = std::min(
+          localBoostedMinimum, particles_[index].position[2]);
+        localBoostedMaximum = std::max(
+          localBoostedMaximum, particles_[index].position[2]);
+      }
+    Double boostedMinimum = 0.0;
+    Double boostedMaximum = 0.0;
+    MPI_Allreduce(&localBoostedMinimum, &boostedMinimum, 1,
+                  MPI_DOUBLE, MPI_MIN, communicator_);
+    MPI_Allreduce(&localBoostedMaximum, &boostedMaximum, 1,
+                  MPI_DOUBLE, MPI_MAX, communicator_);
+    const Double boxTranslation = config_.mesh.center[2] -
+      0.5 * (boostedMinimum + boostedMaximum);
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      particles_[index].position[2] += boxTranslation;
+    boostedMinimum += boxTranslation;
+    boostedMaximum += boxTranslation;
+    frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
+      placementReport.headAfterLab, boxTranslation);
+    referenceCenterBoxZ_ = frame_.boxZFromLabZT(
+      config_.reference.initialCenterZ, 0.0);
 
     Double localMaximumAdvance = 0.0;
     for (std::size_t index = 0; index < particles_.size(); ++index)
@@ -1266,21 +1353,23 @@ namespace fel
       std::numeric_limits<Double>::epsilon() *
       std::max(1.0, std::max(std::abs(firstInteractionEntrance),
                              std::abs(eventHead)));
-    if (eventHead >= firstInteractionEntrance - entranceTolerance)
+    if (eventHead >= physicalHeadLimit - entranceTolerance)
       {
         const Double transformedHeadOffset = eventHead -
           config_.reference.initialCenterZ;
-        const Double recommendedCenter = firstInteractionEntrance -
-          transformedHeadOffset - placement.recommendationMarginLab;
+        const Double recommendedCenter = physicalHeadLimit -
+          transformedHeadOffset;
         std::ostringstream message;
-        message << "Initial Lorentz transform places the bunch front at or "
-          "inside the first element interaction region: interaction_start_z="
+        message << std::setprecision(10)
+          << "Head-anchored Lorentz synchronization places a particle too "
+             "close to the first magnetic interaction region: "
+             "interaction_start_z="
           << firstInteractionEntrance
           << " m, transformed_front_z=" << eventHead
           << " m. Set beam.reference.initial_center_z to at most "
           << recommendedCenter << " m (" << recommendedCenter /
                config_.inputUnits.length
-          << " in the configured length unit). The physical first-element "
+          << " in the configured length unit). The physical first-magnet "
           "entrance remains z=" << firstPhysicalEntrance << " m.";
         throw std::runtime_error(message.str());
       }
@@ -1289,21 +1378,50 @@ namespace fel
 
     if (rank_ == 0)
       {
+        if (inputReport.laboratoryPlaneCoordinates)
+          {
+            std::ostringstream projectionMessage;
+            projectionMessage << std::setprecision(10)
+              << "Elegant lab-plane reconstruction: input_plane_z="
+              << planeProjection.inputPlaneLab
+              << " m, snapshot_reference_z="
+              << planeProjection.referencePositionLab
+              << " m, per-particle forward distance range=["
+              << planeProjection.minimumForwardDistance << ", "
+              << planeProjection.maximumForwardDistance
+              << "] m. Transverse coordinates were advanced with ux/uz and "
+                 "uy/uz; longitudinal offsets retain their input timing "
+                 "definition.";
+            logRoot(communicator_, projectionMessage.str());
+          }
         std::ostringstream placementMessage;
-        placementMessage << "E/B bunch placement: particles="
+        placementMessage << std::setprecision(10)
+          << "E/B bunch placement: particles="
           << placementReport.particles << ", reference z [m]="
           << placementReport.referencePositionLab
-          << ", relative head z [m]=" << placementReport.relativeHeadLab
-          << ", physical first entrance [m]=" << firstPhysicalEntrance
-          << ", interaction start [m]=" << firstInteractionEntrance
+          << ", relative z range [m]=["
+          << placementReport.relativeTailLab << ", "
+          << placementReport.relativeHeadLab
+          << "], physical first magnetic entrance [m]="
+          << firstPhysicalEntrance
+          << ", magnetic interaction start [m]="
+          << firstInteractionEntrance
           << ", transformed interaction gap [m]="
-          << firstInteractionEntrance - eventHead;
+          << firstInteractionEntrance - eventHead
+          << ", required one-cell lab margin [m]="
+          << placement.recommendationMarginLab << ".";
         logRoot(communicator_, placementMessage.str());
         std::ostringstream boostMessage;
         boostMessage << std::setprecision(10)
-          << "Free-drift Lorentz events [s]: "
+          << "Head-anchored Lorentz synchronization: anchor_lab_z="
+          << placementReport.headAfterLab << " m, virtual lab event times [s]=["
           << boostReport.earliestLabEventTime << " to "
-          << boostReport.latestLabEventTime
+          << boostReport.latestLabEventTime << "], maximum synchronization "
+             "span=" << boostReport.maximumAbsoluteDriftTime << " s ("
+          << SI::c * boostReport.maximumAbsoluteDriftTime
+          << " light-metres; diagnostic only, not a required physical drift), "
+             "centred boosted z range [m]=[" << boostedMinimum << ", "
+          << boostedMaximum << "]"
           << "; lab gamma range=[" << boostReport.minimumLabGamma
           << ", " << boostReport.maximumLabGamma
           << "], maximum relative boost round-trip errors: momentum="
@@ -3035,7 +3153,7 @@ namespace fel
     if (config_.stop.mode == StopMode::ReferenceCenterZ)
       {
         const Double referenceZ = frame_.labZFromBoxZT(
-          config_.mesh.center[2], timeBoxSI_);
+          referenceCenterBoxZ_, timeBoxSI_);
         const Double tolerance = 64.0 *
           std::numeric_limits<Double>::epsilon() *
           std::max(1.0, std::max(std::abs(referenceZ),
@@ -3084,23 +3202,21 @@ namespace fel
     return true;
   }
 
-  Double Simulation::firstBeamlinePhysicalEntranceLab() const
+  Double Simulation::firstMagneticPhysicalEntranceLab() const
   {
     Double entrance = std::numeric_limits<Double>::infinity();
-    for (std::size_t element = 0;
-         element < beamlineElements_.size(); ++element)
+    for (std::size_t element = 0; element < config_.magnets.size(); ++element)
       entrance = std::min(entrance,
-        beamlineElements_[element].physicalEntrance);
+        config_.magnets[element].physicalEntranceLab());
     return entrance;
   }
 
-  Double Simulation::firstBeamlineInteractionEntranceLab() const
+  Double Simulation::firstMagneticInteractionEntranceLab() const
   {
     Double entrance = std::numeric_limits<Double>::infinity();
-    for (std::size_t element = 0;
-         element < beamlineElements_.size(); ++element)
+    for (std::size_t element = 0; element < config_.magnets.size(); ++element)
       entrance = std::min(entrance,
-        beamlineElements_[element].interactionEntrance);
+        config_.magnets[element].interactionEntranceLab());
     return entrance;
   }
 
