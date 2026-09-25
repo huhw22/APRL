@@ -30,6 +30,9 @@ Python dependency:
 ./build/energy_ledger_report output/run-name/energy-ledger.h5
 ```
 
+An optional second argument selects a zero-based committed record and reports
+the initialization-to-that-sample change as well as the normal final summary.
+
 It reads only the committed HDF5 prefix and prints the initial/final balance,
 field fractions, mean gamma and energy-spread decomposition. See
 [ENERGY_LEDGER.md](ENERGY_LEDGER.md).

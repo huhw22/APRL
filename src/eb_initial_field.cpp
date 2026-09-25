@@ -19,6 +19,12 @@ namespace fel
     const int SCALAR_LOWER = 913;
     const int GAUSS_EZ_UPPER = 914;
 
+    struct ScalarDomain
+    {
+      std::size_t lower[3];
+      std::size_t upper[3];
+    };
+
     class ScalarSlab
     {
     public:
@@ -160,30 +166,36 @@ namespace fel
 
     bool interiorVertex(std::size_t i, std::size_t j,
                         std::size_t globalK,
-                        const EBGridGeometry& global)
+                        const ScalarDomain& domain)
     {
-      return i > 0 && i < global.nx &&
-             j > 0 && j < global.ny &&
-             globalK > 0 && globalK < global.nz;
+      return i > domain.lower[0] && i < domain.upper[0] &&
+             j > domain.lower[1] && j < domain.upper[1] &&
+             globalK > domain.lower[2] && globalK < domain.upper[2];
     }
 
     void applyNegativeLaplacian(
         ScalarSlab& input, ScalarSlab& output,
-        const EBGridGeometry& global, std::size_t localZOffset,
+        const EBGridGeometry& global, const ScalarDomain& domain,
+        std::size_t localZOffset,
+        Double longitudinalCoefficient,
         int rank, int size, MPI_Comm communicator)
     {
       exchangeScalarGhosts(input, rank, size, communicator);
       output.fill(0.0);
       const Double cx = 1.0 / (global.dx * global.dx);
       const Double cy = 1.0 / (global.dy * global.dy);
-      const Double cz = 1.0 / (global.dz * global.dz);
+      const Double cz = longitudinalCoefficient /
+        (global.dz * global.dz);
       const Double diagonal = 2.0 * (cx + cy + cz);
       for (std::size_t p = 1; p <= input.ownedZ(); ++p)
         {
           const std::size_t globalK = localZOffset + p - 1;
-          if (globalK == 0 || globalK == global.nz) continue;
-          for (std::size_t j = 1; j < global.ny; ++j)
-            for (std::size_t i = 1; i < global.nx; ++i)
+          if (globalK <= domain.lower[2] ||
+              globalK >= domain.upper[2]) continue;
+          for (std::size_t j = domain.lower[1] + 1;
+               j < domain.upper[1]; ++j)
+            for (std::size_t i = domain.lower[0] + 1;
+                 i < domain.upper[0]; ++i)
               output(i, j, p) = diagonal * input(i, j, p) -
                 cx * (input(i - 1, j, p) + input(i + 1, j, p)) -
                 cy * (input(i, j - 1, p) + input(i, j + 1, p)) -
@@ -193,16 +205,19 @@ namespace fel
 
     long double globalDot(
         const ScalarSlab& left, const ScalarSlab& right,
-        const EBGridGeometry& global, std::size_t localZOffset,
+        const ScalarDomain& domain, std::size_t localZOffset,
         MPI_Comm communicator)
     {
       long double local = 0.0L;
       for (std::size_t p = 1; p <= left.ownedZ(); ++p)
         {
           const std::size_t globalK = localZOffset + p - 1;
-          if (globalK == 0 || globalK == global.nz) continue;
-          for (std::size_t j = 1; j < global.ny; ++j)
-            for (std::size_t i = 1; i < global.nx; ++i)
+          if (globalK <= domain.lower[2] ||
+              globalK >= domain.upper[2]) continue;
+          for (std::size_t j = domain.lower[1] + 1;
+               j < domain.upper[1]; ++j)
+            for (std::size_t i = domain.lower[0] + 1;
+                 i < domain.upper[0]; ++i)
               local += static_cast<long double>(left(i, j, p)) *
                        static_cast<long double>(right(i, j, p));
         }
@@ -213,15 +228,18 @@ namespace fel
     }
 
     void updateInterior(ScalarSlab& target, const ScalarSlab& source,
-                        Double scale, const EBGridGeometry& global,
+                        Double scale, const ScalarDomain& domain,
                         std::size_t localZOffset)
     {
       for (std::size_t p = 1; p <= target.ownedZ(); ++p)
         {
           const std::size_t globalK = localZOffset + p - 1;
-          if (globalK == 0 || globalK == global.nz) continue;
-          for (std::size_t j = 1; j < global.ny; ++j)
-            for (std::size_t i = 1; i < global.nx; ++i)
+          if (globalK <= domain.lower[2] ||
+              globalK >= domain.upper[2]) continue;
+          for (std::size_t j = domain.lower[1] + 1;
+               j < domain.upper[1]; ++j)
+            for (std::size_t i = domain.lower[0] + 1;
+                 i < domain.upper[0]; ++i)
               target(i, j, p) += scale * source(i, j, p);
         }
     }
@@ -229,6 +247,7 @@ namespace fel
     void combineDirection(ScalarSlab& direction,
                           const ScalarSlab& residual, Double beta,
                           const EBGridGeometry& global,
+                          const ScalarDomain& domain,
                           std::size_t localZOffset)
     {
       for (std::size_t p = 1; p <= direction.ownedZ(); ++p)
@@ -237,13 +256,15 @@ namespace fel
           for (std::size_t j = 0; j <= global.ny; ++j)
             for (std::size_t i = 0; i <= global.nx; ++i)
               direction(i, j, p) =
-                interiorVertex(i, j, globalK, global) ?
+                interiorVertex(i, j, globalK, domain) ?
                 residual(i, j, p) + beta * direction(i, j, p) : 0.0;
         }
     }
 
-    void electricFromPotential(EBFieldGrid& fields, ScalarSlab& potential,
-                               int rank, int size, MPI_Comm communicator)
+    void fieldsFromPotential(EBFieldGrid& fields, ScalarSlab& potential,
+                             Double meanBetaZ,
+                             Double longitudinalCoefficient,
+                             int rank, int size, MPI_Comm communicator)
     {
       exchangeScalarGhosts(potential, rank, size, communicator);
       const EBGridGeometry& g = fields.geometry();
@@ -263,13 +284,159 @@ namespace fel
         for (std::size_t j = 0; j <= g.ny; ++j)
           for (std::size_t i = 0; i <= g.nx; ++i)
             fields.ez()(i, j, k) =
-              -(potential(i, j, k + 2) -
-                potential(i, j, k + 1)) / g.dz;
+              -longitudinalCoefficient *
+              (potential(i, j, k + 2) -
+               potential(i, j, k + 1)) / g.dz;
+
+      /* For a charge distribution translating rigidly along z, the Vay
+       * relativistic-Poisson construction gives B=beta x E/c.  B is stored
+       * at the leapfrog time -dt/2 while E is at time zero. Rigid translation
+       * maps the earlier B face to E(z+beta*c*dt/2, t=0); linear z
+       * interpolation therefore also supplies the required half-time
+       * staggering without allocating another field copy. */
+      const Double magneticScale = meanBetaZ / SI::c;
+      const Double upperWeight = 0.5 + 0.5 * meanBetaZ * SI::c *
+        g.dt / g.dz;
+      const Double lowerWeight = 1.0 - upperWeight;
+      if (upperWeight < 0.0 || upperWeight > 1.0)
+        throw std::runtime_error(
+          "Initial B half-step shift exceeds one longitudinal cell");
+      for (std::size_t k = 0; k < g.nz; ++k)
+        for (std::size_t j = 0; j < g.ny; ++j)
+          for (std::size_t i = 0; i <= g.nx; ++i)
+            fields.bx()(i, j, k) = -magneticScale *
+              (lowerWeight * fields.ey()(i, j, k) +
+               upperWeight * fields.ey()(i, j, k + 1));
+      for (std::size_t k = 0; k < g.nz; ++k)
+        for (std::size_t j = 0; j <= g.ny; ++j)
+          for (std::size_t i = 0; i < g.nx; ++i)
+            fields.by()(i, j, k) = magneticScale *
+              (lowerWeight * fields.ex()(i, j, k) +
+               upperWeight * fields.ex()(i, j, k + 1));
+      fields.bz().fill(0.0);
+    }
+
+    void meanVelocity(const std::vector<RelativisticParticleSI>& particles,
+                      MPI_Comm communicator, Double& betaZ,
+                      Double& betaTransverse)
+    {
+      long double local[4] = {};
+      for (std::size_t index = 0; index < particles.size(); ++index)
+        {
+          const RelativisticParticleSI& particle = particles[index];
+          const Double gamma = BoostFrameTransform::gammaFromProperVelocity(
+            particle.properVelocity);
+          const long double weight = static_cast<long double>(particle.mass);
+          local[0] += weight;
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            local[axis + 1] += weight * static_cast<long double>(
+              particle.properVelocity[axis] / gamma);
+        }
+      long double global[4] = {};
+      MPI_Allreduce(local, global, 4, MPI_LONG_DOUBLE, MPI_SUM,
+                    communicator);
+      if (!(global[0] > 0.0L))
+        throw std::runtime_error(
+          "Initial relativistic-Poisson field requires positive represented mass");
+      const Double betaX = static_cast<Double>(global[1] / global[0]);
+      const Double betaY = static_cast<Double>(global[2] / global[0]);
+      betaZ = static_cast<Double>(global[3] / global[0]);
+      betaTransverse = std::hypot(betaX, betaY);
+      if (!std::isfinite(betaZ) || !std::isfinite(betaTransverse) ||
+          betaTransverse >= 1.0 || std::abs(betaZ) >= 1.0)
+        throw std::runtime_error(
+          "Initial particle mean velocity is not a finite subluminal vector");
+    }
+
+    void initialFieldEnergy(const EBFieldGrid& fields,
+                            MPI_Comm communicator,
+                            Double& electric, Double& magnetic)
+    {
+      const EBGridGeometry& g = fields.geometry();
+      long double localElectric = 0.0L;
+      long double localMagnetic = 0.0L;
+      const long double volume = static_cast<long double>(g.dx) *
+        static_cast<long double>(g.dy) * static_cast<long double>(g.dz);
+      for (std::size_t k = 0; k < g.nz; ++k)
+        for (std::size_t j = 0; j < g.ny; ++j)
+          for (std::size_t i = 0; i < g.nx; ++i)
+            {
+              const RadiationFieldSample sample =
+                fields.radiationSampleCell(i, j, k);
+              localElectric += 0.5L *
+                static_cast<long double>(SI::epsilon0) *
+                static_cast<long double>(sample.electric.norm2()) * volume;
+              localMagnetic += 0.5L /
+                static_cast<long double>(SI::mu0) *
+                static_cast<long double>(sample.magnetic.norm2()) * volume;
+            }
+      long double globalElectric = 0.0L;
+      long double globalMagnetic = 0.0L;
+      MPI_Allreduce(&localElectric, &globalElectric, 1, MPI_LONG_DOUBLE,
+                    MPI_SUM, communicator);
+      MPI_Allreduce(&localMagnetic, &globalMagnetic, 1, MPI_LONG_DOUBLE,
+                    MPI_SUM, communicator);
+      electric = static_cast<Double>(globalElectric);
+      magnetic = static_cast<Double>(globalMagnetic);
+    }
+
+    void distributionResolution(
+        const std::vector<RelativisticParticleSI>& particles,
+        const EBGridGeometry& global, const ScalarDomain& domain,
+        std::size_t localZOffset,
+        const FieldVector<Double>& localOriginSI,
+        MPI_Comm communicator, EBGaussInitializationReport& report)
+    {
+      long double local[7] = {};
+      for (std::size_t index = 0; index < particles.size(); ++index)
+        {
+          const long double weight = static_cast<long double>(
+            particles[index].mass);
+          local[0] += weight;
+          for (unsigned int axis = 0; axis < 3; ++axis)
+            {
+              const long double position = static_cast<long double>(
+                particles[index].position[axis]);
+              local[axis + 1] += weight * position;
+              local[axis + 4] += weight * position * position;
+            }
+        }
+      long double globalMoment[7] = {};
+      MPI_Allreduce(local, globalMoment, 7, MPI_LONG_DOUBLE, MPI_SUM,
+                    communicator);
+      if (!(globalMoment[0] > 0.0L))
+        throw std::runtime_error(
+          "Initial field cannot diagnose an empty particle distribution");
+      const Double spacing[3] = {global.dx, global.dy, global.dz};
+      FieldVector<Double> globalOrigin(localOriginSI);
+      globalOrigin[2] -= static_cast<Double>(localZOffset) * global.dz;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          const long double mean = globalMoment[axis + 1] /
+            globalMoment[0];
+          const long double variance = std::max(0.0L,
+            globalMoment[axis + 4] / globalMoment[0] - mean * mean);
+          const Double rms = static_cast<Double>(std::sqrt(variance));
+          report.rmsPositionCells[axis] = rms / spacing[axis];
+          if (rms > 0.0)
+            {
+              const Double lower = globalOrigin[axis] +
+                static_cast<Double>(domain.lower[axis]) * spacing[axis];
+              const Double upper = globalOrigin[axis] +
+                static_cast<Double>(domain.upper[axis]) * spacing[axis];
+              report.centrePaddingRms[axis] = std::min(
+                static_cast<Double>(mean) - lower,
+                upper - static_cast<Double>(mean)) / rms;
+            }
+          else
+            report.centrePaddingRms[axis] = 0.0;
+        }
     }
 
     void validateGauss(
         const EBFieldGrid& fields, const YeeComponent& rho,
-        const EBGridGeometry& global, std::size_t localZOffset,
+        const ScalarDomain& domain,
+        std::size_t localZOffset,
         MPI_Comm communicator, Double& relative, Double& maximum)
     {
       const EBGridGeometry& local = fields.geometry();
@@ -292,9 +459,12 @@ namespace fel
       for (std::size_t k = 0; k < local.nz; ++k)
         {
           const std::size_t globalK = localZOffset + k;
-          if (globalK == 0 || globalK == global.nz) continue;
-          for (std::size_t j = 1; j < global.ny; ++j)
-            for (std::size_t i = 1; i < global.nx; ++i)
+          if (globalK <= domain.lower[2] ||
+              globalK >= domain.upper[2]) continue;
+          for (std::size_t j = domain.lower[1] + 1;
+               j < domain.upper[1]; ++j)
+            for (std::size_t i = domain.lower[0] + 1;
+                 i < domain.upper[0]; ++i)
               {
                 const Double leftZ = k > 0 ?
                   fields.ez()(i, j, k - 1) :
@@ -328,8 +498,17 @@ namespace fel
 
   EBGaussInitializationReport::EBGaussInitializationReport()
     : iterations(0), relativeResidual(0.0), maximumGaussResidual(0.0),
-      totalCharge(0.0), temporaryBytes(0)
-  {}
+      totalCharge(0.0), meanBetaZ(0.0), meanBetaTransverse(0.0),
+      initialElectricEnergy(0.0), initialMagneticEnergy(0.0),
+      temporaryBytes(0)
+  {
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        rmsPositionCells[axis] = 0.0;
+        centrePaddingRms[axis] = 0.0;
+        staticFieldGuardCells[axis] = 0;
+      }
+  }
 
   EBGaussInitializationReport EBGaussFieldInitializer::initialize(
       EBFieldGrid& fields,
@@ -337,6 +516,8 @@ namespace fel
       std::size_t localZOffset,
       const FieldVector<Double>& localOriginSI,
       const std::vector<RelativisticParticleSI>& particles,
+      InitialSelfFieldModel model,
+      const std::size_t staticFieldGuardCells[3],
       Double relativeTolerance,
       std::size_t maximumIterations,
       MPI_Comm communicator)
@@ -351,10 +532,45 @@ namespace fel
       throw std::invalid_argument(
         "Initial Gauss-field local slab does not match global geometry");
 
+    ScalarDomain domain;
+    const std::size_t globalCells[3] = {
+      globalGeometry.nx, globalGeometry.ny, globalGeometry.nz
+    };
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        if (2 * staticFieldGuardCells[axis] + 2 >= globalCells[axis])
+          throw std::invalid_argument(
+            "Initial static-field guard leaves fewer than two physical cells");
+        domain.lower[axis] = staticFieldGuardCells[axis];
+        domain.upper[axis] = globalCells[axis] - staticFieldGuardCells[axis];
+      }
+
     int rank = 0;
     int size = 1;
     communicatorRanks(communicator, rank, size);
     fields.clearFields();
+
+    Double meanBetaZ = 0.0;
+    Double meanBetaTransverse = 0.0;
+    meanVelocity(particles, communicator, meanBetaZ,
+                 meanBetaTransverse);
+    if (model == InitialSelfFieldModel::RelativisticPoisson &&
+        meanBetaTransverse > 1.0e-8)
+      throw std::runtime_error(
+        "relativistic-poisson initialization currently supports a common "
+        "mean velocity along the boost z axis only; rotate/recenter the "
+        "input beam or use a closer longitudinal boost frame");
+    const Double appliedBetaZ =
+      model == InitialSelfFieldModel::RelativisticPoisson ?
+      meanBetaZ : 0.0;
+    const Double longitudinalCoefficient =
+      std::fma(-appliedBetaZ, appliedBetaZ, 1.0);
+    if (!(longitudinalCoefficient >
+          64.0 * std::numeric_limits<Double>::epsilon()))
+      throw std::runtime_error(
+        "Initial relativistic-Poisson operator is ill-conditioned because "
+        "the bunch remains too relativistic in the simulation frame; choose "
+        "boost_gamma closer to the bunch mean gamma");
 
     ScalarSlab potential(globalGeometry.nx + 1, globalGeometry.ny + 1,
                          local.nz);
@@ -366,6 +582,12 @@ namespace fel
                      local.nz);
 
     EBGaussInitializationReport report;
+    report.meanBetaZ = meanBetaZ;
+    report.meanBetaTransverse = meanBetaTransverse;
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      report.staticFieldGuardCells[axis] = staticFieldGuardCells[axis];
+    distributionResolution(particles, globalGeometry, domain,
+      localZOffset, localOriginSI, communicator, report);
     report.temporaryBytes = potential.bytes() + residual.bytes() +
       direction.bytes() + image.bytes();
 
@@ -389,7 +611,7 @@ namespace fel
         const std::size_t globalK = localZOffset + p - 1;
         for (std::size_t j = 0; j <= globalGeometry.ny; ++j)
           for (std::size_t i = 0; i <= globalGeometry.nx; ++i)
-            if (interiorVertex(i, j, globalK, globalGeometry))
+            if (interiorVertex(i, j, globalK, domain))
               {
                 residual(i, j, p) =
                   (*rho)(i, j, p - 1) / SI::epsilon0;
@@ -403,14 +625,14 @@ namespace fel
                   MPI_LONG_DOUBLE, MPI_SUM, communicator);
     if (std::abs((interiorCharge - totalCharge) / totalCharge) > 1.0e-12L)
       throw std::runtime_error(
-        "Initial CIC charge cloud touches the zero-potential boundary; "
-        "move every particle at least one complete cell inward or enlarge "
-        "the mesh/CPML padding");
+        "Initial CIC charge cloud touches the static zero-potential boundary; "
+        "move every particle at least one complete cell inside the CPML "
+        "entrance or enlarge the physical mesh padding");
     direction = residual;
     rho.reset();
 
     const long double sourceNorm2 = globalDot(
-      residual, residual, globalGeometry, localZOffset, communicator);
+      residual, residual, domain, localZOffset, communicator);
     if (!(sourceNorm2 > 0.0L) ||
         !std::isfinite(static_cast<Double>(sourceNorm2)))
       throw std::runtime_error(
@@ -420,22 +642,23 @@ namespace fel
     for (std::size_t iteration = 0;
          iteration < maximumIterations; ++iteration)
       {
-        applyNegativeLaplacian(direction, image, globalGeometry,
-          localZOffset, rank, size, communicator);
+        applyNegativeLaplacian(direction, image, globalGeometry, domain,
+          localZOffset, longitudinalCoefficient,
+          rank, size, communicator);
         const long double denominator = globalDot(
-          direction, image, globalGeometry, localZOffset, communicator);
+          direction, image, domain, localZOffset, communicator);
         if (!(denominator > 0.0L) ||
             !std::isfinite(static_cast<Double>(denominator)))
           throw std::runtime_error(
             "Initial Gauss-field CG lost positive definiteness");
         const Double alpha = static_cast<Double>(
           residualNorm2 / denominator);
-        updateInterior(potential, direction, alpha, globalGeometry,
+        updateInterior(potential, direction, alpha, domain,
                        localZOffset);
-        updateInterior(residual, image, -alpha, globalGeometry,
+        updateInterior(residual, image, -alpha, domain,
                        localZOffset);
         const long double nextNorm2 = globalDot(
-          residual, residual, globalGeometry, localZOffset, communicator);
+          residual, residual, domain, localZOffset, communicator);
         report.iterations = iteration + 1;
         report.relativeResidual = static_cast<Double>(
           std::sqrt(nextNorm2 / sourceNorm2));
@@ -450,7 +673,7 @@ namespace fel
             "Initial Gauss-field CG produced a non-finite residual");
         const Double beta = static_cast<Double>(
           nextNorm2 / residualNorm2);
-        combineDirection(direction, residual, beta, globalGeometry,
+        combineDirection(direction, residual, beta, globalGeometry, domain,
                          localZOffset);
         residualNorm2 = nextNorm2;
       }
@@ -461,15 +684,18 @@ namespace fel
         "initial_self_field.maximum_iterations, relax its relative_tolerance, "
         "or reduce the grid aspect ratio");
 
-    electricFromPotential(fields, potential, rank, size, communicator);
+    fieldsFromPotential(fields, potential, appliedBetaZ,
+      longitudinalCoefficient, rank, size, communicator);
     std::unique_ptr<YeeComponent> validationRho = depositCharge(
       fields, localOriginSI, particles, rank, size, communicator);
-    validateGauss(fields, *validationRho, globalGeometry, localZOffset,
+    validateGauss(fields, *validationRho, domain, localZOffset,
                   communicator, report.relativeResidual,
                   report.maximumGaussResidual);
     if (report.relativeResidual > 4.0 * relativeTolerance)
       throw std::runtime_error(
         "Initial E field failed the post-solve discrete Gauss check");
+    initialFieldEnergy(fields, communicator, report.initialElectricEnergy,
+                       report.initialMagneticEnergy);
     return report;
   }
 }

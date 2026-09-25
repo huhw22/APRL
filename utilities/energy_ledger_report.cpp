@@ -1,4 +1,5 @@
 #include <cstdint>
+#include <cstdlib>
 #include <iomanip>
 #include <iostream>
 #include <stdexcept>
@@ -94,9 +95,9 @@ namespace
 
 int main(int argc, char** argv)
 {
-  if (argc != 2)
+  if (argc != 2 && argc != 3)
     {
-      std::cerr << "Usage: energy_ledger_report LEDGER.h5\n";
+      std::cerr << "Usage: energy_ledger_report LEDGER.h5 [RECORD_INDEX]\n";
       return 2;
     }
   hid_t file = -1;
@@ -121,11 +122,42 @@ int main(int argc, char** argv)
         readRecord(dataset, memoryType, 0);
       const fel::EnergyLedgerRecord final =
         readRecord(dataset, memoryType, committed - 1);
+      bool hasSelected = argc == 3;
+      std::uint64_t selectedIndex = 0;
+      fel::EnergyLedgerRecord selected;
+      if (hasSelected)
+        {
+          char* end = 0;
+          const unsigned long long parsed = std::strtoull(argv[2], &end, 10);
+          if (!argv[2][0] || !end || *end != '\0' || parsed >= committed)
+            throw std::runtime_error(
+              "RECORD_INDEX must be a committed zero-based record index");
+          selectedIndex = static_cast<std::uint64_t>(parsed);
+          selected = readRecord(dataset, memoryType, selectedIndex);
+        }
 
       std::cout << std::setprecision(12)
         << "committed_records=" << committed
         << " complete=" << static_cast<unsigned int>(complete) << "\n";
       printRecord("initial", initial);
+      if (hasSelected)
+        {
+          printRecord("selected", selected);
+          std::cout
+            << "initial_to_selected: particle_kinetic_accounted_J="
+            << (selected.particleKineticActive +
+                selected.particleKineticRemoved -
+                initial.particleKineticActive)
+            << " field_energy_J="
+            << (selected.fieldEnergyInterior - initial.fieldEnergyInterior)
+            << " outward_field_energy_J="
+            << selected.outwardFieldEnergy
+            << " residual_J=" << selected.balanceResidual
+            << " mean_gamma_lab="
+            << (selected.meanGammaLab - initial.meanGammaLab)
+            << " sigma_gamma_lab="
+            << (selected.sigmaGammaLab - initial.sigmaGammaLab) << "\n";
+        }
       printRecord("final", final);
       std::cout
         << "change: particle_kinetic_accounted_J="

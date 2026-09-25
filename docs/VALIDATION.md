@@ -433,28 +433,38 @@ Cowan card with `dx < dz` while recommending the required x `cell_size`.
 These checks validate deterministic grid construction and input diagnostics;
 they are not a claim that every MPI decomposition has identical performance.
 
-## Gauss-consistent initial particle field
+## Relativistic-Poisson initial particle field
 
 The generated eight-particle card was initialized on the 40x40x60 grid with
-`relative_tolerance: 1e-10`. One MPI rank and seven unequal z slabs both
-required 311 CG iterations. Their post-deposition discrete Gauss residuals
-were respectively `9.497829439e-11` and `9.497828774e-11` in relative L2
-norm; the maximum absolute residuals were `1.039594744` and `1.039594375`
-`V/m^2`. The represented charge agreed at `-1.281741307e-18 C`.
+`relative_tolerance: 1e-10`, beam gamma 4 and boost gamma 2. The new rigid-beam
+solve found `mean beta_box_z=0.6330437774`, converged in 191 CG iterations and
+gave a post-deposition relative Gauss residual of `8.774802267e-11`. One and
+two MPI ranks agreed on electric energy (`1.602074651e-20 J`), magnetic energy
+(`4.944733957e-21 J`), iteration count and Gauss residual to printed precision.
 
-The seven-rank decomposition retained 8--9 z cells per rank with remainder 4
-and completed the same 13-step physical run. Its maximum reported temporary
-Poisson memory was 0.5643 MiB per rank, compared with 3.1806 MiB for the
-single-rank solve. A separate two-rank HDF5-input run converged in 276
-iterations to `8.896098713e-11`, then completed both field- and
-particle-detector output.
+The same static CPML boundary and particle sample were then run with the legacy
+`electrostatic-poisson` model. Over 13 K=0 steps its particle kinetic energy
+changed by `-1.75467e-20 J`; the relativistic model changed it by only
+`3.13e-22 J`, more than 50 times smaller. This deliberately under-resolved
+eight-particle case now emits RMS-cell warnings and remains a solver regression,
+not a collective-beam validation.
+
+A second finite-length control used gamma and boost gamma 1174, 50 A Gaussian
+peak current, 60 um transverse RMS and 4096 macro-particles representing
+`10^6` electrons. At the first fixed laboratory observation plane, field
+energy changed by `0.134%`; the equal-grid PEC control changed by `0.114%`.
+The previous approach of loading the Coulomb tail through CPML changed it by
+about `17.5%` and produced `-0.035 pJ` of inward CPML-interface flux. Moving
+the static zero-potential boundary to the inner CPML surface reduced that flux
+to `-4.06e-6 pJ` without changing the Maxwell/CPML propagation kernel.
 
 These tests validate CIC interface summation, unique ownership of shared z
-vertices, matrix-free scalar halos, and the true cross-rank `Ez` divergence
-post-check. They validate the discrete Gauss constraint, not the infinite-
-space accuracy of the zero-potential outer boundary or an exact moving-bunch
-Lienard-Wiechert initialization; box padding and boost-frame choice remain
-physical convergence studies.
+vertices, matrix-free scalar halos, the true cross-rank `Ez` divergence
+post-check, current-consistent initial B, and the static-field/CPML separation.
+They validate the discrete initial-value construction, not an arbitrary
+velocity-spread Lienard-Wiechert history or infinite-space accuracy; grid,
+macro-particle count and distance to the CPML entrance remain convergence
+studies.
 
 A two-rank negative test capped the solver at one iteration and aborted before
 field advance with explicit tolerance, iteration, and aspect-ratio remedies.

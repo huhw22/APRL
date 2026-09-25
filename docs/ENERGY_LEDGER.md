@@ -112,6 +112,14 @@ The small C++ reader prints the initial record, final record and changes:
 ./build/energy_ledger_report output/run-name/energy-ledger.h5
 ```
 
+Pass a zero-based committed record index to also print that intermediate
+sample and its change from initialization. This is useful for checking the
+ledger sample adjacent to a fixed laboratory entrance plane:
+
+```bash
+./build/energy_ledger_report output/run-name/energy-ledger.h5 170
+```
+
 No Python package is required.
 
 ## What energy-spread growth means

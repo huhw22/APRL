@@ -37,6 +37,7 @@ boundary:
 
 initial_self_field:
   enabled: true
+  model: relativistic-poisson
   relative_tolerance: 1.0e-10
   maximum_iterations: 10000
 

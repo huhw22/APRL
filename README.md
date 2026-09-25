@@ -116,13 +116,15 @@ enabled mode writes one small rank-zero HDF5 stream and has a C++ summary tool.
 
 
 The implementation is still a development solver. Compact CFS-CPML is
-available for no-seed Cowan runs, and a temporary distributed CIC/Poisson
-solve now gives the bunch a Gauss-consistent initial E field without retaining
-A/phi. Particle Boris substeps resolve analytical laboratory devices without
-raising the Maxwell cadence; grid E/B sampling, current deposition and field
+available for no-seed Cowan runs, and a temporary distributed
+CIC/relativistic-Poisson
+solve now gives the bunch a relativistic-Poisson, Gauss-consistent initial E/B
+field without retaining A/phi. Particle Boris substeps resolve analytical
+laboratory devices without raising the Maxwell cadence; grid E/B sampling,
+current deposition and field
 detectors intentionally remain on the field step. The generalized Cowan/CPML
 TF/SF seed-wave correction remains planned work. Production radiation results
-still require problem-scale convergence, initial-field box-padding
+still require problem-scale convergence, initial-field distance-to-CPML
 convergence, reflection validation, and convergence of the runtime energy
 ledger. The first dense-bunch ledger closes the driven boosted-frame exchange
 to about four percent, which validates the accounting path but is not yet a

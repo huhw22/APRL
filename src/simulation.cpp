@@ -474,28 +474,92 @@ namespace fel
   void Simulation::initializeParticleSelfField()
   {
     if (!config_.initialSelfField.enabled) return;
+    std::size_t staticFieldGuardCells[3] = {0, 0, 0};
+    if (config_.boundary.type == EBBoundaryType::Cpml)
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        staticFieldGuardCells[axis] = config_.boundary.cpml.cells[axis];
     const EBGaussInitializationReport report =
       EBGaussFieldInitializer::initialize(
         *fields_, globalGeometry_, localZOffset_, localOriginBox_, particles_,
+        config_.initialSelfField.model,
+        staticFieldGuardCells,
         config_.initialSelfField.relativeTolerance,
         config_.initialSelfField.maximumIterations, communicator_);
     if (rank_ == 0)
       {
         std::ostringstream message;
         message << std::setprecision(10)
-          << "Initial particle self-field: CIC/Poisson Gauss projection "
+          << "Initial particle self-field: "
+          << (config_.initialSelfField.model ==
+                InitialSelfFieldModel::RelativisticPoisson ?
+                "relativistic-Poisson rigid-beam" :
+                "legacy electrostatic-Poisson")
+          << " construction "
           << "converged in " << report.iterations
           << " CG iterations; post-check relative L2 residual="
           << report.relativeResidual
           << ", maximum absolute residual="
           << report.maximumGaussResidual << " V/m^2, total charge="
-          << report.totalCharge << " C, temporary scalar memory/rank<="
+          << report.totalCharge << " C, mean beta_box_z="
+          << report.meanBetaZ << ", mean beta_box_transverse="
+          << report.meanBetaTransverse << ", initial electric energy="
+          << report.initialElectricEnergy << " J, initial magnetic energy="
+          << report.initialMagneticEnergy
+          << " J, static zero-potential guard cells=("
+          << report.staticFieldGuardCells[0] << ", "
+          << report.staticFieldGuardCells[1] << ", "
+          << report.staticFieldGuardCells[2]
+          << "), bunch RMS cells=("
+          << report.rmsPositionCells[0] << ", "
+          << report.rmsPositionCells[1] << ", "
+          << report.rmsPositionCells[2] << "), centre-to-static-boundary "
+             "padding/RMS=("
+          << report.centrePaddingRms[0] << ", "
+          << report.centrePaddingRms[1] << ", "
+          << report.centrePaddingRms[2]
+          << "), temporary scalar memory/rank<="
           << static_cast<Double>(report.temporaryBytes) /
              (1024.0 * 1024.0) << " MiB. The potential is now released; "
-             "only SI E/B remains. Zero-potential outer boundaries require "
-             "box-padding convergence, and the electrostatic start assumes "
-             "the boosted bunch is near its mean rest frame.";
+             "only SI E/B remains. The reported static zero-potential "
+             "boundary still requires padding convergence. ";
+        if (config_.initialSelfField.model ==
+            InitialSelfFieldModel::RelativisticPoisson)
+          message << "The relativistic model represents a rigid "
+                     "common-velocity bunch; velocity-spread and "
+                     "kinetic-equilibrium errors require separate "
+                     "convergence tests.";
+        else
+          message << "The legacy model deliberately omits the moving-bunch "
+                     "magnetic field and is retained only for regression.";
         logRoot(communicator_, message.str());
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          {
+            if (report.rmsPositionCells[axis] < 2.0)
+              {
+                std::ostringstream warning;
+                warning << "WARNING: initial bunch RMS on axis " << axis
+                        << " is only " << report.rmsPositionCells[axis]
+                        << " cells. A zero-width or under-resolved CIC "
+                           "distribution can create macro-particle self-field "
+                           "relaxation. Resolve each finite bunch RMS with at "
+                           "least two cells (preferably four or more), or "
+                           "treat the run as a sheet/point regression rather "
+                           "than a collective-field result.";
+                logRoot(communicator_, warning.str());
+              }
+            if (report.centrePaddingRms[axis] > 0.0 &&
+                report.centrePaddingRms[axis] < 4.0)
+              {
+                std::ostringstream warning;
+                warning << "WARNING: initial static-field boundary on axis "
+                        << axis << " is only "
+                        << report.centrePaddingRms[axis]
+                        << " bunch RMS from the centroid. Enlarge mesh cells "
+                           "at fixed cell_size and require the entrance "
+                           "energy result to converge with padding.";
+                logRoot(communicator_, warning.str());
+              }
+          }
       }
   }
 

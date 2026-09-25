@@ -49,9 +49,16 @@ namespace fel
     BoundaryConfig();
   };
 
+  enum class InitialSelfFieldModel
+  {
+    RelativisticPoisson,
+    ElectrostaticPoisson
+  };
+
   struct InitialSelfFieldConfig
   {
     bool enabled;
+    InitialSelfFieldModel model;
     Double relativeTolerance;
     std::size_t maximumIterations;
 

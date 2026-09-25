@@ -257,6 +257,18 @@ namespace fel
       throw configError(node, "boundary type must be pec or cpml");
     }
 
+    InitialSelfFieldModel initialSelfFieldModel(const YAML::Node& node)
+    {
+      const std::string value = lower(node.as<std::string>());
+      if (value == "relativistic-poisson" || value == "vay")
+        return InitialSelfFieldModel::RelativisticPoisson;
+      if (value == "electrostatic-poisson" || value == "legacy")
+        return InitialSelfFieldModel::ElectrostaticPoisson;
+      throw configError(node,
+        "initial_self_field model must be relativistic-poisson or "
+        "electrostatic-poisson");
+    }
+
     bool validDetectorName(const std::string& name)
     {
       if (name.empty()) return false;
@@ -288,7 +300,8 @@ namespace fel
   {}
 
   InitialSelfFieldConfig::InitialSelfFieldConfig()
-    : enabled(true), relativeTolerance(1.0e-10),
+    : enabled(true), model(InitialSelfFieldModel::RelativisticPoisson),
+      relativeTolerance(1.0e-10),
       maximumIterations(10000)
   {}
 
@@ -538,6 +551,9 @@ namespace fel
         if (initialSelfField["enabled"])
           result.initialSelfField.enabled =
             initialSelfField["enabled"].as<bool>();
+        if (initialSelfField["model"])
+          result.initialSelfField.model = initialSelfFieldModel(
+            initialSelfField["model"]);
         if (initialSelfField["relative_tolerance"])
           result.initialSelfField.relativeTolerance = finiteDouble(
             initialSelfField["relative_tolerance"],

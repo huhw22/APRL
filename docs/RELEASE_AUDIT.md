@@ -22,7 +22,7 @@ is production-ready.
 | Field-plane background tools | Implemented with model choices | Uniform-motion background reconstruction and matched-baseline amplitude subtraction/power comparison exist; retirement remains experimental. |
 | Full field-plane radiation analysis | Implemented for downstream forward modes | Threaded FFTW analysis provides angular/integrated spectra, Stokes data, Hann-window coherent/fluctuation splitting, global transverse coherence/Gram eigenvalues, selected spatial CSD and two-frequency CSD with memory/output guards. |
 | Particle/field energy closure | Boosted runtime ledger plus laboratory validation report implemented | The optional rank-zero HDF5 ledger contains boosted-frame particle kinetic energy, interior E/B energy, six inner-CPML fluxes, removed-particle energy, prescribed work and energy-spread moments. The downstream report stays entirely in the lab observer and can combine colocated entrance/exit raw signed Poynting fluxes with the matched `K=0` particle control. A three-period dense test reached 99.23% longitudinal raw closure and 91.73% in its selected forward band after detector-window convergence. A fast 50 A analytical scale tool is included; aperture, mesh, CPML and longer-device convergence remain production gates. |
-| Initial particle self-field | Implemented with boundary caveats | A distributed CIC/Poisson projection enforces the interior discrete Gauss law and releases all potential state before E/B advance. Box padding and the near-rest-frame electrostatic assumption still require convergence. |
+| Initial particle self-field | Relativistic rigid-beam initialization implemented; convergence still required | A distributed CIC/Vay relativistic-Poisson solve initializes E and current-consistent B, enforces the interior discrete Gauss law, and releases all potential state before E/B advance. CPML starts outside a zero-potential static boundary at its inner surface, preventing Coulomb-tail/CPML startup flow. Velocity spread, macro-particle sampling and distance to that boundary still require convergence. |
 | Particle subcycling | Implemented for prescribed devices | Automatic Boris substeps resolve analytical laboratory devices. Grid E/B, current deposition and detector cadence remain on the Maxwell step, which still sets radiation bandwidth. |
 | Laser/seed injection | **Missing on the target kernel** | The generalized Cowan/CPML TF/SF injection remains the principal unimplemented source path. |
 | Particle retirement | Experimental | It is not exactly charge-continuous and requires a matched zero-radiation baseline plus convergence tests. |
@@ -49,7 +49,8 @@ violate the selected model or input contract:
   and global charge normalization to `beam.input.electrons`;
 - finite Lorentz transforms with relative lab/boost round-trip momentum and
   gamma error no greater than `1e-10`;
-- convergence and post-check residual of the enabled CIC/Poisson initial
+- convergence and post-check residual of the enabled
+  CIC/relativistic-Poisson initial
   Gauss-field projection, with all CIC charge confined to interior
   zero-potential-solver vertices;
 - enough automatically selected Boris substeps to satisfy
@@ -71,8 +72,9 @@ physics target:
   `epsilon * gamma_max * m_e c^2`, with advice to compute small beam-energy
   changes from per-particle gamma using compensated or extended-precision
   accumulation instead of subtracting two rounded total beam energies;
-- disabling the Gauss-consistent initial field, or using its electrostatic
-  approximation in a boost frame far from the bunch mean rest frame;
+- disabling the Gauss-consistent initial field, or using its legacy
+  electrostatic approximation in a boost frame far from the bunch mean rest
+  frame;
 - experimental retirement use.
 - an enabled runtime energy ledger whose final residual relative to initial
   boosted kinetic-plus-field energy exceeds its configured warning tolerance.

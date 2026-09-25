@@ -135,27 +135,39 @@ stability conditions are detailed in
 ```yaml
 initial_self_field:
   enabled: true
+  model: relativistic-poisson
   relative_tolerance: 1.0e-10
   maximum_iterations: 10000
 ```
 
 The block is optional and defaults to the values above. When enabled, the
 simulator deposits the boosted bunch with the production CIC shape, sums
-shared MPI vertex planes, and solves the discrete Poisson equation before the
-first physical step. The resulting Yee-edge E field is checked against the
-same charge deposition. Non-convergence and a post-check residual above the
-configured tolerance are hard errors; `maximum_iterations` must be positive
-and `relative_tolerance` must lie strictly between zero and one.
-The run also stops if any CIC charge weight lands on a zero-potential outer
-vertex. Move every particle at least one complete cell inward or enlarge the
-mesh/CPML padding rather than silently dropping boundary charge.
+shared MPI vertex planes, and solves the discrete relativistic-Poisson
+equation before the first physical step. `relativistic-poisson` is the default:
+it derives the represented-mass-weighted mean axial velocity in the simulation
+frame, uses the Vay rigid-beam elliptic operator, and initializes both Yee E
+and the associated B field. `electrostatic-poisson` retains the old B=0
+construction only for controlled regression. The resulting Yee-edge E field
+is checked against the same charge deposition. Non-convergence and a
+post-check residual above the configured tolerance are hard errors;
+`maximum_iterations` must be positive and `relative_tolerance` must lie
+strictly between zero and one.
+
+With CPML, the zero-potential surface for the static solve is the **inner CPML
+surface**, and E/B inside CPML start at zero. This prevents a non-radiative
+Coulomb tail from charging zeroed CPML memory variables and then flowing back
+into the physical box. Radiation still sees the normal CPML update. The run
+stops if any CIC charge weight reaches this static boundary. Move every
+particle at least one complete cell inside the CPML entrance or enlarge the
+physical mesh padding rather than silently dropping boundary charge.
 
 The scalar potential and four distributed CG work slabs exist only during
 initialization and are included in the peak-memory estimate. They are released
-before time advance, so the propagation state remains E/B-only. The outer
-potential is zero: production work must converge box padding, and the
-electrostatic construction assumes the boost frame is close to the bunch mean
-rest frame. It does not initialize an exact velocity-dependent magnetic field.
+before time advance, so the propagation state remains E/B-only. The static
+boundary is still a finite-domain approximation: production work must converge
+the distance from the bunch to the CPML entrance. The relativistic construction
+assumes a rigid common axial velocity; velocity spread, envelope mismatch and
+macroparticle noise remain physical/numerical convergence questions.
 Disabling the block is intended for controlled regressions and emits a startup
 warning. See [INITIAL_SELF_FIELD.md](INITIAL_SELF_FIELD.md) for the discrete
 MPI ownership and physical limitations.
