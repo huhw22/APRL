@@ -242,6 +242,11 @@ namespace
       "Field-plane configuration digest is empty");
     require(!readStringAttribute(group, "source_revision").empty(),
       "Field-plane source revision is empty");
+    require(readStringAttribute(group, "particle_background_status") ==
+      "disabled; raw total field retained",
+      "Omitted particle_background did not remain disabled");
+    require(readDoubleAttribute(group, "reference_distance_m") == 0.0,
+      "Omitted particle_background created a reference region");
     const std::uint64_t committed =
       readUnsignedScalar(group, "committed_samples");
     require(committed >= 2, "Field-plane cadence test needs at least 2 samples");
@@ -284,6 +289,16 @@ namespace
     H5Dclose(timeDataset);
     H5Gclose(group);
     H5Fclose(file);
+
+    std::string referenceFilename = fieldFilename;
+    if (referenceFilename.size() >= 3 &&
+        referenceFilename.substr(referenceFilename.size() - 3) == ".h5")
+      referenceFilename.erase(referenceFilename.size() - 3);
+    referenceFilename += "-ballistic-reference.h5";
+    std::ifstream referenceFile(referenceFilename.c_str(),
+      std::ios::in | std::ios::binary);
+    require(!referenceFile.good(),
+      "Omitted particle_background created a companion reference file");
 
     std::vector<ParticlePlaneRecord> particles =
       readParticlePlane(particleFilename, true);

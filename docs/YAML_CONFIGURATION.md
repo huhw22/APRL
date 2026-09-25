@@ -687,7 +687,9 @@ The two charged-particle-field treatments are detector settings:
 `particle_background` records a virtual straight-line reference for offline
 analytic subtraction, whereas `retirement_frequency_protection` audits a
 manually configured global retirement layer. They cannot be enabled together
-on one field plane or in one retirement run.
+on one field plane or in one retirement run. `particle_background` is disabled
+by default and must be enabled explicitly. Omitting it creates no companion
+file, crossing events, buffers, communication, or detector reference region.
 
 A particle plane is a zero-length beamline element at lab `z`. A field plane's
 physical and stop location is also `z`, but when `particle_background.enabled`

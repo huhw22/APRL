@@ -33,7 +33,6 @@ detectors:
       rhythm: 0.2
       buffer_samples: 2
       compression: 0
-      particle_background: {enabled: false}
   particle_planes:
     - {name: particles, z: 0.5, buffer_records: 8, compression: 0}
 stop: {mode: after-last-element}

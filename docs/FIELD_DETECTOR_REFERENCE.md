@@ -81,9 +81,10 @@ detectors:
           maximum_particles: 100000
 ```
 
-The reference file is `<name>-ballistic-reference.h5`. Disabling
-`particle_background` creates neither the reference file nor its crossing
-events. The total field file `<name>.h5` is unchanged.
+The reference file is `<name>-ballistic-reference.h5`. `particle_background`
+is disabled by default and must be enabled explicitly. Omitting or disabling it
+creates neither the reference file, crossing events, buffers, communication,
+nor a detector reference region. The total field file `<name>.h5` is unchanged.
 
 ## Two-plane validation for small tests
 

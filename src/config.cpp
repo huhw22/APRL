@@ -653,7 +653,7 @@ namespace fel
 
   FieldDetectorPlaneConfig::FieldDetectorPlaneConfig()
     : name(), z(0.0), rhythm(0.0), bufferSamples(1), compression(0),
-      particleBackgroundReference(true), referenceRho(0.0),
+      particleBackgroundReference(false), referenceRho(0.0),
       referenceGamma(1.0), referenceDistance(0.0), referenceEntranceZ(0.0),
       referenceBufferRecords(16384), referenceCompression(0),
       referenceValidation(false),
