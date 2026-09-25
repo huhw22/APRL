@@ -1,5 +1,7 @@
 # Unnamed boosted-frame FEL program
 
+[中文说明](README.zh-CN.md)
+
 The program intentionally has no final public name yet. `simulator` is only a
 temporary executable name.
 

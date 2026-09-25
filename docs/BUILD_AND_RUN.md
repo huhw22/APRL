@@ -274,7 +274,8 @@ has no room for the required free drift. Their two HDF5 files appear under
 detector allocation or communication. Detector datasets are described in
 [DETECTOR_OUTPUT_HDF5.md](DETECTOR_OUTPUT_HDF5.md).
 
-Production radiation cards should enable the field plane's
+Production radiation cards that use straight-line particle-background
+reconstruction should explicitly enable the field plane's
 `particle_background` block. Startup computes its left reference boundary
 from the transverse mesh diagonal and maximum input-particle laboratory gamma,
 then rejects overlap with magnetic interaction regions and prints a corrected

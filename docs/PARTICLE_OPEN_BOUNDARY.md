@@ -102,9 +102,9 @@ samples.
   detector planes.
 - Entry into CPML is a domain-loss diagnostic. Frequent or high-weight entries
   indicate that the physical aperture may be too small.
-- The current development solver still lacks a Gauss-consistent initial
-  particle self-field. Boundary continuity cannot repair an inconsistent
-  initial field.
+- The optional relativistic-Poisson initializer supplies a Gauss-consistent
+  particle self-field. Boundary continuity cannot repair a disabled,
+  unconverged, or otherwise inconsistent initial field.
 
 At normal shutdown the log separately reports physical CPML entries, direct
 outer-face exits, residual carrier cleanup, signed charge, and peak carrier
