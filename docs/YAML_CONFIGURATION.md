@@ -86,6 +86,16 @@ the Maxwell Nyquist frequency, resolve intra-step radiation current, or permit
 a coarser radiation grid. The value `1` in the committed examples is only for
 smoke testing. See `docs/PARTICLE_SUBCYCLING.md` for the numerical contract.
 
+`boost_gamma` selects one constant inertial computational frame for the whole
+run. It is editable per card but is not changed when particles enter or leave
+an element: a time-dependent boost would be a non-inertial coordinate system
+and would invalidate the shared Maxwell grid and laboratory element/detector
+worldlines. For a planar undulator, static magnetic deflection preserves total
+laboratory gamma while reducing the mean longitudinal velocity. Run
+`undulator_resonance INPUT.yaml [LAB_GAMMA]` to obtain the standard estimate
+`gamma_lab/sqrt(1+K^2/2)`, compare it with the configured boost, and inspect the
+predicted box-z drift across the characteristic undulator.
+
 ## Optional radiation-resolution preflight
 
 ```yaml
@@ -349,7 +359,8 @@ interaction and physical ranges coincide.
 
 `characteristic: true` is optional simulation metadata used by
 `undulator_resonance`. When a card has multiple planar undulators, mark
-exactly one to select the element used for the preflight resonance estimate.
+exactly one to select the element used for the preflight resonance and
+constant-boost recommendation.
 
 ## Runtime strategy
 

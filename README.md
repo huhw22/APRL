@@ -76,8 +76,9 @@ manual frequency-protection guard. Startup uses the actual maximum laboratory
 particle gamma to verify the requested C2 transition cycles and reserves the
 same conservative gamma-times-transverse-diagonal causal distance used by the
 straight-line diagnostic. A small read-only utility estimates the
-characteristic planar-undulator resonance before the user chooses the protected
-band; it never changes the input card.
+characteristic planar-undulator resonance and the constant boost gamma that
+matches its mean longitudinal particle velocity before the user chooses the
+protected band; it never changes the input card.
 
 ## Intended applications
 

@@ -97,6 +97,126 @@ namespace
     return inverseGamma2 / (beta * (1.0 + beta));
   }
 
+  double betaFromGamma(double gamma)
+  {
+    if (!(gamma >= 1.0) || !std::isfinite(gamma))
+      throw std::runtime_error("gamma must be finite and at least one");
+    return std::sqrt(gamma - 1.0) * std::sqrt(gamma + 1.0) / gamma;
+  }
+
+  double configuredBoostGamma(const YAML::Node& root)
+  {
+    const YAML::Node mesh = required(root, "mesh");
+    const double gamma = finite(required(mesh, "boost_gamma"),
+      "configured boost gamma");
+    if (!(gamma >= 1.0))
+      throw std::runtime_error(
+        "mesh.boost_gamma must be at least one");
+    return gamma;
+  }
+
+  double meshCellSizeZ(const YAML::Node& root, double inputLengthScale)
+  {
+    const YAML::Node cells = required(required(root, "mesh"), "cell_size");
+    if (!cells.IsSequence() || cells.size() != 3)
+      throw std::runtime_error(
+        "mesh.cell_size must contain exactly three values");
+    return positive(cells[2], "mesh z cell size") * inputLengthScale;
+  }
+
+  unsigned long long meshCellsZ(const YAML::Node& root)
+  {
+    const YAML::Node cells = required(required(root, "mesh"), "cells");
+    if (!cells.IsSequence() || cells.size() != 3)
+      throw std::runtime_error(
+        "mesh.cells must contain exactly three values");
+    const unsigned long long value = cells[2].as<unsigned long long>();
+    if (value == 0)
+      throw std::runtime_error("mesh.cells z must be positive");
+    return value;
+  }
+
+  unsigned int undulatorPeriods(const YAML::Node& undulator)
+  {
+    const unsigned int periods =
+      required(undulator, "periods").as<unsigned int>();
+    if (periods == 0)
+      throw std::runtime_error("undulator periods must be positive");
+    return periods;
+  }
+
+  void printBoostRecommendation(const YAML::Node& root,
+                                double gammaLab,
+                                double strength,
+                                double period,
+                                const YAML::Node& undulator,
+                                double inputLengthScale)
+  {
+    const double transverseFactor = 1.0 + 0.5 * strength * strength;
+    const double gammaLongitudinal =
+      gammaLab / std::sqrt(transverseFactor);
+    if (!(gammaLongitudinal > 1.0) ||
+        !std::isfinite(gammaLongitudinal))
+      throw std::runtime_error(
+        "The planar-undulator longitudinal-gamma estimate is not "
+        "relativistic; the paraxial recommendation is inapplicable");
+
+    const double betaLab = betaFromGamma(gammaLab);
+    const double betaLongitudinal = betaFromGamma(gammaLongitudinal);
+    const double gammaBoost = configuredBoostGamma(root);
+    const double betaBoost = betaFromGamma(gammaBoost);
+    const unsigned int periods = undulatorPeriods(undulator);
+    const double length = period * static_cast<double>(periods);
+    const double dz = meshCellSizeZ(root, inputLengthScale);
+    const double extentZ = dz * static_cast<double>(meshCellsZ(root));
+
+    /* For a particle crossing a laboratory length L at mean beta_z,
+     * Lorentz transformation gives Delta z' = gamma_b L
+     * (1-beta_b/beta_z).  The recommendation makes this mean drift zero in
+     * the constant-K undulator core. */
+    const double configuredDrift = gammaBoost * length *
+      (1.0 - betaBoost / betaLongitudinal);
+    const double configuredDriftPerPeriod = configuredDrift /
+      static_cast<double>(periods);
+    const double recommendedFreeDriftPerLabMetre = gammaLongitudinal *
+      (1.0 - betaLongitudinal / betaLab);
+
+    std::cout << "\nConstant-boost recommendation for the characteristic "
+                 "undulator\n"
+              << "  interpretation: static B changes direction, not total "
+                 "lab gamma; <u_perp^2>=K^2/2 lowers mean beta_z\n"
+              << "  planar longitudinal factor:   "
+              << std::sqrt(transverseFactor) << "\n"
+              << "  estimated mean gamma_z:       "
+              << gammaLongitudinal << "\n"
+              << "  estimated mean beta_z:        "
+              << betaLongitudinal << "\n"
+              << "  recommended mesh boost_gamma: "
+              << gammaLongitudinal << "\n"
+              << "  configured mesh boost_gamma:  "
+              << gammaBoost << "\n"
+              << "  configured/recommended ratio: "
+              << gammaBoost / gammaLongitudinal << "\n"
+              << "  physical core length:         " << length << " m ("
+              << periods << " periods)\n"
+              << "  configured box-z drift/core:  "
+              << configuredDrift << " m\n"
+              << "  configured drift per period:  "
+              << configuredDriftPerPeriod << " m\n"
+              << "  configured drift in z cells:  "
+              << configuredDrift / dz << "\n"
+              << "  |drift|/box z extent:         "
+              << std::abs(configuredDrift) / extentZ << "\n"
+              << "  recommended-frame free-drift box shift per lab metre: "
+              << recommendedFreeDriftPerLabMetre << " m/m\n"
+              << "  suggested YAML: boost_gamma:  "
+              << gammaLongitudinal << "\n"
+              << "  scope: fixed inertial boost optimized for mean motion "
+                 "inside the constant-K core; fringes, free drifts, energy "
+                 "spread, emittance and collective energy change still "
+                 "require longitudinal-box margin.\n";
+  }
+
   YAML::Node characteristicUndulator(const YAML::Node& root)
   {
     const YAML::Node magnets = root["sources"]["magnetic_elements"];
@@ -130,7 +250,9 @@ namespace
   void printProtection(const YAML::Node& root, double gamma,
                        double inputLengthScale)
   {
-    const YAML::Node planes = root["detectors"]["field_planes"];
+    const YAML::Node detectors = root["detectors"];
+    if (!detectors) return;
+    const YAML::Node planes = detectors["field_planes"];
     if (!planes || !planes.IsSequence()) return;
     const YAML::Node retirement = root["particle_retirement"];
     for (std::size_t index = 0; index < planes.size(); ++index)
@@ -218,6 +340,8 @@ int main(int argc, char** argv)
                 << "  interpretation: 1D cold-beam gain-centre estimate; "
                    "energy spread, emittance, space charge and 3D gain "
                    "shifts are not included.\n";
+      printBoostRecommendation(root, gamma, strength, period, undulator,
+                               inputLengthScale);
       printProtection(root, gamma, inputLengthScale);
       return 0;
     }

@@ -60,7 +60,19 @@ The second argument supplies laboratory gamma when an HDF5 beam card has no
 `beam.input.gamma`. With one planar undulator the tool selects it
 automatically; with several, mark exactly one magnetic element
 `characteristic: true`. It reports the on-axis cold-beam fundamental as a
-one-dimensional gain-centre estimate. If a field plane enables
+one-dimensional gain-centre estimate. It also reports the planar-undulator
+longitudinal estimate
+
+```text
+boost_gamma_recommended = gamma_lab/sqrt(1+K^2/2),
+```
+
+compares it with `mesh.boost_gamma`, and converts their velocity mismatch into
+the predicted boosted-frame z drift across the characteristic undulator core,
+in metres and z cells. The recommendation selects one constant inertial frame;
+the simulator never changes boost during a run. Free-drift shift, fringes,
+energy spread, emittance and collective evolution still require box margin.
+If a field plane enables
 `retirement_frequency_protection`, the same command reads its minimum photon
 energy and cycle count, reports the required manually configured retirement
 length, and prints a preflight pass/fail result. It never edits the card.
