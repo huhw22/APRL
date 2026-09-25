@@ -24,7 +24,9 @@ namespace fel
 
   SILabPlaneProjectionReport::SILabPlaneProjectionReport()
     : inputPlaneLab(0.0), referencePositionLab(0.0),
-      minimumForwardDistance(0.0), maximumForwardDistance(0.0), particles(0)
+      minimumForwardDistance(0.0), maximumForwardDistance(0.0),
+      recommendedMinimumReferencePosition(0.0),
+      referenceTimeOffsetLab(0.0), meanLongitudinalBeta(0.0), particles(0)
   {}
 
   SIBunchBoostReport::SIBunchBoostReport()
@@ -122,6 +124,161 @@ namespace fel
     report.referencePositionLab = referencePositionLab;
     report.minimumForwardDistance = std::max(0.0, globalMinimum);
     report.maximumForwardDistance = globalMaximum;
+    report.recommendedMinimumReferencePosition =
+      referencePositionLab - globalMinimum;
+    report.particles = globalCount;
+    return report;
+  }
+
+  SILabPlaneProjectionReport
+  SIBunchPreprocessor::projectLabPlaneEventsToSnapshot(
+      std::vector<RelativisticParticleSI>& particles,
+      Double inputPlaneLab, Double referencePositionLab,
+      Double longitudinalOffsetLab, MPI_Comm communicator)
+  {
+    if (communicator == MPI_COMM_NULL)
+      throw std::invalid_argument(
+        "Lab-plane event projection communicator is null");
+    if (!std::isfinite(inputPlaneLab) ||
+        !std::isfinite(referencePositionLab) ||
+        !std::isfinite(longitudinalOffsetLab))
+      throw std::invalid_argument(
+        "Lab-plane event projection coordinates must be finite");
+
+    const unsigned long long localCount =
+      static_cast<unsigned long long>(particles.size());
+    unsigned long long globalCount = 0;
+    MPI_Allreduce(&localCount, &globalCount, 1, MPI_UNSIGNED_LONG_LONG,
+                  MPI_SUM, communicator);
+    if (globalCount == 0)
+      throw std::invalid_argument(
+        "Cannot project an empty particle event set");
+
+    long double localWeight = 0.0L;
+    long double localWeightedBetaZ = 0.0L;
+    long double localWeightedBetaZTime = 0.0L;
+    Double localLatestTime = -std::numeric_limits<Double>::infinity();
+    int localInvalid = 0;
+    for (std::size_t index = 0; index < particles.size(); ++index)
+      {
+        const RelativisticParticleSI& particle = particles[index];
+        const Double timeOffset = particle.position[2];
+        const Double gamma = std::sqrt(1.0 +
+          particle.properVelocity.norm2());
+        const Double betaZ = particle.properVelocity[2] / gamma;
+        if (!(particle.weight > 0.0) || !std::isfinite(particle.weight) ||
+            !(betaZ > 0.0) || !std::isfinite(betaZ) ||
+            !std::isfinite(timeOffset))
+          localInvalid = 1;
+        localWeight += static_cast<long double>(particle.weight);
+        localWeightedBetaZ += static_cast<long double>(particle.weight) *
+          static_cast<long double>(betaZ);
+        localWeightedBetaZTime +=
+          static_cast<long double>(particle.weight) *
+          static_cast<long double>(betaZ) *
+          static_cast<long double>(timeOffset);
+        localLatestTime = std::max(localLatestTime, timeOffset);
+      }
+
+    int globalInvalid = 0;
+    MPI_Allreduce(&localInvalid, &globalInvalid, 1, MPI_INT, MPI_MAX,
+                  communicator);
+    if (globalInvalid)
+      throw std::invalid_argument(
+        "Lab-plane event input requires finite positive weights, finite arrival times, and positive longitudinal velocity");
+
+    long double globalWeight = 0.0L;
+    long double globalWeightedBetaZ = 0.0L;
+    long double globalWeightedBetaZTime = 0.0L;
+    MPI_Allreduce(&localWeight, &globalWeight, 1, MPI_LONG_DOUBLE,
+                  MPI_SUM, communicator);
+    MPI_Allreduce(&localWeightedBetaZ, &globalWeightedBetaZ, 1,
+                  MPI_LONG_DOUBLE, MPI_SUM, communicator);
+    MPI_Allreduce(&localWeightedBetaZTime, &globalWeightedBetaZTime, 1,
+                  MPI_LONG_DOUBLE, MPI_SUM, communicator);
+    Double globalLatestTime = 0.0;
+    MPI_Allreduce(&localLatestTime, &globalLatestTime, 1, MPI_DOUBLE,
+                  MPI_MAX, communicator);
+    if (!(globalWeight > 0.0L) || !(globalWeightedBetaZ > 0.0L))
+      throw std::invalid_argument(
+        "Lab-plane event input has an invalid global weight or longitudinal velocity sum");
+
+    const long double meanBetaZ =
+      globalWeightedBetaZ / globalWeight;
+    /* This choice makes the macro-weighted longitudinal centroid land
+     * exactly at referencePositionLab before the optional z offset, including
+     * correlations between arrival time and longitudinal velocity. */
+    const long double referenceTime =
+      (static_cast<long double>(referencePositionLab - inputPlaneLab) /
+       static_cast<long double>(SI::c) +
+       globalWeightedBetaZTime / globalWeight) / meanBetaZ;
+
+    const Double scale = std::max(1.0,
+      std::max(std::abs(inputPlaneLab), std::abs(referencePositionLab)));
+    const Double distanceTolerance = 128.0 *
+      std::numeric_limits<Double>::epsilon() * scale;
+    if (referenceTime < static_cast<long double>(globalLatestTime) -
+        static_cast<long double>(distanceTolerance / SI::c))
+      {
+        const long double minimumCenter =
+          static_cast<long double>(inputPlaneLab) +
+          static_cast<long double>(SI::c) *
+          (meanBetaZ * static_cast<long double>(globalLatestTime) -
+           globalWeightedBetaZTime / globalWeight);
+        std::ostringstream message;
+        message << std::setprecision(16)
+          << "The reconstructed laboratory snapshot would require backward "
+             "propagation of at least one Elegant plane event. Set "
+             "beam.reference.initial_center_z to at least "
+          << static_cast<Double>(minimumCenter)
+          << " m, move input_plane_z upstream, or verify the Elegant t "
+             "column and selected page.";
+        throw std::invalid_argument(message.str());
+      }
+
+    Double localMinimum = std::numeric_limits<Double>::infinity();
+    Double localMaximum = -std::numeric_limits<Double>::infinity();
+    for (std::size_t index = 0; index < particles.size(); ++index)
+      {
+        RelativisticParticleSI& particle = particles[index];
+        const Double timeOffset = particle.position[2];
+        const Double gamma = std::sqrt(1.0 +
+          particle.properVelocity.norm2());
+        const Double betaZ = particle.properVelocity[2] / gamma;
+        const Double deltaTime = static_cast<Double>(referenceTime) -
+                                 timeOffset;
+        Double distance = betaZ * SI::c * deltaTime;
+        if (distance < 0.0 && distance >= -distanceTolerance)
+          distance = 0.0;
+        localMinimum = std::min(localMinimum, distance);
+        localMaximum = std::max(localMaximum, distance);
+        particle.position[0] +=
+          particle.properVelocity[0] / particle.properVelocity[2] * distance;
+        particle.position[1] +=
+          particle.properVelocity[1] / particle.properVelocity[2] * distance;
+        particle.position[2] = inputPlaneLab + distance -
+          referencePositionLab + longitudinalOffsetLab;
+      }
+
+    Double globalMinimum = 0.0;
+    Double globalMaximum = 0.0;
+    MPI_Allreduce(&localMinimum, &globalMinimum, 1, MPI_DOUBLE, MPI_MIN,
+                  communicator);
+    MPI_Allreduce(&localMaximum, &globalMaximum, 1, MPI_DOUBLE, MPI_MAX,
+                  communicator);
+
+    SILabPlaneProjectionReport report;
+    report.inputPlaneLab = inputPlaneLab;
+    report.referencePositionLab = referencePositionLab;
+    report.minimumForwardDistance = std::max(0.0, globalMinimum);
+    report.maximumForwardDistance = globalMaximum;
+    report.recommendedMinimumReferencePosition = static_cast<Double>(
+      static_cast<long double>(inputPlaneLab) +
+      static_cast<long double>(SI::c) *
+      (meanBetaZ * static_cast<long double>(globalLatestTime) -
+       globalWeightedBetaZTime / globalWeight));
+    report.referenceTimeOffsetLab = static_cast<Double>(referenceTime);
+    report.meanLongitudinalBeta = static_cast<Double>(meanBetaZ);
     report.particles = globalCount;
     return report;
   }

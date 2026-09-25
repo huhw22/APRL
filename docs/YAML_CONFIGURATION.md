@@ -237,13 +237,16 @@ beam:
 
 All particle planes, magnetic elements and detector planes use the same
 absolute laboratory z coordinate. No element is forced to lie at zero.
-For production HDF5-v3 input, `input_plane_z` is the Elegant observation-plane
+For production HDF5-v3/v4 input, `input_plane_z` is the Elegant observation-plane
 coordinate. `initial_center_z` is the coordinate assigned to the reconstructed
-common-time bunch reference after straight-line forward projection. Positive
-particle longitudinal offset points downstream. Versions 1/2 and the generated
-Gaussian path are already common-time snapshots and ignore `input_plane_z`.
+common-time bunch reference after straight-line forward projection. In v3,
+positive particle longitudinal offset points downstream. In v4, the file keeps
+the signed fixed-plane arrival-time offset and startup reconstructs the
+longitudinal position with each particle's own velocity. Versions 1/2 and the
+generated Gaussian path are already common-time snapshots and ignore
+`input_plane_z`.
 
-For HDF5-v3 records the program requires every reconstructed particle position
+For HDF5-v3/v4 records the program requires every reconstructed particle position
 to be at or downstream of `input_plane_z`. It then requires the snapshot bunch
 front, plus one lab-equivalent boosted z cell, to remain before the first
 magnetic-element **interaction** entrance. These bounds define an admissible
@@ -271,11 +274,12 @@ Production input uses HDF5:
 
 Relative `file` paths are resolved from the YAML file directory. `electrons`
 is always the total physical electron count represented by all records.
-HDF5 v2/v3 records carry a positive relative `macro_weight`; the simulator
+HDF5 v2/v3/v4 records carry a positive relative `macro_weight`; the simulator
 normalizes their sum to `electrons` and scales each macro charge and mass
 together. Legacy v1 files remain readable and imply equal weights.
-`position_offset` is optional, uses the YAML length unit, and is added before
-reference placement. The binary schema is defined in
+`position_offset` is optional and uses the YAML length unit. Its x/y components
+shift the fixed-plane coordinates; for v4 its z component shifts the relative
+snapshot after arrival-time synchronization. The binary schema is defined in
 [PARTICLE_INPUT_HDF5.md](PARTICLE_INPUT_HDF5.md).
 
 For small integration tests only, a deterministic Gaussian can be generated

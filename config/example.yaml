@@ -51,9 +51,9 @@ initial_self_field:
 
 beam:
   reference:
-    # Absolute coordinates shared with the Elegant lattice.  The HDF5-v3
-    # records are sampled at input_plane_z and are advanced only forward to
-    # the reconstructed common-time bunch reference at initial_center_z.
+    # Absolute coordinates shared with the Elegant lattice. HDF5-v3 offsets
+    # or v4 arrival-time events are sampled at input_plane_z and are advanced
+    # only forward to the common-time reference at initial_center_z.
     input_plane_z: -2.0
     initial_center_z: -1.8
   input:

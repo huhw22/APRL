@@ -107,6 +107,11 @@ generated Gaussian path instead uses the requested total charge and macro-
 particle count with uniform weights. An optional root-only resource report
 gives a pre-run memory/time estimate, periodic batch-log progress, and measured
 peak resident memory and wall time without requiring a live terminal.
+Native Elegant SDDS particle pages can be converted directly in C++ through
+the official SDDS library. The converter preserves fixed-plane arrival times,
+slopes, momentum, particle IDs and optional per-row weights in an HDF5-v4
+record without an intermediate text dump; startup then performs the exact
+ballistic event-to-common-time synchronization before the Lorentz boost.
 
 An independent optional runtime energy ledger closes the boosted-frame budget
 across active and escaped particle kinetic energy, physical-interior E/B

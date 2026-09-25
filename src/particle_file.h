@@ -27,7 +27,8 @@ namespace fel
   public:
     static const int legacyFormatVersion = 1;
     static const int snapshotFormatVersion = 2;
-    static const int formatVersion = 3;
+    static const int labPlaneOffsetFormatVersion = 3;
+    static const int formatVersion = 4;
 
     /* Reads one contiguous hyperslab per MPI rank. Parallel HDF5 uses one
      * collective file open and one collective dataset read. */

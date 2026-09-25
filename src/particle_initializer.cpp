@@ -13,7 +13,8 @@ namespace fel
 {
   ParticleInitializationReport::ParticleInitializationReport()
     : globalRecords(0), fileFormatVersion(0),
-      laboratoryPlaneCoordinates(false)
+      laboratoryPlaneCoordinates(false),
+      laboratoryPlaneTimeCoordinates(false)
   {}
 
   namespace
@@ -120,6 +121,9 @@ namespace fel
           config.beam.positionOffset, communicator,
           report.globalRecords, report.fileFormatVersion);
         report.laboratoryPlaneCoordinates =
+          report.fileFormatVersion >=
+          ParticleHdf5File::labPlaneOffsetFormatVersion;
+        report.laboratoryPlaneTimeCoordinates =
           report.fileFormatVersion >= ParticleHdf5File::formatVersion;
         return particles;
       }

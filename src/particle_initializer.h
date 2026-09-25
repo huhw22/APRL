@@ -15,6 +15,7 @@ namespace fel
     unsigned long long globalRecords;
     int fileFormatVersion;
     bool laboratoryPlaneCoordinates;
+    bool laboratoryPlaneTimeCoordinates;
 
     ParticleInitializationReport();
   };

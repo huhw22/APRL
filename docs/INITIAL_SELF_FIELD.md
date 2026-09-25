@@ -100,7 +100,7 @@ bunch occupied only `3.2666 mm` in boosted z and fitted the configured box.
 The corresponding laboratory events span `3.8349` light-metres because of
 relativity of simultaneity. This is logged as a diagnostic only: it is not a
 physical entrance drift and no longer forces the bunch reference to `-2 m`.
-For HDF5-v3 Elegant input, the separate physical requirement is that every
+For HDF5-v3/v4 Elegant input, the separate physical requirement is that every
 record advances forward from `input_plane_z` to the reconstructed snapshot and
 that this snapshot fits before the first magnetic interaction region.
 

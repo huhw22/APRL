@@ -21,28 +21,43 @@ namespace fel
       if (status < 0) throw std::runtime_error(message);
     }
 
-    hid_t memoryRecordType(bool weighted)
+    hid_t memoryRecordType(int version)
     {
       hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(ParticleInputRecord));
       requireHandle(type, "Cannot create particle input memory datatype");
-      hsize_t dimensions[1] = {3};
-      hid_t vectorType = H5Tarray_create2(H5T_NATIVE_DOUBLE, 1, dimensions);
-      if (vectorType < 0)
+      const bool timedPlane =
+        version >= ParticleHdf5File::formatVersion;
+      hsize_t positionDimensions[1] = {timedPlane ? 2U : 3U};
+      hsize_t velocityDimensions[1] = {3};
+      hid_t positionType = H5Tarray_create2(
+        H5T_NATIVE_DOUBLE, 1, positionDimensions);
+      hid_t velocityType = H5Tarray_create2(
+        H5T_NATIVE_DOUBLE, 1, velocityDimensions);
+      if (positionType < 0 || velocityType < 0)
         {
+          if (positionType >= 0) H5Tclose(positionType);
+          if (velocityType >= 0) H5Tclose(velocityType);
           H5Tclose(type);
           throw std::runtime_error("Cannot create particle input vector datatype");
         }
-      const herr_t first = H5Tinsert(type, "position_m",
-        HOFFSET(ParticleInputRecord, position), vectorType);
+      const herr_t first = H5Tinsert(type,
+        timedPlane ? "plane_position_m" : "position_m",
+        HOFFSET(ParticleInputRecord, position), positionType);
+      const herr_t time = timedPlane ? H5Tinsert(type,
+        "arrival_time_offset_s",
+        HOFFSET(ParticleInputRecord, position) + 2 * sizeof(Double),
+        H5T_NATIVE_DOUBLE) : 0;
       const herr_t second = H5Tinsert(type, "proper_velocity",
-        HOFFSET(ParticleInputRecord, properVelocity), vectorType);
+        HOFFSET(ParticleInputRecord, properVelocity), velocityType);
       const herr_t third = H5Tinsert(type, "source_id",
         HOFFSET(ParticleInputRecord, sourceId), H5T_NATIVE_UINT64);
-      const herr_t fourth = weighted ?
+      const herr_t fourth =
+        version >= ParticleHdf5File::snapshotFormatVersion ?
         H5Tinsert(type, "macro_weight",
           HOFFSET(ParticleInputRecord, macroWeight), H5T_NATIVE_DOUBLE) : 0;
-      H5Tclose(vectorType);
-      if (first < 0 || second < 0 || third < 0 || fourth < 0)
+      H5Tclose(positionType);
+      H5Tclose(velocityType);
+      if (first < 0 || time < 0 || second < 0 || third < 0 || fourth < 0)
         {
           H5Tclose(type);
           throw std::runtime_error("Cannot define particle input memory datatype");
@@ -111,12 +126,14 @@ namespace fel
       }
     const int version = readFormatVersion(group);
     if (version != legacyFormatVersion &&
-        version != snapshotFormatVersion && version != formatVersion)
+        version != snapshotFormatVersion &&
+        version != labPlaneOffsetFormatVersion &&
+        version != formatVersion)
       {
         H5Gclose(group);
         H5Fclose(file);
         throw std::runtime_error(
-          "Unsupported particle HDF5 format version; supported versions are 1, 2 and 3");
+          "Unsupported particle HDF5 format version; supported versions are 1, 2, 3 and 4");
       }
     inputFormatVersion = version;
     hid_t dataset = H5Dopen2(group, "records", H5P_DEFAULT);
@@ -184,7 +201,7 @@ namespace fel
     requireStatus(H5Pset_dxpl_mpio(transfer, H5FD_MPIO_COLLECTIVE),
                   "Cannot enable collective particle dataset read");
 #endif
-    hid_t memoryType = memoryRecordType(version >= snapshotFormatVersion);
+    hid_t memoryType = memoryRecordType(version);
     const herr_t readStatus = H5Dread(dataset, memoryType, memorySpace,
       fileSpace, transfer, input.empty() ? NULL : &input[0]);
     H5Tclose(memoryType);
@@ -221,8 +238,9 @@ namespace fel
             if (!std::isfinite(input[i].position[component]) ||
                 !std::isfinite(input[i].properVelocity[component]))
               throw std::runtime_error("Particle HDF5 record contains non-finite values");
-            particle.position[component] = input[i].position[component] +
-                                           positionOffsetSI[component];
+            particle.position[component] = input[i].position[component];
+            if (version < formatVersion || component < 2)
+              particle.position[component] += positionOffsetSI[component];
             particle.properVelocity[component] =
               input[i].properVelocity[component];
           }

@@ -1247,14 +1247,21 @@ namespace fel
       {
         if (!config_.reference.inputPlaneZSet)
           throw std::invalid_argument(
-            "Particle HDF5 format version 3 contains fixed-lab-plane records; beam.reference.input_plane_z is required in the shared laboratory coordinate system");
-        planeProjection = SIBunchPreprocessor::projectLabPlaneToSnapshot(
-          particles_, config_.reference.inputPlaneZ,
-          config_.reference.initialCenterZ, communicator_);
+            "Particle HDF5 format version 3 or 4 contains fixed-lab-plane records; beam.reference.input_plane_z is required in the shared laboratory coordinate system");
+        if (inputReport.laboratoryPlaneTimeCoordinates)
+          planeProjection =
+            SIBunchPreprocessor::projectLabPlaneEventsToSnapshot(
+              particles_, config_.reference.inputPlaneZ,
+              config_.reference.initialCenterZ,
+              config_.beam.positionOffset[2], communicator_);
+        else
+          planeProjection = SIBunchPreprocessor::projectLabPlaneToSnapshot(
+            particles_, config_.reference.inputPlaneZ,
+            config_.reference.initialCenterZ, communicator_);
       }
     else if (config_.reference.inputPlaneZSet && rank_ == 0)
       logRoot(communicator_,
-        "WARNING: beam.reference.input_plane_z is ignored because this particle input is a legacy common-time snapshot rather than an HDF5-v3 lab-plane record set.");
+        "WARNING: beam.reference.input_plane_z is ignored because this particle input is a legacy common-time snapshot rather than an HDF5-v3/v4 lab-plane record set.");
 
     initializeFieldDetectorRegions();
     validateBeamlineExclusionRules();
@@ -1301,8 +1308,8 @@ namespace fel
           << " in the configured length unit)";
         if (inputReport.laboratoryPlaneCoordinates)
           {
-            const Double minimumCenter = config_.reference.inputPlaneZ -
-              placementReport.relativeTailLab;
+            const Double minimumCenter =
+              planeProjection.recommendedMinimumReferencePosition;
             message << "; forward projection from input_plane_z requires it "
                        "to be at least " << minimumCenter << " m ("
                     << minimumCenter / config_.inputUnits.length << ")";
@@ -1542,16 +1549,27 @@ namespace fel
           {
             std::ostringstream projectionMessage;
             projectionMessage << std::setprecision(10)
-              << "Elegant lab-plane reconstruction: input_plane_z="
+              << "Elegant lab-plane reconstruction (HDF5 v"
+              << inputReport.fileFormatVersion << "): input_plane_z="
               << planeProjection.inputPlaneLab
               << " m, snapshot_reference_z="
               << planeProjection.referencePositionLab
               << " m, per-particle forward distance range=["
               << planeProjection.minimumForwardDistance << ", "
               << planeProjection.maximumForwardDistance
-              << "] m. Transverse coordinates were advanced with ux/uz and "
-                 "uy/uz; longitudinal offsets retain their input timing "
-                 "definition.";
+              << "] m. ";
+            if (inputReport.laboratoryPlaneTimeCoordinates)
+              projectionMessage
+                << "The original arrival-time events were synchronized with "
+                   "their individual velocities; mean beta_z="
+                << planeProjection.meanLongitudinalBeta
+                << ", common time offset="
+                << planeProjection.referenceTimeOffsetLab << " s.";
+            else
+              projectionMessage
+                << "Transverse coordinates were advanced with ux/uz and "
+                   "uy/uz; longitudinal offsets retain their input timing "
+                   "definition.";
             logRoot(communicator_, projectionMessage.str());
           }
         std::ostringstream placementMessage;

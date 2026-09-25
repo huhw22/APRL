@@ -8,6 +8,8 @@
 - HDF5 development libraries, with parallel HDF5 required for multi-rank
   particle input;
 - yaml-cpp development libraries;
+- the official SDDS C library/toolkit when building the direct Elegant SDDS
+  converter;
 - FFTW3, including its threads library, for field reconstruction and
   field-plane spectrum/coherence analysis.
 
@@ -20,8 +22,19 @@ cmake --build build -j
 ```
 
 This produces `build/simulator`, `build/particle_text_to_hdf5`,
+`build/elegant_sdds_to_hdf5` when SDDS is found,
 `build/undulator_resonance`, `build/energy_ledger_report`, and
 `build/lab_frame_energy_estimate`.
+
+The SDDS converter is intentionally linked to the official implementation,
+not a partial binary parser. If SDDS and Elegant were built in the recommended
+sibling directory layout it is found automatically. Otherwise configure with:
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=mpic++ \
+  -DSDDS_ROOT=/path/to/built/SDDS
+```
 
 Summarize a complete or cleanly interrupted runtime energy ledger without any
 Python dependency:
@@ -151,7 +164,26 @@ differencing, optionally subtracts a matched `K=0` result per particle, and
 compares with either field-plane or trajectory far-field energy. See
 [ENERGY_CLOSURE.md](ENERGY_CLOSURE.md).
 
-## Convert a legacy text particle file
+## Convert particle input
+
+For native Elegant output, prefer the direct converter:
+
+```bash
+./build/elegant_sdds_to_hdf5 \
+  --input elegant-watch.sdds \
+  --page 1 \
+  --output particles.h5
+```
+
+It reads `x,xp,y,yp,t,p` from one SDDS page through the official library,
+preserves `particleID` when present, and writes HDF5 v4 fixed-plane crossing
+events. No intermediate text file is produced. Use `--weight-column NAME`
+only for a genuine positive per-row relative-weight column; the usual Elegant
+page parameter `Charge` is not such a column. See
+[PARTICLE_INPUT_HDF5.md](PARTICLE_INPUT_HDF5.md) for the exact mapping and
+multi-page policy.
+
+For an older six-column text export:
 
 ```bash
 ./build/particle_text_to_hdf5 \
@@ -160,7 +192,7 @@ compares with either field-plane or trajectory far-field energy. See
   --length-unit micrometer
 ```
 
-The converter reads the source twice and writes HDF5 in bounded chunks, so its
+The text converter reads the source twice and writes HDF5 in bounded chunks, so its
 memory use does not grow with the full particle count. The HDF5-v3 text columns
 are `x_plane y_plane zeta ux uy uz [macro_weight]`: x/y are sampled at the
 fixed Elegant plane and `zeta` is the signed longitudinal offset used to
@@ -237,7 +269,7 @@ prevents this diagnostic from being enabled accidentally on a production
 bunch.
 
 The current solver stops with an explicit error if its boosted initial bunch
-does not fit the longitudinal box. For HDF5-v3 input it also checks that every
+does not fit the longitudinal box. For HDF5-v3/v4 input it also checks that every
 record is projected forward from the configured Elegant plane and that the
 reconstructed bunch fits between that plane and the first magnetic interaction
 region. The head-anchored Lorentz synchronization span is reported separately

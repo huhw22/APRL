@@ -8,7 +8,7 @@ is production-ready.
 
 | Area | Current status | Production note |
 |---|---|---|
-| Particle input | Implemented | Parallel HDF5 v3 represents a fixed Elegant lab plane plus longitudinal timing offsets and supports per-record relative weights. It is projected only forward to an explicitly placed common-time bunch reference. Legacy v1/v2 snapshots remain readable, and a bounded-memory text converter is provided. |
+| Particle input | Implemented | Parallel HDF5 v4 preserves fixed-Elegant-plane arrival-time events and synchronizes them with each particle's own velocity; v3 offset records and legacy v1/v2 snapshots remain readable. Relative weights are supported. The official-library C++ SDDS converter performs direct page/ID-aware conversion without an intermediate text dump; the older bounded-memory text converter remains available. |
 | Generated beam | Implemented for tests | Deterministic, uncorrelated Gaussian with total electrons and macro-particle count; it is not a beam-preparation model. |
 | Relativistic transform | Implemented and audited | Boosted time zero is anchored to the reconstructed lab bunch front, the transformed bunch is centred in the numerical box, and the large virtual lab-event span is diagnostic rather than an entrance-drift constraint. SI E/B and light-front momentum transforms are checked by a lab/boost round trip. |
 | Mesh geometry | Implemented and audited | YAML supplies integer `cells` and physical `cell_size`; extents use multiplication and MPI slab offsets/counts remain integer. Old length/resolution inference is rejected. |

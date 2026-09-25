@@ -38,6 +38,9 @@ namespace fel
     Double referencePositionLab;
     Double minimumForwardDistance;
     Double maximumForwardDistance;
+    Double recommendedMinimumReferencePosition;
+    Double referenceTimeOffsetLab;
+    Double meanLongitudinalBeta;
     unsigned long long particles;
 
     SILabPlaneProjectionReport();
@@ -68,6 +71,18 @@ namespace fel
         std::vector<RelativisticParticleSI>& particles,
         Double inputPlaneLab,
         Double referencePositionLab,
+        MPI_Comm communicator);
+
+    /* Version-4 records preserve Elegant's fixed-plane arrival time instead
+     * of first approximating it by a longitudinal offset.  Synchronize the
+     * crossing events to one common lab time with their individual supplied
+     * velocities.  The weighted longitudinal centroid is placed at
+     * referencePositionLab. */
+    static SILabPlaneProjectionReport projectLabPlaneEventsToSnapshot(
+        std::vector<RelativisticParticleSI>& particles,
+        Double inputPlaneLab,
+        Double referencePositionLab,
+        Double longitudinalOffsetLab,
         MPI_Comm communicator);
 
     /* Input z coordinates are relative to a user-defined laboratory bunch
