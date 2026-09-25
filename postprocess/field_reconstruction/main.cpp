@@ -28,6 +28,8 @@ int main(int argc, char** argv)
                 << result.rmsTransverseBeta
                 << ", outside_charge_fraction="
                 << result.outsideChargeFraction << "\n"
+                << "Signed energy: raw=" << result.rawSignedEnergy
+                << " J, cleaned=" << result.cleanedSignedEnergy << " J\n"
                 << "Forward energy: raw=" << result.rawForwardEnergy
                 << " J, cleaned=" << result.cleanedForwardEnergy
                 << " J, relative_change="

@@ -1091,6 +1091,8 @@ namespace reconstruction
                                  const std::vector<double>& cleanSigned,
                                  const std::vector<double>& rawForward,
                                  const std::vector<double>& cleanForward,
+                                 double rawSignedEnergy,
+                                 double cleanSignedEnergy,
                                  double rawEnergy,
                                  double cleanEnergy,
                                  double relativeChange)
@@ -1099,6 +1101,9 @@ namespace reconstruction
         writeVector("cleaned_signed_power_W", cleanSigned);
         writeVector("raw_forward_power_W", rawForward);
         writeVector("cleaned_forward_power_W", cleanForward);
+        writeDoubleAttribute(group_, "raw_signed_energy_J", rawSignedEnergy);
+        writeDoubleAttribute(group_, "cleaned_signed_energy_J",
+          cleanSignedEnergy);
         writeDoubleAttribute(group_, "raw_forward_energy_J", rawEnergy);
         writeDoubleAttribute(group_, "cleaned_forward_energy_J", cleanEnergy);
         writeDoubleAttribute(group_, "relative_forward_energy_change",
@@ -1195,6 +1200,7 @@ namespace reconstruction
     : inputRecords(0), acceptedParticles(0), duplicateParticles(0),
       invalidParticles(0), outsideChargeFraction(0.0), meanGamma(0.0),
       relativeGammaSpread(0.0), rmsTransverseBeta(0.0),
+      rawSignedEnergy(0.0), cleanedSignedEnergy(0.0),
       rawForwardEnergy(0.0), cleanedForwardEnergy(0.0),
       relativeForwardEnergyChange(0.0)
   {}
@@ -1366,6 +1372,9 @@ namespace reconstruction
             cleanForwardPower[sample] += std::max(0.0, cleanFlux) * area;
           }
       }
+    summary.rawSignedEnergy = integrateTrapezoid(grid.outputTimes, rawSigned);
+    summary.cleanedSignedEnergy = integrateTrapezoid(
+      grid.outputTimes, cleanSigned);
     summary.rawForwardEnergy = integrateTrapezoid(
       grid.outputTimes, rawForwardPower);
     summary.cleanedForwardEnergy = integrateTrapezoid(
@@ -1374,7 +1383,8 @@ namespace reconstruction
       0.0 : (summary.cleanedForwardEnergy - summary.rawForwardEnergy) /
         summary.rawForwardEnergy;
     output.writePowerDiagnostics(rawSigned, cleanSigned, rawForwardPower,
-      cleanForwardPower, summary.rawForwardEnergy,
+      cleanForwardPower, summary.rawSignedEnergy,
+      summary.cleanedSignedEnergy, summary.rawForwardEnergy,
       summary.cleanedForwardEnergy, summary.relativeForwardEnergyChange);
     output.close(true);
 

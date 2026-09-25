@@ -15,6 +15,8 @@ namespace reconstruction
     double meanGamma;
     double relativeGammaSpread;
     double rmsTransverseBeta;
+    double rawSignedEnergy;
+    double cleanedSignedEnergy;
     double rawForwardEnergy;
     double cleanedForwardEnergy;
     double relativeForwardEnergyChange;

@@ -40,6 +40,24 @@ E_forward = collected forward radiation in the selected band
 R_lab     = L_device - E_forward
 ```
 
+When raw total-field planes are colocated with both particle planes, a stronger
+longitudinal control-volume diagnostic is available at low additional output
+cost:
+
+```text
+F_z = [(W_exit - W_entry)_signal
+       - (W_exit - W_entry)_control],
+W_plane = integral dt integral_A S_z dA.
+```
+
+Here `S_z` is signed. `F_z` retains both the particle near/bound field and the
+radiation crossing the planes, so it can be compared directly with `L_device`
+without first deciding which part is radiation. The separate
+amplitude-baseline-subtracted forward spectrum then answers the narrower
+radiation question. The difference `F_z-E_forward` is observable in the
+discrete data, but it is not uniquely a near-field energy: it can also include
+band/angle rejection and quadratic decomposition cross terms.
+
 `L_control` is a **space-charge plus numerical control**, not a direct
 measurement of stored near-field energy. `R_lab` can contain differential
 bound-field energy, side/backward radiation, missed aperture or frequency,
@@ -53,12 +71,13 @@ simulation.
 The `postprocess/energy_closure` report is therefore a laboratory observer:
 it reads only laboratory particle planes and laboratory radiation products.
 It does not combine them with equal-boost-time stored-field energy. Report
-format version 2 adds:
+format version 3 includes:
 
 - entry and exit mean gamma and rms energy spread, evaluated with represented
   macro-particle mass weights;
 - signal, zero-magnet control, and their per-particle matched difference;
 - collected forward radiation and the unresolved laboratory remainder;
+- optional entrance/exit raw signed Poynting fluxes for signal and control;
 - explicit flags that near-field change was not directly measured and that
   energy spread is not a separate energy reservoir.
 
@@ -175,6 +194,35 @@ unresolved. The report therefore correctly identifies this old compact run as
 collective-field/numerical-control dominated rather than claiming that its
 matched particle difference is radiation.
 
+A new control-volume test used `gamma=1000`, 128 macro-particles representing
+`10^6` electrons, a three-period 30 mm `K=0.5` undulator, and matched `K=0`
+fields. Entry and exit planes were fixed at 0 and 159 mm. After extending the
+simulation time so the detector records contained the pulse, the laboratory
+budget was:
+
+| term | energy |
+|---|---:|
+| signal particle loss | `5.902545 nJ` |
+| `K=0` particle loss | `-0.017060 nJ` |
+| matched particle loss | `5.919605 nJ` |
+| matched raw signed longitudinal field flux | `5.874187 nJ` |
+| raw residual | `0.045418 nJ` |
+| amplitude-cleaned forward 0--300 eV radiation | `5.430281 nJ` |
+
+The raw longitudinal flux therefore accounts for 99.23% of the matched
+particle loss, while the selected forward radiation accounts for 91.73%.
+The difference between those two percentages is no longer an unexplained
+conservation failure: it is the distinction between total signed field
+transport and the selected propagating radiation product. The raw test still
+is not a fully closed surface because transverse flux and equal-time field
+storage between the planes are absent.
+
+A time-window sweep was decisive. Raw closure rose from 54.57% to 62.45%,
+83.38%, and finally 99.23% as the recorded lab interval was extended.
+Doubling the longitudinal cell count at unchanged start/stop time left the
+62.45% result unchanged. Detector duration, rather than `Nz`, was the dominant
+error source in this case.
+
 ## Recommended production interpretation
 
 1. Place identical laboratory particle planes before and after the magnetic
@@ -183,8 +231,10 @@ matched particle difference is radiation.
    detector aperture, and random seed.
 3. Subtract the field baseline at E/B amplitude level before forming the
    forward radiation energy.
-4. Run `energy_closure` and inspect `L_control` before interpreting
+4. Reconstruct the raw signed power at colocated entrance and exit field
+   planes, and verify that the detector window contains both pulse tails.
+5. Run `energy_closure` and inspect `L_control` before interpreting
    `L_device`. If the control is comparable to or larger than the device term,
    the result is collective-field dominated and requires convergence.
-5. Treat `R_lab` as unresolved until aperture, band, time, particle count,
+6. Treat `R_lab` as unresolved until aperture, band, time, particle count,
    grid, initial-field padding, and CPML have converged.

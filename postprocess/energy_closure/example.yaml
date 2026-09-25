@@ -7,6 +7,13 @@ input:
   # strongly recommended whenever the expected loss is small.
   baseline_entry_particle_plane: ../../output/baseline/detectors/energy-entry.h5
   baseline_exit_particle_plane: ../../output/baseline/detectors/energy-exit.h5
+  # Optional lab longitudinal control-volume inputs. These are produced by
+  # field_reconstruction from raw total-field planes colocated with the four
+  # particle planes. Supply all four when a particle baseline is present.
+  # signal_entry_field_reconstruction: ../../output/signal/reconstructed-entry.h5
+  # signal_exit_field_reconstruction: ../../output/signal/reconstructed-exit.h5
+  # baseline_entry_field_reconstruction: ../../output/baseline/reconstructed-entry.h5
+  # baseline_exit_field_reconstruction: ../../output/baseline/reconstructed-exit.h5
   # May also be a complete trajectory_radiation /far_field file for a
   # small-particle cross-check.
   field_analysis: ../../output/field-plane-analysis.h5

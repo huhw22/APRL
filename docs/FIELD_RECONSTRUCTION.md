@@ -106,9 +106,13 @@ The output group `/reconstructed_field` contains:
 - `raw_forward_power_W` and `cleaned_forward_power_W`;
 - `complete`, set only after every field component and diagnostic is written.
 
-Forward power is the transverse integral of
-`max((E cross B)_z/mu0, 0)` over cell centres. Attributes
-`raw_forward_energy_J`, `cleaned_forward_energy_J`, and
+Signed power is the transverse integral of `(E cross B)_z/mu0`; forward power
+uses `max((E cross B)_z/mu0, 0)`. Both are integrated over stored cell
+centres. Attributes `raw_signed_energy_J` and `cleaned_signed_energy_J` give
+the trapezoidal time integral of the signed plane flux and are the quantities
+used for an entrance/exit laboratory control-volume balance.
+
+Attributes `raw_forward_energy_J`, `cleaned_forward_energy_J`, and
 `relative_forward_energy_change` give the trapezoidal time integral and its
 relative change. This is the directly evaluated intensity contamination for
 the configured aperture and time window; it is not, by itself, an error bar

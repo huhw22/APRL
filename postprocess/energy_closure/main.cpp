@@ -99,6 +99,10 @@ namespace
     std::string signalExit;
     std::string baselineEntry;
     std::string baselineExit;
+    std::string signalEntryField;
+    std::string signalExitField;
+    std::string baselineEntryField;
+    std::string baselineExitField;
     std::string fieldAnalysis;
     std::string report;
     bool requireComplete;
@@ -138,6 +142,42 @@ namespace
         config.baselineExit = resolvePath(filename,
           input["baseline_exit_particle_plane"].as<std::string>());
       }
+    const bool hasSignalEntryField =
+      static_cast<bool>(input["signal_entry_field_reconstruction"]);
+    const bool hasSignalExitField =
+      static_cast<bool>(input["signal_exit_field_reconstruction"]);
+    if (hasSignalEntryField != hasSignalExitField)
+      throw std::runtime_error(
+        "signal entry and exit field reconstructions must be supplied together");
+    const bool hasBaselineEntryField =
+      static_cast<bool>(input["baseline_entry_field_reconstruction"]);
+    const bool hasBaselineExitField =
+      static_cast<bool>(input["baseline_exit_field_reconstruction"]);
+    if (hasBaselineEntryField != hasBaselineExitField)
+      throw std::runtime_error(
+        "baseline entry and exit field reconstructions must be supplied together");
+    if (hasSignalEntryField)
+      {
+        config.signalEntryField = resolvePath(filename,
+          input["signal_entry_field_reconstruction"].as<std::string>());
+        config.signalExitField = resolvePath(filename,
+          input["signal_exit_field_reconstruction"].as<std::string>());
+      }
+    if (hasBaselineEntryField)
+      {
+        if (!hasBaselineEntry || !hasSignalEntryField)
+          throw std::runtime_error(
+            "baseline field reconstructions require both particle baseline "
+            "planes and signal field reconstructions");
+        config.baselineEntryField = resolvePath(filename,
+          input["baseline_entry_field_reconstruction"].as<std::string>());
+        config.baselineExitField = resolvePath(filename,
+          input["baseline_exit_field_reconstruction"].as<std::string>());
+      }
+    if (hasSignalEntryField && hasBaselineEntry && !hasBaselineEntryField)
+      throw std::runtime_error(
+        "a matched particle baseline requires matched baseline field "
+        "reconstructions for the lab control-volume report");
     config.report = resolvePath(filename,
       required(output, "report").as<std::string>());
     return config;
@@ -475,6 +515,58 @@ namespace
     std::string source;
   };
 
+  struct PlaneFieldEnergy
+  {
+    long double rawSigned;
+    long double cleanedSigned;
+  };
+
+  PlaneFieldEnergy readPlaneFieldEnergy(const std::string& filename,
+                                        bool requireComplete)
+  {
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    requireHandle(file, "Cannot open field reconstruction: " + filename);
+    hid_t group = H5Gopen2(file, "/reconstructed_field", H5P_DEFAULT);
+    if (group < 0)
+      {
+        H5Fclose(file);
+        throw std::runtime_error(
+          "Missing /reconstructed_field in " + filename);
+      }
+    try
+      {
+        if (requireComplete && readByteDataset(group, "complete") == 0)
+          throw std::runtime_error(
+            "Incomplete field reconstruction: " + filename);
+        PlaneFieldEnergy result;
+        result.rawSigned = readDoubleAttribute(group, "raw_signed_energy_J");
+        result.cleanedSigned = readDoubleAttribute(
+          group, "cleaned_signed_energy_J");
+        if (!std::isfinite(static_cast<double>(result.rawSigned)) ||
+            !std::isfinite(static_cast<double>(result.cleanedSigned)))
+          throw std::runtime_error(
+            "Invalid signed energy in field reconstruction: " + filename);
+        H5Gclose(group);
+        H5Fclose(file);
+        return result;
+      }
+    catch (...)
+      {
+        H5Gclose(group);
+        H5Fclose(file);
+        throw;
+      }
+  }
+
+  struct LabControlVolume
+  {
+    PlaneFieldEnergy signalEntry;
+    PlaneFieldEnergy signalExit;
+    PlaneFieldEnergy baselineEntry;
+    PlaneFieldEnergy baselineExit;
+    bool hasBaseline;
+  };
+
   FieldEnergy readFieldEnergy(const std::string& filename,
                               bool requireComplete)
   {
@@ -555,7 +647,8 @@ namespace
                    const Plane& signalEntry, const Plane& signalExit,
                    const Losses& signal, const Plane* baselineEntry,
                    const Plane* baselineExit, const Losses* baseline,
-                   long double correctedLoss, const FieldEnergy& field)
+                   long double correctedLoss, const FieldEnergy& field,
+                   const LabControlVolume* controlVolume)
   {
     const long double residual = correctedLoss - field.energy;
     const long double ratio = correctedLoss > 0.0L ?
@@ -569,7 +662,7 @@ namespace
       residual / correctedLoss :
       std::numeric_limits<long double>::quiet_NaN();
     output << std::setprecision(18) << std::scientific;
-    output << "format_version: 2\n"
+    output << "format_version: 3\n"
            << "observer_frame: laboratory\n"
            << "particle_hypersurface: fixed laboratory-z detector planes\n"
            << "boosted_runtime_ledger_used: false\n"
@@ -643,6 +736,63 @@ namespace
            << "  - the unresolved term contains differential bound-field change, side or backward radiation, missed aperture or frequency, and numerical residual\n"
            << "  - sigma_gamma describes redistribution inside particle kinetic energy and is not added as a separate energy term\n"
            << "  - only a lab closed-surface flux or equal-lab-time 3D field diagnostic can separate total radiation from retained bound field without this residual\n";
+    if (controlVolume)
+      {
+        const long double signalRaw =
+          controlVolume->signalExit.rawSigned -
+          controlVolume->signalEntry.rawSigned;
+        const long double signalCleaned =
+          controlVolume->signalExit.cleanedSigned -
+          controlVolume->signalEntry.cleanedSigned;
+        const long double baselineRaw = controlVolume->hasBaseline ?
+          controlVolume->baselineExit.rawSigned -
+            controlVolume->baselineEntry.rawSigned : 0.0L;
+        const long double baselineCleaned = controlVolume->hasBaseline ?
+          controlVolume->baselineExit.cleanedSigned -
+            controlVolume->baselineEntry.cleanedSigned : 0.0L;
+        const long double matchedRaw = signalRaw - baselineRaw;
+        const long double matchedCleaned = signalCleaned - baselineCleaned;
+        const long double rawResidual = correctedLoss - matchedRaw;
+        const long double rawFraction = correctedLoss > 0.0L ?
+          matchedRaw / correctedLoss :
+          std::numeric_limits<long double>::quiet_NaN();
+        output << "lab_longitudinal_control_volume:\n"
+               << "  sign_convention: positive signed Poynting flux is plus-z\n"
+               << "  signal_entry_file: " << config.signalEntryField << "\n"
+               << "  signal_exit_file: " << config.signalExitField << "\n"
+               << "  signal_entry_raw_signed_J: "
+               << controlVolume->signalEntry.rawSigned << "\n"
+               << "  signal_exit_raw_signed_J: "
+               << controlVolume->signalExit.rawSigned << "\n"
+               << "  signal_exit_minus_entry_raw_signed_J: "
+               << signalRaw << "\n"
+               << "  signal_exit_minus_entry_cleaned_signed_J: "
+               << signalCleaned << "\n";
+        if (controlVolume->hasBaseline)
+          output << "  baseline_entry_file: "
+                 << config.baselineEntryField << "\n"
+                 << "  baseline_exit_file: "
+                 << config.baselineExitField << "\n"
+                 << "  baseline_entry_raw_signed_J: "
+                 << controlVolume->baselineEntry.rawSigned << "\n"
+                 << "  baseline_exit_raw_signed_J: "
+                 << controlVolume->baselineExit.rawSigned << "\n"
+                 << "  baseline_exit_minus_entry_raw_signed_J: "
+                 << baselineRaw << "\n"
+                 << "  baseline_exit_minus_entry_cleaned_signed_J: "
+                 << baselineCleaned << "\n";
+        output << "  matched_exit_minus_entry_raw_signed_J: "
+               << matchedRaw << "\n"
+               << "  matched_exit_minus_entry_cleaned_signed_J: "
+               << matchedCleaned << "\n"
+               << "  raw_signed_to_particle_loss_ratio: "
+               << rawFraction << "\n"
+               << "  particle_minus_raw_signed_J: " << rawResidual << "\n"
+               << "  raw_signed_minus_forward_band_J: "
+               << matchedRaw - field.energy << "\n"
+               << "  transverse_flux_and_stored_field_included: false\n"
+               << "  interpretation: raw closure tests the resolved longitudinal lab control volume; raw-minus-forward-band contains bound or non-propagating field, excluded frequencies or angles, and decomposition cross terms\n";
+      }
   }
 }
 
@@ -686,6 +836,24 @@ int main(int argc, char** argv)
         }
       const FieldEnergy field = readFieldEnergy(config.fieldAnalysis,
         config.requireComplete);
+      LabControlVolume controlVolume;
+      LabControlVolume* controlVolumePointer = 0;
+      if (!config.signalEntryField.empty())
+        {
+          controlVolume.signalEntry = readPlaneFieldEnergy(
+            config.signalEntryField, config.requireComplete);
+          controlVolume.signalExit = readPlaneFieldEnergy(
+            config.signalExitField, config.requireComplete);
+          controlVolume.hasBaseline = !config.baselineEntryField.empty();
+          if (controlVolume.hasBaseline)
+            {
+              controlVolume.baselineEntry = readPlaneFieldEnergy(
+                config.baselineEntryField, config.requireComplete);
+              controlVolume.baselineExit = readPlaneFieldEnergy(
+                config.baselineExitField, config.requireComplete);
+            }
+          controlVolumePointer = &controlVolume;
+        }
 
       createDirectories(parentDirectory(config.report));
       std::ofstream report(config.report.c_str());
@@ -693,14 +861,14 @@ int main(int argc, char** argv)
         throw std::runtime_error("Cannot create report: " + config.report);
       writeReport(report, config, signalEntry, signalExit, signal,
         baselineEntryPointer, baselineExitPointer, baselinePointer,
-        correctedLoss, field);
+        correctedLoss, field, controlVolumePointer);
       report.close();
       if (!report)
         throw std::runtime_error("Cannot finish report: " + config.report);
 
       writeReport(std::cout, config, signalEntry, signalExit, signal,
         baselineEntryPointer, baselineExitPointer, baselinePointer,
-        correctedLoss, field);
+        correctedLoss, field, controlVolumePointer);
       return 0;
     }
   catch (const std::exception& error)

@@ -272,6 +272,37 @@ shows why a dense charged bunch requires a global ledger containing kinetic
 energy, stored E/B energy and flux through every boundary; a single downstream
 plane is insufficient.
 
+That retained compact case did not include a converged entrance/exit field
+window, so it diagnosed a failure mode but could not localize the missing
+energy. A new test kept the charge and 128 macro-particles but used colocated
+laboratory particle/field planes at 0 and 159 mm and integrated the **signed**
+raw Poynting flux. Its window sweep was:
+
+| bunch start / lab stop | longitudinal cells | matched raw field transport | fraction of `5.919605 nJ` particle loss |
+|---|---:|---:|---:|
+| `-1 mm / 175 mm` | 400 | `3.230129 nJ` | `54.57%` |
+| `-50 mm / 175 mm` | 400 | `3.696551 nJ` | `62.45%` |
+| `-50 mm / 175 mm` | 800 | `3.696547 nJ` | `62.45%` |
+| `-50 mm / 350 mm` | 400 | `4.935941 nJ` | `83.38%` |
+| `-50 mm / 540 mm` | 400 | `5.874187 nJ` | `99.23%` |
+
+Doubling `Nz` at fixed start/stop did not add detector samples or recover the
+pulse; extending the simulated lab interval did. In the longest run, the
+signal particle loss was `5.902545 nJ`, the `K=0` particle loss was
+`-0.017060 nJ`, and their matched difference was `5.919605 nJ`. The matched
+raw entrance/exit field transport left only `0.045418 nJ` (0.77%) unresolved.
+This remainder still permits transverse flux, stored-field change between the
+planes, residual tail truncation and numerical error because two z planes are
+not a fully closed surface.
+
+The independent amplitude-level signal-minus-`K=0` field analysis over the
+full transverse plane and 0--300 eV gave `5.430281 nJ`, or 91.73% of the
+particle loss. The `0.443906 nJ` difference between raw signed transport and
+that radiation product contains the bound/non-propagating component,
+frequencies or angles rejected by the analysis, and field-decomposition cross
+terms. It should not be called missing energy. This test identifies detector
+time-window truncation as the dominant cause of the earlier large discrepancy.
+
 A weak-collective control reduced the total represented charge to one electron
 while retaining 128 fractional macro-particles and the Gauss-consistent initial
 field. Its matched `K=0` kinetic change was zero at the reported precision. The
@@ -305,9 +336,10 @@ energy conservation.
 
 The reusable `postprocess/energy_closure` tool generated these reports. It can
 read either a complete field-plane analysis or a complete trajectory far-field
-file. Production approval remains blocked on a full-domain Poynting ledger and
-convergence of the dense-bunch bound-field term, even though the controlled
-weak-collective result is physically consistent at the requested scale.
+file, and can optionally combine four reconstructed field planes into the
+longitudinal laboratory control volume above. Production approval still needs
+aperture, mesh, CPML, particle-count and longer-device convergence; the 99.23%
+result is a small three-period conservation test, not a production FEL claim.
 
 ## Runtime full-energy ledger and energy-spread decomposition
 

@@ -6,10 +6,11 @@ integrated by `field_plane_analysis`. It is a read-only, standalone C++ tool;
 it adds no simulation communication, memory, or output when not run.
 
 The report is explicitly a laboratory-frame observer. It does not mix the
-particle planes with the boosted-frame runtime ledger. Format version 2 also
+particle planes with the boosted-frame runtime ledger. Format version 3
 reports laboratory mean gamma and rms energy spread at both planes, the
 zero-magnet control exchange, the signal-minus-control device-associated
-particle change, and the part not explained by the collected forward band.
+particle change, the part not explained by the collected forward band, and
+an optional two-plane longitudinal Poynting balance.
 See `LAB_FRAME_ENERGY_DIAGNOSTICS.md` for the interpretation and the fast
 50 A analytical scale tool.
 
@@ -26,6 +27,23 @@ pass the cleaned signal and cleaned baseline to `field_plane_analysis` through
 `zero_radiation_baseline`. Finally provide both pairs of particle planes and
 that analysis file to this tool. See
 `postprocess/energy_closure/example.yaml`.
+
+For the stronger energy-balance check, also reconstruct the raw total fields
+at field planes colocated with the entrance and exit particle planes. Supply
+all four optional `*_field_reconstruction` paths. The report then evaluates
+
+```text
+Delta W_z = [(W_exit - W_entry)_signal
+             - (W_exit - W_entry)_K=0],
+W_plane = integral dt integral_A (E cross B)_z / mu0 dA.
+```
+
+`W_plane` is signed: energy travelling towards minus z is negative. Using
+forward-clipped power here would break a control-volume balance. The raw total
+field is the primary conservation quantity. The cleaned value is retained as
+a model diagnostic, but subtracting an estimated particle background changes
+the field before the quadratic Poynting operation and is not an exact energy
+identity.
 
 For a small-particle validation, `field_analysis` may instead name a complete
 `trajectory_radiation` output containing `/far_field`. The report records
@@ -105,3 +123,33 @@ comparison: relativity of simultaneity prevents directly adding those lab
 particle terms to boosted-frame stored-field energy. This standalone tool
 therefore intentionally does not manufacture missing global terms from one
 downstream plane.
+
+## Detector-window convergence check
+
+The detector record must contain the complete pulse at both planes. Increasing
+the longitudinal cell count at fixed run start/stop does not lengthen this lab
+time window; it only changes the simulated box. Extend the beam start/stop
+range and inspect the first and last samples of the plane-power traces.
+
+A small `gamma=1000`, 128-macroparticle, `10^6`-electron, three-period
+`K=0.5` test with a matched `K=0` run gave:
+
+| laboratory quantity | result |
+|---|---:|
+| baseline-corrected particle loss | `5.919605 nJ` |
+| matched raw signed exit-minus-entry flux | `5.874187 nJ` |
+| raw longitudinal closure | `99.2328%` |
+| particle-minus-raw residual | `0.045418 nJ` |
+| amplitude-baseline-subtracted 0--300 eV forward energy | `5.430281 nJ` |
+| forward-band fraction of particle loss | `91.7338%` |
+| raw signed flux minus forward band | `0.443906 nJ` |
+
+The same calculation closed at only 54.57% with the shortest detector window,
+62.45% after moving the bunch start upstream, and 83.38% after extending the
+stop to 0.35 m. Doubling `Nz` without extending the run left the 62.45% result
+unchanged. This identifies time-window truncation as the dominant earlier
+deficit. The remaining 0.77% raw residual is the scale still available for
+transverse flux, field stored between the planes, tail truncation, and
+discretization; the 8.27% difference to the selected forward band additionally
+contains non-propagating/bound field, excluded spectrum or angle, and
+field-decomposition cross terms.
