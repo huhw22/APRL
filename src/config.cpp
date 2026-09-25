@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
 #include <set>
 #include <sstream>
@@ -39,6 +40,252 @@ namespace fel
       if (!value) throw configError(parent,
         std::string("missing required key '") + key + "'");
       return value;
+    }
+
+    void validateMapKeys(const YAML::Node& node,
+                         const std::string& context,
+                         std::initializer_list<const char*> allowedKeys)
+    {
+      if (!node.IsMap())
+        throw configError(node, context + " must be a map");
+
+      std::set<std::string> allowed;
+      std::ostringstream choices;
+      bool first = true;
+      for (std::initializer_list<const char*>::const_iterator key =
+             allowedKeys.begin(); key != allowedKeys.end(); ++key)
+        {
+          allowed.insert(*key);
+          if (!first) choices << ", ";
+          choices << *key;
+          first = false;
+        }
+
+      for (YAML::const_iterator entry = node.begin(); entry != node.end();
+           ++entry)
+        {
+          std::string key;
+          try { key = entry->first.as<std::string>(); }
+          catch (const YAML::Exception&) {
+            throw configError(entry->first,
+              context + " keys must be scalar strings");
+          }
+          if (allowed.find(key) == allowed.end())
+            throw configError(entry->first,
+              context + " contains unknown key '" + key +
+              "'; recognized keys are: " + choices.str());
+        }
+    }
+
+    void validateConfigurationKeys(const YAML::Node& root)
+    {
+      validateMapKeys(root, "top level", {
+        "units", "runtime", "mesh", "radiation_resolution", "boundary",
+        "initial_self_field", "beam", "sources", "detectors",
+        "particle_retirement", "stop", "trajectory", "energy_ledger"
+      });
+
+      const YAML::Node units = root["units"];
+      if (units)
+        validateMapKeys(units, "units", {"length", "time"});
+
+      const YAML::Node runtime = root["runtime"];
+      if (runtime)
+        {
+          validateMapKeys(runtime, "runtime", {
+            "mode", "stop_check_interval_steps", "resource_monitor"
+          });
+          const YAML::Node resources = runtime["resource_monitor"];
+          if (resources)
+            validateMapKeys(resources, "runtime.resource_monitor", {
+              "enabled", "progress_interval_steps", "calibration_steps",
+              "memory_safety_factor", "time_safety_factor"
+            });
+        }
+
+      const YAML::Node mesh = root["mesh"];
+      if (mesh)
+        validateMapKeys(mesh, "mesh", {
+          "field_solver", "cells", "cell_size", "center", "duration",
+          "boost_gamma", "particle_steps_per_undulator_period",
+          "maximum_particle_substeps", "lengths", "resolution"
+        });
+
+      const YAML::Node radiation = root["radiation_resolution"];
+      if (radiation)
+        validateMapKeys(radiation, "radiation_resolution", {
+          "enabled", "maximum_photon_energy_eV",
+          "warning_grid_points_per_wavelength",
+          "warning_maxwell_samples_per_cycle",
+          "warning_detector_samples_per_cycle"
+        });
+
+      const YAML::Node boundary = root["boundary"];
+      if (boundary)
+        validateMapKeys(boundary, "boundary", {
+          "type", "cells", "polynomial_order", "target_reflection",
+          "kappa_max", "alpha_fraction"
+        });
+
+      const YAML::Node initial = root["initial_self_field"];
+      if (initial)
+        validateMapKeys(initial, "initial_self_field", {
+          "enabled", "model", "relative_tolerance", "maximum_iterations"
+        });
+
+      const YAML::Node beam = root["beam"];
+      if (beam)
+        {
+          validateMapKeys(beam, "beam", {"reference", "input"});
+          const YAML::Node reference = beam["reference"];
+          if (reference)
+            validateMapKeys(reference, "beam.reference", {
+              "initial_center_z", "input_plane_z"
+            });
+          const YAML::Node input = beam["input"];
+          if (input)
+            validateMapKeys(input, "beam.input", {
+              "type", "electrons", "position_offset", "file",
+              "macroparticles", "gamma", "direction", "center",
+              "sigma_position", "sigma_proper_velocity", "random_seed"
+            });
+        }
+
+      const YAML::Node sources = root["sources"];
+      if (sources)
+        {
+          validateMapKeys(sources, "sources", {
+            "incident_waves", "magnetic_elements"
+          });
+          const YAML::Node waves = sources["incident_waves"];
+          if (waves)
+            {
+              if (!waves.IsSequence())
+                throw configError(waves,
+                  "sources.incident_waves must be a sequence");
+              for (std::size_t i = 0; i < waves.size(); ++i)
+                {
+                  std::ostringstream context;
+                  context << "sources.incident_waves[" << i << "]";
+                  validateMapKeys(waves[i], context.str(), {
+                    "profile", "position", "direction", "polarization",
+                    "wavelength", "peak_electric_field_V_per_m",
+                    "normalized_amplitude", "radius", "order", "envelope"
+                  });
+                  const YAML::Node envelope = waves[i]["envelope"];
+                  if (envelope)
+                    validateMapKeys(envelope, context.str() + ".envelope", {
+                      "type", "center_time", "duration",
+                      "carrier_phase_rad", "rising_cycles",
+                      "inverse_gaussian_sigma"
+                    });
+                }
+            }
+          const YAML::Node magnets = sources["magnetic_elements"];
+          if (magnets)
+            {
+              if (!magnets.IsSequence())
+                throw configError(magnets,
+                  "sources.magnetic_elements must be a sequence");
+              for (std::size_t i = 0; i < magnets.size(); ++i)
+                {
+                  std::ostringstream context;
+                  context << "sources.magnetic_elements[" << i << "]";
+                  validateMapKeys(magnets[i], context.str(), {
+                    "type", "entrance_z", "polarization_angle_rad",
+                    "strength_parameter", "period", "periods",
+                    "gaussian_fringe", "fringe_relative_cutoff", "length",
+                    "field_T", "characteristic"
+                  });
+                }
+            }
+        }
+
+      const YAML::Node detectors = root["detectors"];
+      if (detectors)
+        {
+          validateMapKeys(detectors, "detectors", {
+            "enabled", "directory", "field_planes", "particle_planes"
+          });
+          const YAML::Node fieldPlanes = detectors["field_planes"];
+          if (fieldPlanes)
+            {
+              if (!fieldPlanes.IsSequence())
+                throw configError(fieldPlanes,
+                  "detectors.field_planes must be a sequence");
+              for (std::size_t i = 0; i < fieldPlanes.size(); ++i)
+                {
+                  std::ostringstream context;
+                  context << "detectors.field_planes[" << i << "]";
+                  validateMapKeys(fieldPlanes[i], context.str(), {
+                    "name", "z", "rhythm", "buffer_samples", "compression",
+                    "particle_background", "retirement_frequency_protection"
+                  });
+                  const YAML::Node background =
+                    fieldPlanes[i]["particle_background"];
+                  if (background)
+                    {
+                      validateMapKeys(background,
+                        context.str() + ".particle_background", {
+                          "enabled", "buffer_records", "compression",
+                          "validation"
+                        });
+                      const YAML::Node validation = background["validation"];
+                      if (validation)
+                        validateMapKeys(validation,
+                          context.str() + ".particle_background.validation", {
+                            "enabled", "maximum_particles"
+                          });
+                    }
+                  const YAML::Node protection =
+                    fieldPlanes[i]["retirement_frequency_protection"];
+                  if (protection)
+                    validateMapKeys(protection,
+                      context.str() + ".retirement_frequency_protection", {
+                        "enabled", "minimum_photon_energy_eV", "cycles"
+                      });
+                }
+            }
+          const YAML::Node particlePlanes = detectors["particle_planes"];
+          if (particlePlanes)
+            {
+              if (!particlePlanes.IsSequence())
+                throw configError(particlePlanes,
+                  "detectors.particle_planes must be a sequence");
+              for (std::size_t i = 0; i < particlePlanes.size(); ++i)
+                {
+                  std::ostringstream context;
+                  context << "detectors.particle_planes[" << i << "]";
+                  validateMapKeys(particlePlanes[i], context.str(), {
+                    "name", "z", "buffer_records", "compression"
+                  });
+                }
+            }
+        }
+
+      const YAML::Node retirement = root["particle_retirement"];
+      if (retirement)
+        validateMapKeys(retirement, "particle_retirement", {
+          "enabled", "entrance_z", "length"
+        });
+
+      const YAML::Node stop = root["stop"];
+      if (stop)
+        validateMapKeys(stop, "stop", {"mode", "z"});
+
+      const YAML::Node trajectory = root["trajectory"];
+      if (trajectory)
+        validateMapKeys(trajectory, "trajectory", {
+          "enabled", "directory", "basename", "rhythm", "mode",
+          "buffer_records", "flush_every_samples", "compression"
+        });
+
+      const YAML::Node ledger = root["energy_ledger"];
+      if (ledger)
+        validateMapKeys(ledger, "energy_ledger", {
+          "enabled", "directory", "filename", "sample_interval_steps",
+          "buffer_records", "compression", "warning_relative_tolerance"
+        });
     }
 
     Double finiteDouble(const YAML::Node& node, const std::string& name)
@@ -406,6 +653,7 @@ namespace fel
                                error.what());
     }
     if (!root.IsMap()) throw configError(root, "top level must be a map");
+    validateConfigurationKeys(root);
 
     SimulationConfig result;
     const YAML::Node units = root["units"];
@@ -1101,19 +1349,23 @@ namespace fel
         "boost_gamma must be at least one");
     if (!(result.mesh.duration > 0.0))
       throw configError(mesh["duration"], "duration must be positive");
-    if (result.beamlineElements.empty())
-      throw configError(sources,
-        "beam placement and stopping require at least one beamline element");
-    Double lastInteraction = result.beamlineElements[0].interactionExit;
-    for (std::size_t i = 1; i < result.beamlineElements.size(); ++i)
+    if (result.stop.mode == StopMode::AfterLastElement &&
+        result.beamlineElements.empty())
+      throw configError(stop["mode"],
+        "after-last-element requires at least one enabled magnetic element "
+        "or detector plane; for element-free propagation use "
+        "reference-center-z with a finite downstream z");
+    if (result.stop.mode == StopMode::ReferenceCenterZ)
       {
-        lastInteraction = std::max(lastInteraction,
-          result.beamlineElements[i].interactionExit);
+        Double requiredBeyond = result.reference.initialCenterZ;
+        for (std::size_t i = 0; i < result.beamlineElements.size(); ++i)
+          requiredBeyond = std::max(requiredBeyond,
+            result.beamlineElements[i].interactionExit);
+        if (!(result.stop.referenceZ > requiredBeyond))
+          throw configError(stop["z"],
+            "reference-center stop z must lie downstream of the initial "
+            "beam centre and every element interaction region");
       }
-    if (result.stop.mode == StopMode::ReferenceCenterZ &&
-        !(result.stop.referenceZ > lastInteraction))
-      throw configError(stop["z"],
-        "reference-center stop z must lie beyond every element interaction region");
     if (result.particleRetirement.enabled)
       {
         Double lastMagneticExit =

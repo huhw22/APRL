@@ -43,6 +43,7 @@ namespace fel
     void initializeGeometry();
     void validateAndReportRadiationResolution() const;
     void initializeParticles();
+    void reportDurationEstimate() const;
     void initializeSources();
     void initializeParticleSelfField();
     void initializeFieldDetectorRegions();

@@ -306,6 +306,7 @@ namespace fel
       config_.boundary.type == EBBoundaryType::Cpml ?
         config_.boundary.cpml : EBCPMLParameters()));
     initializeParticles();
+    reportDurationEstimate();
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
     particleBoundary_.reset(new ParticleOpenBoundary(
@@ -1265,12 +1266,16 @@ namespace fel
 
     initializeFieldDetectorRegions();
     validateBeamlineExclusionRules();
-    const Double firstPhysicalEntrance =
-      firstMagneticPhysicalEntranceLab();
-    const Double firstInteractionEntrance =
-      firstMagneticInteractionEntranceLab();
+    const bool hasMagneticElements = !config_.magnets.empty();
+    const Double firstPhysicalEntrance = hasMagneticElements ?
+      firstMagneticPhysicalEntranceLab() :
+      std::numeric_limits<Double>::quiet_NaN();
+    const Double firstInteractionEntrance = hasMagneticElements ?
+      firstMagneticInteractionEntranceLab() :
+      std::numeric_limits<Double>::quiet_NaN();
 
     SIBunchPlacement placement;
+    placement.hasFirstInteractionEntrance = hasMagneticElements;
     placement.firstInteractionEntranceLab = firstInteractionEntrance;
     placement.referencePositionLab = config_.reference.initialCenterZ;
     /* A box-frame z cell spans gamma*dz at fixed box time in the lab.  Keep
@@ -1282,46 +1287,51 @@ namespace fel
       SIBunchPreprocessor::placeRelativeLabSnapshot(
         particles_, placement, communicator_);
 
-    const Double physicalHeadLimit = firstInteractionEntrance -
-      placement.recommendationMarginLab;
-    const Double placementScale = std::max(1.0,
-      std::max(std::abs(firstInteractionEntrance),
-               std::abs(placementReport.headAfterLab)));
-    const Double placementTolerance = 128.0 *
-      std::numeric_limits<Double>::epsilon() * placementScale;
-    if (placementReport.headAfterLab >=
-        physicalHeadLimit - placementTolerance)
+    Double physicalHeadLimit = std::numeric_limits<Double>::infinity();
+    Double placementTolerance = 0.0;
+    if (hasMagneticElements)
       {
-        const Double maximumCenter = physicalHeadLimit -
-          placementReport.relativeHeadLab;
-        std::ostringstream message;
-        message << std::setprecision(10)
-          << "The reconstructed common-time laboratory bunch does not fit "
-             "before the first magnetic interaction region: bunch_head_z="
-          << placementReport.headAfterLab
-          << " m, required_head_limit=" << physicalHeadLimit
-          << " m, magnetic_interaction_start_z="
-          << firstInteractionEntrance << " m. Set "
-             "beam.reference.initial_center_z to at most "
-          << maximumCenter << " m (" << maximumCenter /
-               config_.inputUnits.length
-          << " in the configured length unit)";
-        if (inputReport.laboratoryPlaneCoordinates)
+        physicalHeadLimit = firstInteractionEntrance -
+          placement.recommendationMarginLab;
+        const Double placementScale = std::max(1.0,
+          std::max(std::abs(firstInteractionEntrance),
+                   std::abs(placementReport.headAfterLab)));
+        placementTolerance = 128.0 *
+          std::numeric_limits<Double>::epsilon() * placementScale;
+        if (placementReport.headAfterLab >=
+            physicalHeadLimit - placementTolerance)
           {
-            const Double minimumCenter =
-              planeProjection.recommendedMinimumReferencePosition;
-            message << "; forward projection from input_plane_z requires it "
-                       "to be at least " << minimumCenter << " m ("
-                    << minimumCenter / config_.inputUnits.length << ")";
-            if (minimumCenter >= maximumCenter - placementTolerance)
-              message << ". No admissible centre interval remains: move the "
-                         "Elegant plane upstream, move/redefine the magnetic "
-                         "interaction region downstream, reduce the bunch "
-                         "longitudinal span, or refine dz to reduce the "
-                         "one-cell safety margin";
+            const Double maximumCenter = physicalHeadLimit -
+              placementReport.relativeHeadLab;
+            std::ostringstream message;
+            message << std::setprecision(10)
+              << "The reconstructed common-time laboratory bunch does not fit "
+                 "before the first magnetic interaction region: bunch_head_z="
+              << placementReport.headAfterLab
+              << " m, required_head_limit=" << physicalHeadLimit
+              << " m, magnetic_interaction_start_z="
+              << firstInteractionEntrance << " m. Set "
+                 "beam.reference.initial_center_z to at most "
+              << maximumCenter << " m (" << maximumCenter /
+                   config_.inputUnits.length
+              << " in the configured length unit)";
+            if (inputReport.laboratoryPlaneCoordinates)
+              {
+                const Double minimumCenter =
+                  planeProjection.recommendedMinimumReferencePosition;
+                message << "; forward projection from input_plane_z requires it "
+                           "to be at least " << minimumCenter << " m ("
+                        << minimumCenter / config_.inputUnits.length << ")";
+                if (minimumCenter >= maximumCenter - placementTolerance)
+                  message << ". No admissible centre interval remains: move the "
+                             "Elegant plane upstream, move/redefine the magnetic "
+                             "interaction region downstream, reduce the bunch "
+                             "longitudinal span, or refine dz to reduce the "
+                             "one-cell safety margin";
+              }
+            message << ".";
+            throw std::runtime_error(message.str());
           }
-        message << ".";
-        throw std::runtime_error(message.str());
       }
 
     /* Anchor t_box=0 to the downstream bunch-front event at the reconstructed
@@ -1516,29 +1526,32 @@ namespace fel
     Double eventHead = 0.0;
     MPI_Allreduce(&localEventHead, &eventHead, 1, MPI_DOUBLE, MPI_MAX,
                   communicator_);
-    const Double entranceTolerance = 64.0 *
-      std::numeric_limits<Double>::epsilon() *
-      std::max(1.0, std::max(std::abs(firstInteractionEntrance),
-                             std::abs(eventHead)));
-    if (eventHead >= physicalHeadLimit - entranceTolerance)
+    if (hasMagneticElements)
       {
-        const Double transformedHeadOffset = eventHead -
-          config_.reference.initialCenterZ;
-        const Double recommendedCenter = physicalHeadLimit -
-          transformedHeadOffset;
-        std::ostringstream message;
-        message << std::setprecision(10)
-          << "Head-anchored Lorentz synchronization places a particle too "
-             "close to the first magnetic interaction region: "
-             "interaction_start_z="
-          << firstInteractionEntrance
-          << " m, transformed_front_z=" << eventHead
-          << " m. Set beam.reference.initial_center_z to at most "
-          << recommendedCenter << " m (" << recommendedCenter /
-               config_.inputUnits.length
-          << " in the configured length unit). The physical first-magnet "
-          "entrance remains z=" << firstPhysicalEntrance << " m.";
-        throw std::runtime_error(message.str());
+        const Double entranceTolerance = 64.0 *
+          std::numeric_limits<Double>::epsilon() *
+          std::max(1.0, std::max(std::abs(firstInteractionEntrance),
+                                 std::abs(eventHead)));
+        if (eventHead >= physicalHeadLimit - entranceTolerance)
+          {
+            const Double transformedHeadOffset = eventHead -
+              config_.reference.initialCenterZ;
+            const Double recommendedCenter = physicalHeadLimit -
+              transformedHeadOffset;
+            std::ostringstream message;
+            message << std::setprecision(10)
+              << "Head-anchored Lorentz synchronization places a particle too "
+                 "close to the first magnetic interaction region: "
+                 "interaction_start_z="
+              << firstInteractionEntrance
+              << " m, transformed_front_z=" << eventHead
+              << " m. Set beam.reference.initial_center_z to at most "
+              << recommendedCenter << " m (" << recommendedCenter /
+                   config_.inputUnits.length
+              << " in the configured length unit). The physical first-magnet "
+              "entrance remains z=" << firstPhysicalEntrance << " m.";
+            throw std::runtime_error(message.str());
+          }
       }
     redistributeParticles();
     validateParticlesInsideGlobalBox();
@@ -1579,15 +1592,22 @@ namespace fel
           << placementReport.referencePositionLab
           << ", relative z range [m]=["
           << placementReport.relativeTailLab << ", "
-          << placementReport.relativeHeadLab
-          << "], physical first magnetic entrance [m]="
-          << firstPhysicalEntrance
-          << ", magnetic interaction start [m]="
-          << firstInteractionEntrance
-          << ", transformed interaction gap [m]="
-          << firstInteractionEntrance - eventHead
-          << ", required one-cell lab margin [m]="
-          << placement.recommendationMarginLab << ".";
+          << placementReport.relativeHeadLab << "]";
+        if (hasMagneticElements)
+          placementMessage
+            << ", physical first magnetic entrance [m]="
+            << firstPhysicalEntrance
+            << ", magnetic interaction start [m]="
+            << firstInteractionEntrance
+            << ", transformed interaction gap [m]="
+            << firstInteractionEntrance - eventHead
+            << ", required one-cell lab margin [m]="
+            << placement.recommendationMarginLab << ".";
+        else
+          placementMessage
+            << ". No magnetic element is configured; detector-only or "
+               "element-free propagation has no magnetic entrance "
+               "placement constraint.";
         logRoot(communicator_, placementMessage.str());
         std::ostringstream boostMessage;
         boostMessage << std::setprecision(10)
@@ -1617,6 +1637,127 @@ namespace fel
             boostReport.maximumRelativeGammaRoundTripError > 1.0e-13)
           logRoot(communicator_,
             "WARNING: Lorentz round-trip error is above 1e-13. Consider a less aggressive boost_gamma and verify exported gamma differences before interpreting small particle-energy losses.");
+      }
+  }
+
+  void Simulation::reportDurationEstimate() const
+  {
+    Double estimatedBoxTime = 0.0;
+    bool reachable = true;
+    const char* estimateModel = 0;
+
+    if (config_.stop.mode == StopMode::ReferenceCenterZ)
+      {
+        estimateModel = "boost-reference-worldline";
+        const Double currentZ = frame_.labZFromBoxZT(
+          referenceCenterBoxZ_, 0.0);
+        const Double distance = config_.stop.referenceZ - currentZ;
+        const Double labAdvancePerBoxSecond =
+          frame_.gammaBeta() * SI::c;
+        if (distance > 0.0)
+          {
+            reachable = labAdvancePerBoxSecond > 0.0 &&
+                        std::isfinite(labAdvancePerBoxSecond);
+            if (reachable)
+              estimatedBoxTime = distance / labAdvancePerBoxSecond;
+          }
+      }
+    else
+      {
+        estimateModel = "initial-ballistic-particles";
+        const Double interactionExit = lastBeamlineInteractionExitLab();
+        Double localMaximumTime = 0.0;
+        int localUnreachable = 0;
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            Double eventTimeLab = 0.0;
+            Double eventZLab = 0.0;
+            frame_.boxToLab(0.0, particles_[index].position[2],
+                            eventTimeLab, eventZLab);
+            const Double remaining = interactionExit - eventZLab;
+            if (remaining <= 0.0) continue;
+            const Double gammaBox =
+              BoostFrameTransform::gammaFromProperVelocity(
+                particles_[index].properVelocity);
+            const Double betaBoxZ =
+              particles_[index].properVelocity[2] / gammaBox;
+            const Double labAdvancePerBoxSecond =
+              frame_.gamma() * SI::c * (frame_.beta() + betaBoxZ);
+            if (!(labAdvancePerBoxSecond > 0.0) ||
+                !std::isfinite(labAdvancePerBoxSecond))
+              localUnreachable = 1;
+            else
+              localMaximumTime = std::max(localMaximumTime,
+                remaining / labAdvancePerBoxSecond);
+          }
+        int globalUnreachable = 0;
+        MPI_Allreduce(&localUnreachable, &globalUnreachable, 1, MPI_INT,
+                      MPI_MAX, communicator_);
+        MPI_Allreduce(&localMaximumTime, &estimatedBoxTime, 1, MPI_DOUBLE,
+                      MPI_MAX, communicator_);
+        reachable = globalUnreachable == 0;
+      }
+
+    if (!reachable || !std::isfinite(estimatedBoxTime))
+      {
+        if (rank_ == 0)
+          {
+            std::ostringstream warning;
+            warning << "[duration-estimate] stop_mode="
+                    << (config_.stop.mode == StopMode::ReferenceCenterZ ?
+                        "reference-center-z" : "after-last-element")
+                    << " model=" << estimateModel
+                    << " status=unreachable-from-initial-kinematics "
+                       "configured_box_s=" << totalTimeBoxSI_
+                    << ". The configured mesh.duration remains the hard "
+                       "runtime guard; choose a moving boost reference or "
+                       "verify the initial longitudinal particle velocities.";
+            logRoot(communicator_, warning.str());
+          }
+        return;
+      }
+
+    const Double estimatedStepsReal = std::max(1.0,
+      std::ceil(estimatedBoxTime / globalGeometry_.dt));
+    const Double suggestedDuration =
+      estimatedStepsReal * globalGeometry_.dt;
+    if (rank_ != 0) return;
+
+    std::ostringstream message;
+    message << std::setprecision(10)
+            << "[duration-estimate] stop_mode="
+            << (config_.stop.mode == StopMode::ReferenceCenterZ ?
+                "reference-center-z" : "after-last-element")
+            << " model=" << estimateModel
+            << " estimated_box_s=" << estimatedBoxTime
+            << " estimated_steps=" << estimatedStepsReal
+            << " minimum_step_rounded_box_s=" << suggestedDuration
+            << " configured_box_s=" << totalTimeBoxSI_
+            << " headroom="
+            << (suggestedDuration > 0.0 ?
+                totalTimeBoxSI_ / suggestedDuration : 0.0) << ".";
+    logRoot(communicator_, message.str());
+
+    const Double comparisonTolerance = 64.0 *
+      std::numeric_limits<Double>::epsilon() *
+      std::max(totalTimeBoxSI_, suggestedDuration);
+    if (totalTimeBoxSI_ + comparisonTolerance < suggestedDuration)
+      {
+        std::ostringstream warning;
+        warning << std::setprecision(10)
+                << "WARNING: mesh.duration is shorter than the startup "
+                   "stop-time estimate. Set mesh.duration to at least "
+                << suggestedDuration / config_.inputUnits.time
+                << " in the configured time unit ("
+                << suggestedDuration << " s), then add operational margin. ";
+        if (config_.stop.mode == StopMode::AfterLastElement)
+          warning << "This estimate propagates the initial particle states "
+                     "ballistically; magnetic dynamics can change the actual "
+                     "stop time.";
+        else
+          warning << "This estimate follows the same inertial boost-reference "
+                     "worldline used by the stop predicate.";
+        logRoot(communicator_, warning.str());
       }
   }
 

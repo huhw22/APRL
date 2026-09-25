@@ -62,6 +62,11 @@ violate the selected model or input contract:
   Nyquist sampling by the z grid, Maxwell/current step and every field plane;
 - detector, retirement, magnetic interaction, stop and frequency-protection
   placement rules documented by the input-card specification.
+- a strict YAML key schema at every mapping level, including disabled optional
+  blocks, so misspelled settings cannot silently fall back to defaults;
+- a finite stop target: element-free `after-last-element` cards are rejected,
+  while detector-only and element-free `reference-center-z` propagation remain
+  supported.
 
 The sampling error reports a maximum `dt` and, for Cowan-z, maximum `dz` in SI
 and card units. Geometry errors similarly report a corrected grid, initial
@@ -81,6 +86,9 @@ physics target:
 - experimental retirement use.
 - an enabled runtime energy ledger whose final residual relative to initial
   boosted kinetic-plus-field energy exceeds its configured warning tolerance.
+- `mesh.duration` shorter than the step-rounded startup estimate. The estimate
+  is exact for the inertial reference-centre stop and ballistic-only for the
+  initial particles in `after-last-element` mode.
 
 Detector sample cadence is stored exactly and band tools reject requests above
 their Nyquist limit. The simulator cannot itself prove that an unspecified

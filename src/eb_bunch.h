@@ -12,6 +12,7 @@ namespace fel
 {
   struct SIBunchPlacement
   {
+    bool hasFirstInteractionEntrance;
     Double firstInteractionEntranceLab; /* m */
     Double referencePositionLab;        /* m */
     Double recommendationMarginLab;    /* m */
@@ -86,8 +87,9 @@ namespace fel
         MPI_Comm communicator);
 
     /* Input z coordinates are relative to a user-defined laboratory bunch
-     * centre. The physical beamline origin remains independent of the finite
-     * interaction entrance created by an element fringe. */
+     * centre. The optional first-interaction coordinate is a magnetic-device
+     * placement constraint; detector-only and element-free propagation do not
+     * invent a magnetic entrance. */
     static SIBunchPlacementReport placeRelativeLabSnapshot(
         std::vector<RelativisticParticleSI>& particles,
         const SIBunchPlacement& placement,

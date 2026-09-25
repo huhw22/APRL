@@ -1,8 +1,11 @@
 # YAML input-card specification
 
-The simulator accepts one ordinary YAML document. Unknown physical defaults
-are deliberately avoided: required quantities are reported with their YAML
-line when missing or invalid.
+The simulator accepts one ordinary YAML document. Every mapping is checked
+against the documented schema before physical parsing: an unknown key is a
+hard error that reports its YAML line, mapping path, and the recognized keys.
+This catches misspellings even inside a disabled optional block. Unknown
+physical defaults are deliberately avoided; required quantities are likewise
+reported with their YAML line when missing or invalid.
 
 ## Units
 
@@ -68,7 +71,17 @@ integer quotient/remainder offsets; ranks may own counts differing by one, but
 no floating-point division determines a slab boundary. Startup prints the
 counts, cell sizes, derived extents and per-rank z-count range.
 
-`duration` is boosted-frame time. `particle_steps_per_undulator_period` is the
+`duration` is boosted-frame time and remains a hard upper guard, not a requested
+physical propagation distance. After particles are transformed, startup logs a
+`[duration-estimate]` line. For `reference-center-z` it uses the exact inertial
+boost-reference worldline used by the stop predicate. For
+`after-last-element` it extrapolates every initial particle ballistically to the
+last interaction exit and takes the slowest crossing. The latter is an estimate
+because magnetic forces can alter the orbit. If the step-rounded estimate
+exceeds the configured duration, startup prints a value in the YAML time unit;
+the run is not enlarged automatically.
+
+`particle_steps_per_undulator_period` is the
 minimum requested Boris sampling of the shortest configured undulator. After
 the real particles are read and boosted, the program derives the largest
 laboratory z advance made by any particle in one Maxwell step and chooses the
@@ -333,8 +346,11 @@ Envelope types are `neumann`, `gaussian`, `secant`, `flat-top`, and
 available where relevant.
 
 Magnetic devices remain prescribed laboratory-frame fields, transformed only
-at particle events; they are not duplicated on the Maxwell grid. At least one
-element is required because beam placement is defined from the first entrance.
+at particle events; they are not duplicated on the Maxwell grid. They are
+optional. With no magnetic device, initialization keeps the same user-defined
+beam-centre placement and Lorentz synchronization but omits only the
+first-magnetic-interaction clearance test. This supports detector-only and
+element-free free-propagation cards without inventing a dummy magnet.
 
 ```yaml
   magnetic_elements:
@@ -349,9 +365,10 @@ element is required because beam placement is defined from the first entrance.
       fringe_relative_cutoff: 1.0e-9
 ```
 
-`uniform-dipole` instead uses `length` and `field_T`. The first entrance is the
-minimum physical `entrance_z` across all elements, independent of YAML
-ordering, and must be zero.
+`uniform-dipole` instead uses `length` and `field_T`. When magnets exist, the
+first entrance is the minimum physical `entrance_z` across them, independent of
+YAML ordering. It shares the laboratory coordinate system with
+`beam.reference.initial_center_z`; it is not forced to zero.
 
 A planar undulator keeps the legacy divergence-compatible analytical end-field
 idea, but fixes its ambiguous infinite support. The Gaussian is multiplied by
@@ -476,6 +493,13 @@ stop:
   mode: after-last-element
 ```
 
+Here an element may be a magnetic device, a field plane, or a particle plane.
+A detector can therefore be the first and only element in a pure-drift run.
+If there are no enabled elements at all, `after-last-element` is rejected while
+loading the card because it has no finite physical target; use
+`reference-center-z` instead. This prevents an element-free job from merely
+running until `mesh.duration` and failing late.
+
 With CPML enabled, its inner surface is the physical particle boundary. A
 particle trajectory and detector participation end exactly at the first CPML
 entrance. The rest of that step continues as an output-free ballistic carrier
@@ -503,14 +527,16 @@ stop:
 ```
 
 The reference centre starts at `beam.reference.initial_center_z` and follows
-the boost-frame origin worldline. The target must lie strictly beyond every
-current element interaction region, allowing deliberate observation after the
-last device.
+the boost-frame origin worldline. The target must lie strictly downstream of
+that initial centre and every current element interaction region, allowing
+deliberate observation after the last device or a completely element-free
+free-propagation run.
 
 Stopping operates on generic beamline-element extents. Magnetic devices and
 both laboratory detector-plane types participate in the same first/last
 boundary logic. The stop boundary of a field detector is its sampling plane,
-not the entrance of its left diagnostic region.
+not the entrance of its left diagnostic region. Particle planes remain exempt
+from element-overlap rules, so they may also precede every magnetic device.
 
 ## Experimental particle retirement
 

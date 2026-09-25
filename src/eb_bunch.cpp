@@ -10,7 +10,8 @@
 namespace fel
 {
   SIBunchPlacement::SIBunchPlacement()
-    : firstInteractionEntranceLab(std::numeric_limits<Double>::quiet_NaN()),
+    : hasFirstInteractionEntrance(false),
+      firstInteractionEntranceLab(std::numeric_limits<Double>::quiet_NaN()),
       referencePositionLab(std::numeric_limits<Double>::quiet_NaN()),
       recommendationMarginLab(0.0)
   {}
@@ -289,7 +290,8 @@ namespace fel
   {
     if (communicator == MPI_COMM_NULL)
       throw std::invalid_argument("Bunch placement communicator is null");
-    if (!std::isfinite(placement.firstInteractionEntranceLab) ||
+    if ((placement.hasFirstInteractionEntrance &&
+         !std::isfinite(placement.firstInteractionEntranceLab)) ||
         !std::isfinite(placement.referencePositionLab) ||
         !std::isfinite(placement.recommendationMarginLab) ||
         placement.recommendationMarginLab < 0.0)
@@ -326,11 +328,21 @@ namespace fel
     report.relativeHeadLab = globalRelativeHead;
     report.referencePositionLab = placement.referencePositionLab;
     report.headAfterLab = report.referencePositionLab + globalRelativeHead;
-    report.actualHeadDistance = placement.firstInteractionEntranceLab -
-                                report.headAfterLab;
-    report.recommendedMaximumReferencePosition =
-      placement.firstInteractionEntranceLab - globalRelativeHead -
-      placement.recommendationMarginLab;
+    if (placement.hasFirstInteractionEntrance)
+      {
+        report.actualHeadDistance = placement.firstInteractionEntranceLab -
+                                    report.headAfterLab;
+        report.recommendedMaximumReferencePosition =
+          placement.firstInteractionEntranceLab - globalRelativeHead -
+          placement.recommendationMarginLab;
+      }
+    else
+      {
+        report.actualHeadDistance =
+          std::numeric_limits<Double>::infinity();
+        report.recommendedMaximumReferencePosition =
+          std::numeric_limits<Double>::infinity();
+      }
 
     for (std::size_t i = 0; i < particles.size(); ++i)
       particles[i].position[2] += report.referencePositionLab;

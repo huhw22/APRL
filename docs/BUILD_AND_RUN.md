@@ -270,10 +270,11 @@ bunch.
 
 The current solver stops with an explicit error if its boosted initial bunch
 does not fit the longitudinal box. For HDF5-v3/v4 input it also checks that every
-record is projected forward from the configured Elegant plane and that the
-reconstructed bunch fits between that plane and the first magnetic interaction
-region. The head-anchored Lorentz synchronization span is reported separately
-and is not treated as a physical entrance-drift requirement.
+record is projected forward from the configured Elegant plane. When magnetic
+devices exist, the reconstructed bunch must additionally fit before the first
+magnetic interaction region; detector-only and element-free cards do not invent
+that constraint. The head-anchored Lorentz synchronization span is reported
+separately and is not treated as a physical entrance-drift requirement.
 
 The examples select `mesh.field_solver: cowan-z`. This requires `dx >= dz`
 and `dy >= dz`; an invalid card exits before field allocation and particle
