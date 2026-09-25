@@ -379,6 +379,58 @@ namespace
     return EXIT_SUCCESS;
   }
 
+  std::string readGroupStringAttribute(const std::string& filename,
+                                       const char* groupName,
+                                       const char* attributeName)
+  {
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    requireHandle(file, "Cannot open HDF5 output: " + filename);
+    hid_t group = H5Gopen2(file, groupName, H5P_DEFAULT);
+    if (group < 0)
+      {
+        H5Fclose(file);
+        throw std::runtime_error("Missing expected group " +
+          std::string(groupName) + " in " + filename);
+      }
+    try
+      {
+        const std::string value = readStringAttribute(group, attributeName);
+        H5Gclose(group);
+        H5Fclose(file);
+        return value;
+      }
+    catch (...)
+      {
+        H5Gclose(group);
+        H5Fclose(file);
+        throw;
+      }
+  }
+
+  int checkFieldRoutes(const std::string& rawAnalysis,
+                       const std::string& reconstruction,
+                       const std::string& reconstructedAnalysis)
+  {
+    requireCompleteGroup(rawAnalysis, "/field_plane_analysis",
+      "mean_energy_spectrum_J_per_eV");
+    requireCompleteGroup(reconstruction, "/reconstructed_field", "time_s");
+    requireCompleteGroup(reconstructedAnalysis, "/field_plane_analysis",
+      "mean_energy_spectrum_J_per_eV");
+    require(readGroupStringAttribute(rawAnalysis, "/field_plane_analysis",
+      "input_field_kind") == "field_plane",
+      "Direct field-analysis route did not consume a raw field plane");
+    require(readGroupStringAttribute(reconstruction, "/reconstructed_field",
+      "particle_input_role") == "ballistic_reference",
+      "Free-drift reconstruction did not consume a ballistic reference");
+    require(readGroupStringAttribute(reconstructedAnalysis,
+      "/field_plane_analysis", "input_field_kind") ==
+      "reconstructed_field",
+      "Reconstructed field-analysis route did not consume reconstructed data");
+    std::cout << "field routes: raw field and ballistic reconstruction are "
+                 "both analyzable\n";
+    return EXIT_SUCCESS;
+  }
+
   int compareParticles(const std::string& leftFilename,
                        const std::string& rightFilename,
                        std::size_t expectedRecords)
@@ -526,7 +578,7 @@ int main(int argc, char** argv)
   try
     {
       require(argc >= 2,
-        "usage: fel_output_checks <detector|compare-particles|ledger|postprocess> ...");
+        "usage: fel_output_checks <detector|compare-particles|ledger|postprocess|field-routes> ...");
       const std::string command(argv[1]);
       if (command == "detector")
         {
@@ -553,6 +605,12 @@ int main(int argc, char** argv)
           require(argc == 7,
             "postprocess needs RECONSTRUCTION ANALYSIS TRAJECTORY POWER CLOSURE");
           return checkPostprocess(argv[2], argv[3], argv[4], argv[5], argv[6]);
+        }
+      if (command == "field-routes")
+        {
+          require(argc == 5,
+            "field-routes needs RAW_ANALYSIS RECONSTRUCTION RECONSTRUCTED_ANALYSIS");
+          return checkFieldRoutes(argv[2], argv[3], argv[4]);
         }
       throw std::runtime_error("unknown output-check command: " + command);
     }

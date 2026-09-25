@@ -1,0 +1,42 @@
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output: {overwrite: true, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  cells: [8, 8, 144]
+  cell_size: [0.1, 0.1, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 30.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 1
+boundary: {type: pec}
+initial_self_field: {enabled: false}
+beam:
+  reference: {initial_center_z: -3.1}
+  input:
+    type: generated-gaussian
+    electrons: 4.0
+    macroparticles: 4
+    gamma: 2.5
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.0]
+    sigma_position: [0.01, 0.01, 0.005]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 53
+sources: {incident_waves: [], magnetic_elements: []}
+detectors:
+  enabled: true
+  directory: detectors
+  field_planes:
+    - name: ballistic-field
+      z: 0.0
+      rhythm: 0.2
+      buffer_samples: 4
+      compression: 0
+      particle_background:
+        enabled: true
+        buffer_records: 8
+        compression: 0
+        validation: {enabled: false, maximum_particles: 16}
+stop: {mode: after-last-element}
+trajectory: {enabled: false}

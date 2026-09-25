@@ -23,7 +23,8 @@ endforeach()
 file(MAKE_DIRECTORY
   "${FEL_VERIFY_WORK}/output-safety"
   "${FEL_VERIFY_WORK}/postprocess/signal"
-  "${FEL_VERIFY_WORK}/postprocess/baseline")
+  "${FEL_VERIFY_WORK}/postprocess/baseline"
+  "${FEL_VERIFY_WORK}/postprocess/ballistic")
 
 foreach(card reconstruction field-analysis trajectory power closure)
   configure_file(
@@ -33,6 +34,14 @@ endforeach()
 configure_file(
   "${FEL_VERIFY_CARDS}/postprocess-reconstruction-protected.yaml.in"
   "${CMAKE_CURRENT_BINARY_DIR}/postprocess-reconstruction-protected.yaml"
+  @ONLY)
+configure_file(
+  "${FEL_VERIFY_CARDS}/postprocess-ballistic-reconstruction.yaml.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/postprocess-ballistic-reconstruction.yaml"
+  @ONLY)
+configure_file(
+  "${FEL_VERIFY_CARDS}/postprocess-ballistic-analysis.yaml.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/postprocess-ballistic-analysis.yaml"
   @ONLY)
 
 function(fel_required_test name)
@@ -185,6 +194,32 @@ if(FEL_BUILD_POSTPROCESSORS)
     "${CMAKE_CURRENT_BINARY_DIR}/postprocess-field-analysis.yaml")
   set_tests_properties(required.postprocess.field-analysis PROPERTIES
     DEPENDS "required.postprocess.signal-run;required.postprocess.baseline-run")
+
+  fel_required_test(required.postprocess.ballistic-run
+    $<TARGET_FILE:simulator>
+    "${FEL_VERIFY_CARDS}/postprocess-ballistic-run.yaml")
+  set_tests_properties(required.postprocess.ballistic-run PROPERTIES
+    WORKING_DIRECTORY "${FEL_VERIFY_WORK}/postprocess/ballistic")
+
+  fel_required_test(required.postprocess.ballistic-reconstruction
+    $<TARGET_FILE:field_reconstruction>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-ballistic-reconstruction.yaml")
+  set_tests_properties(required.postprocess.ballistic-reconstruction PROPERTIES
+    DEPENDS required.postprocess.ballistic-run)
+
+  fel_required_test(required.postprocess.ballistic-field-analysis
+    $<TARGET_FILE:field_plane_analysis>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-ballistic-analysis.yaml")
+  set_tests_properties(required.postprocess.ballistic-field-analysis PROPERTIES
+    DEPENDS required.postprocess.ballistic-reconstruction)
+
+  fel_required_test(required.postprocess.field-routes-check
+    $<TARGET_FILE:fel_output_checks> field-routes
+    "${FEL_VERIFY_WORK}/postprocess/field-analysis.h5"
+    "${FEL_VERIFY_WORK}/postprocess/ballistic-reconstructed.h5"
+    "${FEL_VERIFY_WORK}/postprocess/ballistic-field-analysis.h5")
+  set_tests_properties(required.postprocess.field-routes-check PROPERTIES
+    DEPENDS "required.postprocess.field-analysis;required.postprocess.ballistic-field-analysis")
 
   fel_required_test(required.postprocess.trajectory-radiation
     $<TARGET_FILE:trajectory_radiation>

@@ -1,0 +1,16 @@
+input:
+  field_file: "@FEL_VERIFY_WORK@/postprocess/ballistic/detectors/ballistic-field.h5"
+  particle_file: "@FEL_VERIFY_WORK@/postprocess/ballistic/detectors/ballistic-field-ballistic-reference.h5"
+  require_complete: true
+  particle_read_chunk: 16
+model:
+  fft_threads: 1
+  padding_factor: [1, 1, 1]
+  transverse_smoothing_m: 0.0
+  maximum_relative_gamma_spread: 0.1
+  maximum_rms_transverse_beta: 0.1
+  maximum_outside_charge_fraction: 1.0
+output:
+  file: "@FEL_VERIFY_WORK@/postprocess/ballistic-reconstructed.h5"
+  compression: 0
+  overwrite: true

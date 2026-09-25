@@ -1,0 +1,18 @@
+input:
+  field_file: "@FEL_VERIFY_WORK@/postprocess/ballistic-reconstructed.h5"
+  require_complete: true
+analysis:
+  photon_energy_band_eV: [0.1, 5.0]
+  transverse_window: none
+  angular_zero_padding: [1, 1]
+  time_windows: {enabled: false}
+calculation:
+  frequency_block: 2
+  spatial_batch_points: 8
+  fft_threads: 1
+  maximum_working_mib: 128
+  maximum_output_gib: 1.0
+output:
+  file: "@FEL_VERIFY_WORK@/postprocess/ballistic-field-analysis.h5"
+  compression: 0
+  overwrite: true
