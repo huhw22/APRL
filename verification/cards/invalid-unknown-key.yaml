@@ -1,0 +1,28 @@
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+mesh:
+  field_solver: cowan-z
+  cells: [8, 8, 32]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duraton: 2.0
+  duration: 2.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 1
+boundary: {type: pec}
+initial_self_field: {enabled: false}
+beam:
+  reference: {initial_center_z: -0.5}
+  input:
+    type: generated-gaussian
+    electrons: 1.0
+    macroparticles: 1
+    gamma: 4.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.0]
+    sigma_position: [0.0, 0.0, 0.0]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 14
+sources: {incident_waves: [], magnetic_elements: []}
+stop: {mode: reference-center-z, z: 0.5}
+trajectory: {enabled: false}

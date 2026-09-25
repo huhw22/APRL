@@ -1,0 +1,54 @@
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+mesh:
+  field_solver: cowan-z
+  cells: [20, 20, 100]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 20.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 4
+boundary:
+  type: cpml
+  cells: [4, 4, 8]
+  polynomial_order: 3.0
+  target_reflection: 1.0e-8
+  kappa_max: 8.0
+  alpha_fraction: 0.0
+initial_self_field:
+  enabled: true
+  model: relativistic-poisson
+  relative_tolerance: 1.0e-9
+  maximum_iterations: 5000
+beam:
+  reference: {initial_center_z: -1.0}
+  input:
+    type: generated-gaussian
+    electrons: 8.0
+    macroparticles: 8
+    gamma: 4.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.0]
+    sigma_position: [0.05, 0.05, 0.02]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 17
+sources:
+  incident_waves: []
+  magnetic_elements:
+    - type: planar-undulator
+      strength_parameter: 0.0
+      period: 1.0
+      periods: 1
+      entrance_z: 0.0
+      polarization_angle_rad: 0.0
+      gaussian_fringe: false
+stop: {mode: reference-center-z, z: 2.0}
+trajectory: {enabled: false}
+energy_ledger:
+  enabled: true
+  directory: ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 2
+  buffer_records: 16
+  compression: 0
+  warning_relative_tolerance: 0.05

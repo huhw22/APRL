@@ -4,6 +4,8 @@ cmake_minimum_required(VERSION 3.16)
 # left undecided; the executable name "simulator" is also temporary.
 project(unnamed_fel_program LANGUAGES CXX)
 
+include(CTest)
+
 find_package(MPI REQUIRED COMPONENTS CXX)
 find_package(HDF5 REQUIRED COMPONENTS C)
 find_package(yaml-cpp REQUIRED)
@@ -171,4 +173,8 @@ install(TARGETS simulator particle_text_to_hdf5 undulator_resonance
   RUNTIME DESTINATION bin)
 if(HAVE_ELEGANT_SDDS_CONVERTER)
   install(TARGETS elegant_sdds_to_hdf5 RUNTIME DESTINATION bin)
+endif()
+
+if(BUILD_TESTING)
+  add_subdirectory(verification)
 endif()

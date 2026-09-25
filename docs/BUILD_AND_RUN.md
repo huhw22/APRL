@@ -26,6 +26,17 @@ This produces `build/simulator`, `build/particle_text_to_hdf5`,
 `build/undulator_resonance`, `build/energy_ledger_report`, and
 `build/lab_frame_energy_estimate`.
 
+Before a production run, execute the lightweight required regression suite:
+
+```bash
+cmake --build build --target verify_required
+```
+
+It covers startup plus the Lorentz/Elegant, Boris, charge-continuity, Cowan,
+CPML, MPI, detector/stop, HDF5-compatibility and K=0 ledger paths. Optional
+non-gating physical energy-budget examples are kept separate. See
+[TESTING.md](TESTING.md) for the test matrix and interpretation.
+
 The SDDS converter is intentionally linked to the official implementation,
 not a partial binary parser. If SDDS and Elegant were built in the recommended
 sibling directory layout it is found automatically. Otherwise configure with:

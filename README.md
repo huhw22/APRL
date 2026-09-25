@@ -152,6 +152,7 @@ or particle-boundary I/O.
 ## Documentation
 
 - [Build, conversion, and execution](docs/BUILD_AND_RUN.md)
+- [Layered testing and numerical-analysis workflow](docs/TESTING.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
 - [Cowan-z kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
 - [Gauss-consistent initial particle self-field](docs/INITIAL_SELF_FIELD.md)

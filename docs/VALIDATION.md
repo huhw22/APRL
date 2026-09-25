@@ -3,6 +3,10 @@
 This page records what has actually been tested. It distinguishes numerical
 convergence from comparison with a simplified analytical model.
 
+The repeatable lightweight pre-run gate is now registered with CTest; see
+[TESTING.md](TESTING.md). The historical studies below remain numerical
+evidence and are not silently converted into universal pass/fail tolerances.
+
 ## Two-plane orbit validation
 
 An eight-macroparticle, ten-period, `gamma=2`, `K=0.1` regression run was
