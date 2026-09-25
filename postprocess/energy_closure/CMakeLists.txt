@@ -3,8 +3,9 @@ cmake_minimum_required(VERSION 3.16)
 project(energy_closure LANGUAGES CXX)
 
 find_package(MPI REQUIRED COMPONENTS CXX)
-find_package(HDF5 REQUIRED COMPONENTS C)
-find_package(yaml-cpp REQUIRED)
+set(HDF5_PREFER_PARALLEL TRUE)
+find_package(HDF5 1.10 REQUIRED COMPONENTS C)
+find_package(yaml-cpp 0.6 REQUIRED)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

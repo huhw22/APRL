@@ -32,6 +32,9 @@ tools/
 scripts/
 benchmarks/
 scratch/
+dependency-report-*.log
+dependency-install-*.log
+build-install.dependency-report.log
 
 # Editor and operating-system files
 *~

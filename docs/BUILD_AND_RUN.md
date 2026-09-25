@@ -5,13 +5,17 @@
 - CMake 3.16 or newer;
 - a C++11 compiler;
 - MPI;
-- HDF5 development libraries, with parallel HDF5 required for multi-rank
+- HDF5 1.10 or newer development libraries, with parallel HDF5 required for multi-rank
   particle input;
-- yaml-cpp development libraries;
+- yaml-cpp 0.6 or newer development libraries;
 - the official SDDS C library/toolkit when building the direct Elegant SDDS
   converter;
 - FFTW3, including its threads library, for field reconstruction and
   field-plane spectrum/coherence analysis.
+
+Use the compiled dependency probe before building on a new machine or after
+changing compiler/MPI modules. The complete installation, offline-cluster and
+uninstall procedures are in [INSTALLATION.md](INSTALLATION.md).
 
 ## Build
 
@@ -20,6 +24,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++
 cmake --build build -j
 ```
+
+The main build now prefers and, by default, requires parallel HDF5. A strictly
+single-rank local build may opt out with
+`-DFEL_REQUIRE_PARALLEL_HDF5=OFF`; that binary cannot read particle HDF5 input
+with multiple MPI ranks.
 
 This produces `build/simulator`, `build/particle_text_to_hdf5`,
 `build/elegant_sdds_to_hdf5` when SDDS is found,

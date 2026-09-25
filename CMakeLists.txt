@@ -6,13 +6,32 @@ project(unnamed_fel_program LANGUAGES CXX)
 
 include(CTest)
 
+option(FEL_REQUIRE_PARALLEL_HDF5
+  "Reject serial HDF5; required for multi-rank particle input" ON)
+
 find_package(MPI REQUIRED COMPONENTS CXX)
-find_package(HDF5 REQUIRED COMPONENTS C)
-find_package(yaml-cpp REQUIRED)
+set(HDF5_PREFER_PARALLEL TRUE)
+find_package(HDF5 1.10 REQUIRED COMPONENTS C)
+find_package(yaml-cpp 0.6 REQUIRED)
 find_package(Threads REQUIRED)
 find_package(ZLIB QUIET)
 find_package(LibLZMA QUIET)
 find_package(GSL QUIET)
+
+if(FEL_REQUIRE_PARALLEL_HDF5 AND NOT HDF5_IS_PARALLEL)
+  message(FATAL_ERROR
+    "A serial HDF5 installation was selected. Multi-rank particle input "
+    "requires parallel HDF5 built against the same MPI family used here. "
+    "Load the matching MPI/HDF5 modules or set HDF5_ROOT explicitly. "
+    "Use -DFEL_REQUIRE_PARALLEL_HDF5=OFF only for single-rank local work.")
+elseif(NOT HDF5_IS_PARALLEL)
+  message(WARNING
+    "Serial HDF5 accepted for a single-rank/local build; multi-rank HDF5 "
+    "particle input will fail at runtime.")
+endif()
+
+message(STATUS "Selected MPI C++ compiler: ${MPI_CXX_COMPILER}")
+message(STATUS "Selected HDF5 ${HDF5_VERSION}; parallel=${HDF5_IS_PARALLEL}")
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -174,6 +193,13 @@ install(TARGETS simulator particle_text_to_hdf5 undulator_resonance
 if(HAVE_ELEGANT_SDDS_CONVERTER)
   install(TARGETS elegant_sdds_to_hdf5 RUNTIME DESTINATION bin)
 endif()
+
+install(FILES README.md DESTINATION share/unnamed_fel_program)
+install(DIRECTORY docs config examples
+  DESTINATION share/unnamed_fel_program)
+install(DIRECTORY postprocess/
+  DESTINATION share/unnamed_fel_program/postprocess
+  FILES_MATCHING PATTERN "example.yaml")
 
 if(BUILD_TESTING)
   add_subdirectory(verification)
