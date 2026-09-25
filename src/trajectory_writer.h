@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "hdf5.h"
+#include "run_metadata.h"
 
 namespace fel
 {
@@ -56,7 +57,9 @@ namespace fel
               int mpiRank, int mpiSize,
               std::size_t bufferRecords = 16384,
               unsigned int compressionLevel = 0,
-              bool durableProgress = true);
+              bool durableProgress = true,
+              bool overwrite = false,
+              const RunMetadata* metadata = NULL);
     void append(const TrajectoryRecord& record);
     void flush();
 

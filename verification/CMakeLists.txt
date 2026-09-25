@@ -20,6 +20,20 @@ foreach(directory
     physics-k0 physics-signal hdf5)
   file(MAKE_DIRECTORY "${FEL_VERIFY_WORK}/${directory}")
 endforeach()
+file(MAKE_DIRECTORY
+  "${FEL_VERIFY_WORK}/output-safety"
+  "${FEL_VERIFY_WORK}/postprocess/signal"
+  "${FEL_VERIFY_WORK}/postprocess/baseline")
+
+foreach(card reconstruction field-analysis trajectory power closure)
+  configure_file(
+    "${FEL_VERIFY_CARDS}/postprocess-${card}.yaml.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-${card}.yaml" @ONLY)
+endforeach()
+configure_file(
+  "${FEL_VERIFY_CARDS}/postprocess-reconstruction-protected.yaml.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/postprocess-reconstruction-protected.yaml"
+  @ONLY)
 
 function(fel_required_test name)
   add_test(NAME ${name} COMMAND ${ARGN})
@@ -69,7 +83,7 @@ fel_required_test(required.detector-stop.check
   $<TARGET_FILE:fel_output_checks> detector
   "${FEL_VERIFY_WORK}/detector/detectors/field.h5"
   "${FEL_VERIFY_WORK}/detector/detectors/particles.h5"
-  4 2.0e-16)
+  4 2.0e-16 "${FEL_VERIFY_WORK}/detector/run-manifest.yaml")
 set_tests_properties(required.detector-stop.check PROPERTIES
   DEPENDS required.detector-stop.run)
 
@@ -83,6 +97,23 @@ fel_required_test(required.yaml.unknown-key
   $<TARGET_FILE:simulator> "${FEL_VERIFY_CARDS}/invalid-unknown-key.yaml")
 set_tests_properties(required.yaml.unknown-key PROPERTIES
   WORKING_DIRECTORY "${FEL_VERIFY_WORK}/invalid-key"
+  WILL_FAIL TRUE)
+
+fel_required_test(required.output-safety.cleanup
+  ${CMAKE_COMMAND} -E rm -f
+  "${FEL_VERIFY_WORK}/output-safety/protected-manifest.yaml")
+
+fel_required_test(required.output-safety.first-run
+  $<TARGET_FILE:simulator> "${FEL_VERIFY_CARDS}/output-safety.yaml")
+set_tests_properties(required.output-safety.first-run PROPERTIES
+  WORKING_DIRECTORY "${FEL_VERIFY_WORK}/output-safety"
+  DEPENDS required.output-safety.cleanup)
+
+fel_required_test(required.output-safety.refuses-overwrite
+  $<TARGET_FILE:simulator> "${FEL_VERIFY_CARDS}/output-safety.yaml")
+set_tests_properties(required.output-safety.refuses-overwrite PROPERTIES
+  WORKING_DIRECTORY "${FEL_VERIFY_WORK}/output-safety"
+  DEPENDS required.output-safety.first-run
   WILL_FAIL TRUE)
 
 fel_required_test(required.mpi.one-rank
@@ -116,6 +147,73 @@ fel_required_test(required.energy-ledger-k0.check
   "${FEL_VERIFY_WORK}/ledger/ledger/energy-ledger.h5")
 set_tests_properties(required.energy-ledger-k0.check PROPERTIES
   DEPENDS required.energy-ledger-k0.run)
+
+if(FEL_BUILD_POSTPROCESSORS)
+  foreach(tool trajectory_radiation field_reconstruction
+      field_plane_analysis field_power_compare energy_closure)
+    fel_required_test(required.yaml.unknown-key.${tool}
+      $<TARGET_FILE:${tool}> "${FEL_VERIFY_CARDS}/postprocess-invalid.yaml")
+    set_tests_properties(required.yaml.unknown-key.${tool} PROPERTIES
+      WILL_FAIL TRUE)
+  endforeach()
+
+  fel_required_test(required.postprocess.signal-run
+    $<TARGET_FILE:simulator> "${FEL_VERIFY_CARDS}/postprocess-run.yaml")
+  set_tests_properties(required.postprocess.signal-run PROPERTIES
+    WORKING_DIRECTORY "${FEL_VERIFY_WORK}/postprocess/signal")
+
+  fel_required_test(required.postprocess.baseline-run
+    $<TARGET_FILE:simulator> "${FEL_VERIFY_CARDS}/postprocess-run.yaml")
+  set_tests_properties(required.postprocess.baseline-run PROPERTIES
+    WORKING_DIRECTORY "${FEL_VERIFY_WORK}/postprocess/baseline")
+
+  fel_required_test(required.postprocess.reconstruction
+    $<TARGET_FILE:field_reconstruction>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-reconstruction.yaml")
+  set_tests_properties(required.postprocess.reconstruction PROPERTIES
+    DEPENDS required.postprocess.signal-run)
+
+  fel_required_test(required.postprocess.refuses-overwrite
+    $<TARGET_FILE:field_reconstruction>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-reconstruction-protected.yaml")
+  set_tests_properties(required.postprocess.refuses-overwrite PROPERTIES
+    DEPENDS required.postprocess.reconstruction
+    WILL_FAIL TRUE)
+
+  fel_required_test(required.postprocess.field-analysis
+    $<TARGET_FILE:field_plane_analysis>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-field-analysis.yaml")
+  set_tests_properties(required.postprocess.field-analysis PROPERTIES
+    DEPENDS "required.postprocess.signal-run;required.postprocess.baseline-run")
+
+  fel_required_test(required.postprocess.trajectory-radiation
+    $<TARGET_FILE:trajectory_radiation>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-trajectory.yaml")
+  set_tests_properties(required.postprocess.trajectory-radiation PROPERTIES
+    DEPENDS required.postprocess.signal-run)
+
+  fel_required_test(required.postprocess.power-comparison
+    $<TARGET_FILE:field_power_compare>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-power.yaml")
+  set_tests_properties(required.postprocess.power-comparison PROPERTIES
+    DEPENDS "required.postprocess.signal-run;required.postprocess.baseline-run;required.postprocess.trajectory-radiation")
+
+  fel_required_test(required.postprocess.energy-closure
+    $<TARGET_FILE:energy_closure>
+    "${CMAKE_CURRENT_BINARY_DIR}/postprocess-closure.yaml")
+  set_tests_properties(required.postprocess.energy-closure PROPERTIES
+    DEPENDS "required.postprocess.signal-run;required.postprocess.field-analysis")
+
+  fel_required_test(required.postprocess.check
+    $<TARGET_FILE:fel_output_checks> postprocess
+    "${FEL_VERIFY_WORK}/postprocess/reconstructed.h5"
+    "${FEL_VERIFY_WORK}/postprocess/field-analysis.h5"
+    "${FEL_VERIFY_WORK}/postprocess/trajectory-radiation.h5"
+    "${FEL_VERIFY_WORK}/postprocess/power.h5"
+    "${FEL_VERIFY_WORK}/postprocess/energy-closure.yaml")
+  set_tests_properties(required.postprocess.check PROPERTIES
+    DEPENDS "required.postprocess.reconstruction;required.postprocess.field-analysis;required.postprocess.trajectory-radiation;required.postprocess.power-comparison;required.postprocess.energy-closure")
+endif()
 
 if(FEL_ENABLE_PHYSICS_ANALYSIS)
   add_test(NAME analysis.energy-budget.k0
@@ -155,6 +253,11 @@ add_custom_target(verify_required
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
   USES_TERMINAL
 )
+
+if(FEL_BUILD_POSTPROCESSORS)
+  add_dependencies(verify_required trajectory_radiation field_reconstruction
+    field_plane_analysis field_power_compare energy_closure)
+endif()
 
 if(FEL_ENABLE_PHYSICS_ANALYSIS)
   add_custom_target(verify_physics

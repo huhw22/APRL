@@ -160,7 +160,9 @@ namespace fel
                               int mpiRank, int mpiSize,
                               std::size_t bufferRecords,
                               unsigned int compressionLevel,
-                              bool durableProgress)
+                              bool durableProgress,
+                              bool overwrite,
+                              const RunMetadata* metadata)
   {
     if (isOpen_) throw std::runtime_error("Trajectory file is already open");
     if (filename.empty())
@@ -185,7 +187,8 @@ namespace fel
                                        H5F_LIBVER_LATEST),
                   "Cannot select crash-readable HDF5 format");
 #endif
-    file_ = H5Fcreate(filename.c_str(), H5F_ACC_TRUNC,
+    file_ = H5Fcreate(filename.c_str(),
+                      overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
                       H5P_DEFAULT, access);
     H5Pclose(access);
     requireHandle(file_, "Cannot create trajectory file: " + filename);
@@ -257,6 +260,16 @@ namespace fel
           "-1=none,0=x-,1=x+,2=y-,3=y+,4=z-,5=z+");
         writeStringAttribute(group_, "reader_contract",
           "read only records[0:committed_records]");
+        if (metadata)
+          {
+            writeStringAttribute(group_, "run_id", metadata->runId);
+            writeStringAttribute(group_, "configuration_digest_fnv1a64",
+              metadata->configurationDigest);
+            writeStringAttribute(group_, "source_revision",
+              metadata->sourceRevision);
+            writeStringAttribute(group_, "run_manifest",
+              metadata->manifestPath);
+          }
 
         if (durableProgress_)
           requireStatus(H5Fflush(file_, H5F_SCOPE_GLOBAL),

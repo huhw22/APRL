@@ -44,6 +44,7 @@ namespace field_analysis
 
     std::string outputFile;
     unsigned int compression;
+    bool overwrite;
 
     Configuration();
   };

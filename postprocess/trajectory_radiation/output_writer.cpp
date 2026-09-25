@@ -155,7 +155,8 @@ namespace radiation
       meanStokes_(-1), completeDataset_(-1), open_(false)
   {
     createDirectories(parentDirectory(config_.outputFile));
-    file_ = H5Fcreate(config_.outputFile.c_str(), H5F_ACC_TRUNC,
+    file_ = H5Fcreate(config_.outputFile.c_str(),
+      config_.overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
                       H5P_DEFAULT, H5P_DEFAULT);
     requireHandle(file_, "Cannot create far-field output: " +
       config_.outputFile);

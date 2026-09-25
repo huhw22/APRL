@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "yaml-cpp/yaml.h"
+#include "../yaml_validation.h"
 
 namespace field_analysis
 {
@@ -104,7 +105,7 @@ namespace field_analysis
       windowStep(0.0), transverseWindow("none"), angularPaddingY(1),
       angularPaddingX(1), frequencyBlock(8), spatialBatchPoints(32),
       fftThreads(1), maximumWorkingMiB(4096), maximumOutputGiB(64.0),
-      compression(0)
+      compression(0), overwrite(false)
   {}
 
   Configuration loadConfiguration(const std::string& filename)
@@ -112,6 +113,9 @@ namespace field_analysis
     const YAML::Node root = YAML::LoadFile(filename);
     if (!root.IsMap())
       throw std::runtime_error("Field-plane analysis card must be a map");
+    postprocess_common::validateMapKeys(root, "top level", {
+      "input", "analysis", "calculation", "coherence", "output"
+    });
     const YAML::Node input = required(root, "input");
     const YAML::Node analysis = required(root, "analysis");
     const YAML::Node calculation = required(root, "calculation");
@@ -120,6 +124,19 @@ namespace field_analysis
         !output.IsMap())
       throw std::runtime_error(
         "input, analysis, calculation, and output must be maps");
+    postprocess_common::validateMapKeys(input, "input", {
+      "field_file", "zero_radiation_baseline", "require_complete"
+    });
+    postprocess_common::validateMapKeys(analysis, "analysis", {
+      "photon_energy_band_eV", "transverse_window",
+      "angular_zero_padding", "time_windows"
+    });
+    postprocess_common::validateMapKeys(calculation, "calculation", {
+      "frequency_block", "spatial_batch_points", "fft_threads",
+      "maximum_working_mib", "maximum_output_gib"
+    });
+    postprocess_common::validateMapKeys(output, "output",
+      {"file", "compression", "overwrite"});
 
     Configuration config;
     config.cardPath = filename;
@@ -169,6 +186,9 @@ namespace field_analysis
         const YAML::Node windows = analysis["time_windows"];
         if (!windows.IsMap())
           throw std::runtime_error("analysis.time_windows must be a map");
+        postprocess_common::validateMapKeys(windows,
+          "analysis.time_windows",
+          {"enabled", "interval_s", "duration_s", "step_s"});
         config.hannTimeWindows = windows["enabled"] ?
           windows["enabled"].as<bool>() : false;
         if (config.hannTimeWindows)
@@ -215,6 +235,10 @@ namespace field_analysis
         const YAML::Node coherence = root["coherence"];
         if (!coherence.IsMap())
           throw std::runtime_error("coherence must be a map");
+        postprocess_common::validateMapKeys(coherence, "coherence", {
+          "spatial_photon_energy_eV", "spatial_reference_angles_rad",
+          "temporal_photon_energy_eV", "temporal_reference_angles_rad"
+        });
         config.spatialPhotonEnergyEV = positiveEnergyList(
           coherence["spatial_photon_energy_eV"],
           "coherence.spatial_photon_energy_eV");
@@ -241,12 +265,16 @@ namespace field_analysis
       required(output, "file").as<std::string>());
     config.compression = output["compression"] ?
       output["compression"].as<unsigned int>() : 0;
+    config.overwrite = output["overwrite"] ?
+      output["overwrite"].as<bool>() : false;
     if (config.compression > 9)
       throw std::runtime_error("output.compression must be in [0,9]");
     if (config.outputFile == config.fieldFile ||
         (!config.baselineFile.empty() &&
          config.outputFile == config.baselineFile))
       throw std::runtime_error("Output must not overwrite an input field");
+    postprocess_common::requireOutputAvailable(
+      config.outputFile, config.overwrite);
     return config;
   }
 }

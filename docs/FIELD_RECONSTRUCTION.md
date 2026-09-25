@@ -79,6 +79,7 @@ model:
 output:
   file: reconstructed-fields.h5
   compression: 0
+  overwrite: false
 ```
 
 Paths are resolved relative to the card. A ballistic-reference record is

@@ -1,12 +1,12 @@
 units: {length: micrometer, time: femtosecond}
 runtime: {mode: throughput, resource_monitor: {enabled: false}}
-output: {overwrite: true, manifest: run-manifest.yaml}
+output: {overwrite: false, manifest: protected-manifest.yaml}
 mesh:
   field_solver: cowan-z
-  cells: [12, 12, 80]
+  cells: [8, 8, 64]
   cell_size: [0.5, 0.5, 0.1]
   center: [0.0, 0.0, 0.0]
-  duration: 6.0
+  duration: 5.0
   boost_gamma: 2.0
   particle_steps_per_undulator_period: 1
 boundary: {type: pec}
@@ -15,19 +15,14 @@ beam:
   reference: {initial_center_z: -0.5}
   input:
     type: generated-gaussian
-    electrons: 8.0
-    macroparticles: 8
+    electrons: 1.0
+    macroparticles: 1
     gamma: 4.0
     direction: [0.0, 0.0, 1.0]
     center: [0.0, 0.0, 0.0]
-    sigma_position: [0.02, 0.02, 0.03]
+    sigma_position: [0.0, 0.0, 0.0]
     sigma_proper_velocity: [0.0, 0.0, 0.0]
-    random_seed: 15
+    random_seed: 42
 sources: {incident_waves: [], magnetic_elements: []}
-detectors:
-  enabled: true
-  directory: detectors
-  particle_planes:
-    - {name: particles, z: 0.5, buffer_records: 16, compression: 0}
-stop: {mode: after-last-element}
+stop: {mode: reference-center-z, z: 0.5}
 trajectory: {enabled: false}

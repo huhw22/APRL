@@ -94,6 +94,7 @@ coherence:
 output:
   file: field-plane-analysis.h5
   compression: 0
+  overwrite: false
 ```
 
 Paths are resolved relative to the analysis card. Raw and baseline files must

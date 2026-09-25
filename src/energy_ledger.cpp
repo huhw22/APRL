@@ -174,7 +174,7 @@ namespace fel
 
   void EnergyLedgerWriter::open(const std::string& filename, int mpiSize,
       std::size_t bufferRecords, unsigned int compressionLevel,
-      bool durableProgress)
+      bool durableProgress, bool overwrite, const RunMetadata* metadata)
   {
     if (isOpen_) throw std::runtime_error("Energy ledger is already open");
     if (filename.empty())
@@ -194,7 +194,8 @@ namespace fel
     requireStatus(H5Pset_libver_bounds(access, H5F_LIBVER_LATEST,
       H5F_LIBVER_LATEST), "Cannot select crash-readable HDF5 format");
 #endif
-    file_ = H5Fcreate(filename.c_str(), H5F_ACC_TRUNC,
+    file_ = H5Fcreate(filename.c_str(),
+      overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
       H5P_DEFAULT, access);
     H5Pclose(access);
     requireHandle(file_, "Cannot create energy-ledger file: " + filename);
@@ -252,6 +253,16 @@ namespace fel
           "lab momentum statistics on an equal-box-time slice; particle planes are required for equal-location accelerator diagnostics");
         writeStringAttribute(group_, "reader_contract",
           "read only records[0:committed_records]");
+        if (metadata)
+          {
+            writeStringAttribute(group_, "run_id", metadata->runId);
+            writeStringAttribute(group_, "configuration_digest_fnv1a64",
+              metadata->configurationDigest);
+            writeStringAttribute(group_, "source_revision",
+              metadata->sourceRevision);
+            writeStringAttribute(group_, "run_manifest",
+              metadata->manifestPath);
+          }
         if (durableProgress_)
           requireStatus(H5Fflush(file_, H5F_SCOPE_GLOBAL),
             "Cannot initialize energy-ledger file on disk");

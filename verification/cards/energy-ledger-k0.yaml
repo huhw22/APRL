@@ -1,5 +1,6 @@
 units: {length: micrometer, time: femtosecond}
 runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output: {overwrite: true, manifest: run-manifest.yaml}
 mesh:
   field_solver: cowan-z
   cells: [12, 12, 96]

@@ -17,6 +17,7 @@
 #include "fftw3.h"
 #include "hdf5.h"
 #include "yaml-cpp/yaml.h"
+#include "../yaml_validation.h"
 
 namespace
 {
@@ -108,6 +109,7 @@ namespace
     std::size_t batchPoints;
     std::string outputFile;
     unsigned int compression;
+    bool overwrite;
   };
 
   Config loadConfig(const std::string& filename)
@@ -115,11 +117,22 @@ namespace
     const YAML::Node root = YAML::LoadFile(filename);
     if (!root.IsMap())
       throw std::runtime_error("Field-power comparison card must be a map");
+    postprocess_common::validateMapKeys(root, "top level",
+      {"input", "analysis", "output"});
     const YAML::Node input = required(root, "input");
     const YAML::Node analysis = required(root, "analysis");
     const YAML::Node output = required(root, "output");
     if (!input.IsMap() || !analysis.IsMap() || !output.IsMap())
       throw std::runtime_error("input, analysis, and output must be maps");
+    postprocess_common::validateMapKeys(input, "input", {
+      "signal_field", "zero_radiation_baseline",
+      "analytic_electron_reconstruction", "trajectory_far_field",
+      "require_complete"
+    });
+    postprocess_common::validateMapKeys(analysis, "analysis",
+      {"photon_energy_band_eV", "spatial_batch_points"});
+    postprocess_common::validateMapKeys(output, "output",
+      {"file", "compression", "overwrite"});
     Config config;
     config.signalFile = resolvePath(filename,
       required(input, "signal_field").as<std::string>());
@@ -154,6 +167,8 @@ namespace
       required(output, "file").as<std::string>());
     config.compression = output["compression"] ?
       output["compression"].as<unsigned int>() : 0;
+    config.overwrite = output["overwrite"] ?
+      output["overwrite"].as<bool>() : false;
     if (config.compression > 9)
       throw std::runtime_error("output.compression must be in [0,9]");
     if (config.signalFile == config.baselineFile ||
@@ -165,6 +180,8 @@ namespace
           config.analyticReconstructionFile == config.baselineFile)))
       throw std::runtime_error(
         "Signal, baseline, analytic reconstruction, and output paths must differ");
+    postprocess_common::requireOutputAvailable(
+      config.outputFile, config.overwrite);
     return config;
   }
 
@@ -1324,7 +1341,8 @@ int main(int argc, char** argv)
           config.requireComplete);
 
       createDirectories(parentDirectory(config.outputFile));
-      hid_t file = H5Fcreate(config.outputFile.c_str(), H5F_ACC_TRUNC,
+      hid_t file = H5Fcreate(config.outputFile.c_str(),
+        config.overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
         H5P_DEFAULT, H5P_DEFAULT);
       requireHandle(file, "Cannot create output: " + config.outputFile);
       hid_t group = H5Gcreate2(file, "/power_comparison", H5P_DEFAULT,

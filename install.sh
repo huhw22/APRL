@@ -166,6 +166,7 @@ root_configure+=("${common_cmake_args[@]}")
 root_configure+=(
   -DBUILD_TESTING="$testing"
   -DFEL_REQUIRE_PARALLEL_HDF5="$parallel_requirement"
+  -DFEL_BUILD_POSTPROCESSORS=$([[ "$profile" == "full" ]] && echo ON || echo OFF)
 )
 [[ -n "$sdds_root" ]] && root_configure+=("-DSDDS_ROOT=$sdds_root")
 root_configure+=("${extra_cmake_args[@]}")
@@ -192,23 +193,6 @@ if ! $skip_tests; then
 fi
 
 build_roots=("$build_dir/core")
-if [[ "$profile" == "full" ]]; then
-  postprocessors=(trajectory_radiation field_reconstruction
-    field_plane_analysis field_power_compare energy_closure)
-  for component in "${postprocessors[@]}"; do
-    component_build="$build_dir/postprocess-$component"
-    echo "Configuring post-processor: $component"
-    component_configure=(cmake
-      -S "$source_root/postprocess/$component"
-      -B "$component_build")
-    component_configure+=("${generator_args[@]}")
-    component_configure+=("${common_cmake_args[@]}")
-    component_configure+=("${extra_cmake_args[@]}")
-    "${component_configure[@]}"
-    cmake --build "$component_build" --parallel "$jobs"
-    build_roots+=("$component_build")
-  done
-fi
 
 receipt_dir="$prefix/share/unnamed_fel_program"
 receipt="$receipt_dir/install-manifest.txt"

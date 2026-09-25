@@ -14,6 +14,11 @@ runtime:
     memory_safety_factor: 1.25
     time_safety_factor: 1.25
 
+output:
+  # Existing scientific output is protected unless replacement is explicit.
+  overwrite: false
+  manifest: output/run-manifest.yaml
+
 mesh:
   # z-priority Cowan/CKC stencil; use yee only for regression runs.
   field_solver: cowan-z

@@ -144,6 +144,7 @@ calculation:
 output:
   file: radiation-output.h5
   compression: 0
+  overwrite: false
 ```
 
 Paths are relative to the radiation YAML file. A shot is one statistically

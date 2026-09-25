@@ -3,9 +3,10 @@
 The simulator accepts one ordinary YAML document. Every mapping is checked
 against the documented schema before physical parsing: an unknown key is a
 hard error that reports its YAML line, mapping path, and the recognized keys.
-This catches misspellings even inside a disabled optional block. Unknown
-physical defaults are deliberately avoided; required quantities are likewise
-reported with their YAML line when missing or invalid.
+This catches misspellings even inside a disabled optional block. The five
+post-processing cards follow the same strict rule. Unknown physical defaults
+are deliberately avoided; required quantities are likewise reported with
+their YAML line when missing or invalid.
 
 ## Units
 
@@ -19,6 +20,21 @@ Length accepts `m`, `mm`, `um`/`micrometer`, and `nm`. Time accepts `s`, `ms`,
 `us`, `ns`, `ps`, `fs`, and `as`. These units apply to numeric length and time
 values in the YAML document. The core converts them once and then uses SI.
 Particle HDF5 positions are always metres and do not inherit the YAML unit.
+
+## Output safety and run identity
+
+```yaml
+output:
+  overwrite: false
+  manifest: output/run-manifest.yaml
+```
+
+This top-level block controls every simulator output. Existing files are a
+hard error by default; `overwrite: true` is required for intentional
+replacement. The root-only manifest preserves the exact card and records a
+unique run identity, source/build information, MPI environment and particle
+input identity. The same identity is embedded in all output HDF5 groups. See
+[RUN_PROVENANCE.md](RUN_PROVENANCE.md) for the complete contract.
 
 ## Mesh and boost
 

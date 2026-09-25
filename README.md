@@ -32,6 +32,10 @@ histories are retained only as an optional small-particle/debug path because
 their production-scale storage cost is prohibitive. Outputs are intended for
 analysis on a separate, less expensive machine.
 
+Scientific outputs are protected against accidental replacement by default.
+Each run writes a manifest and embeds one shared run identity in its HDF5
+products; see [run provenance and overwrite safety](docs/RUN_PROVENANCE.md).
+
 For small validation runs, an independent C++/MPI post-processor reconstructs
 the complex polarized far-field spectrum directly from trajectories. It
 provides angular and integrated energy spectra, Stokes data, and optional
@@ -155,6 +159,7 @@ or particle-boundary I/O.
 - [Installation, uninstall, and dependency maintenance](docs/INSTALLATION.md)
 - [Layered testing and numerical-analysis workflow](docs/TESTING.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
+- [Run identity, manifests, and overwrite safety](docs/RUN_PROVENANCE.md)
 - [Cowan-z kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
 - [Gauss-consistent initial particle self-field](docs/INITIAL_SELF_FIELD.md)
 - [Laboratory-frame energy diagnostics and 50 A scale estimate](docs/LAB_FRAME_ENERGY_DIAGNOSTICS.md)

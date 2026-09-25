@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "hdf5.h"
+#include "run_metadata.h"
 
 namespace fel
 {
@@ -62,7 +63,8 @@ namespace fel
 
     void open(const std::string& filename, int mpiSize,
               std::size_t bufferRecords, unsigned int compressionLevel,
-              bool durableProgress);
+              bool durableProgress, bool overwrite = false,
+              const RunMetadata* metadata = NULL);
     void append(const EnergyLedgerRecord& record);
     void flush();
     void close(bool completed = false);

@@ -502,7 +502,9 @@ namespace fel
                 const FieldDetectorPlaneConfig& config,
                 const EBGridGeometry& geometry,
                 const FieldVector<Double>& origin,
-                const char* externalBackgroundName)
+                const char* externalBackgroundName,
+                bool overwrite,
+                const RunMetadata* metadata)
       {
         if (open_) throw std::runtime_error("Field detector is already open");
         nx_ = geometry.nx;
@@ -517,7 +519,8 @@ namespace fel
           throw std::overflow_error("Field detector buffer dimensions overflow");
         fields_.reserve(bufferLimit_ * points);
 
-        file_ = H5Fcreate(filename.c_str(), H5F_ACC_TRUNC,
+        file_ = H5Fcreate(filename.c_str(),
+          overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
           H5P_DEFAULT, H5P_DEFAULT);
         requireHandle(file_, "Cannot create field-detector file: " + filename);
         try
@@ -667,6 +670,17 @@ namespace fel
             writeUnsignedAttribute(group_, "nx", nx_);
             writeUnsignedAttribute(group_, "ny", ny_);
             writeUnsignedAttribute(group_, "compression_level", config.compression);
+            if (metadata)
+              {
+                writeStringAttribute(group_, "run_id", metadata->runId);
+                writeStringAttribute(group_,
+                  "configuration_digest_fnv1a64",
+                  metadata->configurationDigest);
+                writeStringAttribute(group_, "source_revision",
+                  metadata->sourceRevision);
+                writeStringAttribute(group_, "run_manifest",
+                  metadata->manifestPath);
+              }
             open_ = true;
           }
         catch (...)
@@ -817,16 +831,18 @@ namespace fel
 
       void open(const std::string& filename,
                 const ParticleDetectorPlaneConfig& config,
-                int mpiSize)
+                int mpiSize, bool overwrite,
+                const RunMetadata* metadata)
       {
         openImpl(filename, "/particle_plane", config.name, config.z,
           config.bufferRecords, config.compression, mpiSize, false,
-          false, 0, config.z, 0.0, 0.0, 1.0);
+          false, 0, config.z, 0.0, 0.0, 1.0, overwrite, metadata);
       }
 
       void openReference(const std::string& filename,
                          const FieldDetectorPlaneConfig& config,
-                         int mpiSize)
+                         int mpiSize, bool overwrite,
+                         const RunMetadata* metadata)
       {
         openImpl(filename, "/ballistic_reference", config.name,
           config.referenceEntranceZ, config.referenceBufferRecords,
@@ -834,7 +850,7 @@ namespace fel
           config.referenceValidation,
           config.referenceValidationMaximumParticles, config.z,
           config.referenceDistance, config.referenceRho,
-          config.referenceGamma);
+          config.referenceGamma, overwrite, metadata);
       }
 
       void openImpl(const std::string& filename,
@@ -850,7 +866,9 @@ namespace fel
                     double detectorZ,
                     double referenceDistance,
                     double referenceRho,
-                    double referenceGamma)
+                    double referenceGamma,
+                    bool overwrite,
+                    const RunMetadata* metadata)
       {
         if (open_) throw std::runtime_error("Particle detector is already open");
         bufferLimit_ = bufferRecords;
@@ -859,7 +877,8 @@ namespace fel
         validationCommitted_ = 0;
         buffer_.reserve(bufferLimit_);
         if (validationEnabled_) validationBuffer_.reserve(bufferLimit_);
-        file_ = H5Fcreate(filename.c_str(), H5F_ACC_TRUNC,
+        file_ = H5Fcreate(filename.c_str(),
+          overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
           H5P_DEFAULT, H5P_DEFAULT);
         requireHandle(file_, "Cannot create particle-detector file: " + filename);
         try
@@ -990,6 +1009,17 @@ namespace fel
               }
             writeUnsignedAttribute(group_, "mpi_size", mpiSize);
             writeUnsignedAttribute(group_, "compression_level", compression);
+            if (metadata)
+              {
+                writeStringAttribute(group_, "run_id", metadata->runId);
+                writeStringAttribute(group_,
+                  "configuration_digest_fnv1a64",
+                  metadata->configurationDigest);
+                writeStringAttribute(group_, "source_revision",
+                  metadata->sourceRevision);
+                writeStringAttribute(group_, "run_manifest",
+                  metadata->manifestPath);
+              }
             open_ = true;
           }
         catch (...)
@@ -1200,7 +1230,9 @@ namespace fel
          const FieldVector<Double>& localOriginBox,
          const BoostFrameTransform& frame,
          MPI_Comm communicator,
-         const LabFieldDetectorBackground* externalBackground)
+         const LabFieldDetectorBackground* externalBackground,
+         bool overwrite,
+         const RunMetadata* metadata)
       : config_(config), globalGeometry_(globalGeometry),
         globalOriginBox_(globalOriginBox),
         localOriginBox_(localOriginBox), frame_(frame),
@@ -1240,7 +1272,8 @@ namespace fel
                   writer->open(joinPath(config_.directory,
                     config_.fieldPlanes[i].name + ".h5"),
                     config_.fieldPlanes[i], globalGeometry_, globalOriginBox_,
-                    externalBackground_ ? externalBackground_->name() : NULL);
+                    externalBackground_ ? externalBackground_->name() : NULL,
+                    overwrite, metadata);
                   fieldWriters_.push_back(std::move(writer));
                 }
               particleWriters_.reserve(config_.particlePlanes.size());
@@ -1250,7 +1283,7 @@ namespace fel
                     new ParticlePlaneWriter());
                   writer->open(joinPath(config_.directory,
                     config_.particlePlanes[i].name + ".h5"),
-                    config_.particlePlanes[i], size_);
+                    config_.particlePlanes[i], size_, overwrite, metadata);
                   particleWriters_.push_back(std::move(writer));
                 }
               referenceWriters_.reserve(config_.fieldPlanes.size());
@@ -1272,7 +1305,7 @@ namespace fel
                   writer->openReference(joinPath(config_.directory,
                     config_.fieldPlanes[i].name +
                     "-ballistic-reference.h5"),
-                    config_.fieldPlanes[i], size_);
+                    config_.fieldPlanes[i], size_, overwrite, metadata);
                   referenceWriters_.push_back(std::move(writer));
                   if (config_.fieldPlanes[i].referenceValidation)
                     validationEntries_[i].reset(
@@ -1761,10 +1794,12 @@ namespace fel
       const FieldVector<Double>& localOriginBox,
       const BoostFrameTransform& frame,
       MPI_Comm communicator,
-      const LabFieldDetectorBackground* externalBackground)
+      const LabFieldDetectorBackground* externalBackground,
+      bool overwrite,
+      const RunMetadata* metadata)
     : impl_(new Impl(config, globalGeometry, globalOriginBox,
                      localOriginBox, frame, communicator,
-                     externalBackground))
+                     externalBackground, overwrite, metadata))
   {}
 
   LabDetectorManager::~LabDetectorManager() {}

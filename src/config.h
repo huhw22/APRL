@@ -176,6 +176,17 @@ namespace fel
     bool interactive() const;
   };
 
+  /* One explicit policy covers every file created by a simulation run.
+   * Refusing replacement by default prevents an expensive batch rerun from
+   * silently destroying an earlier result set. */
+  struct OutputPolicyConfig
+  {
+    bool overwrite;
+    std::string manifest;
+
+    OutputPolicyConfig();
+  };
+
   struct TrajectoryConfig
   {
     bool enabled;
@@ -302,6 +313,9 @@ namespace fel
 
   struct SimulationConfig
   {
+    std::string configurationPath;
+    std::string configurationText;
+    std::string configurationDigest;
     UnitSystem inputUnits;
     MeshConfig mesh;
     RadiationResolutionConfig radiationResolution;
@@ -313,6 +327,7 @@ namespace fel
     std::vector<SIMagneticElement> magnets;
     std::vector<BeamlineElementExtent> beamlineElements;
     RuntimeConfig runtime;
+    OutputPolicyConfig output;
     StopConfig stop;
     TrajectoryConfig trajectory;
     EnergyLedgerConfig energyLedger;

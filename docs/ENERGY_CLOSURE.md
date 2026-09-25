@@ -28,6 +28,10 @@ pass the cleaned signal and cleaned baseline to `field_plane_analysis` through
 that analysis file to this tool. See
 `postprocess/energy_closure/example.yaml`.
 
+All card mappings reject unknown keys. Existing reports are refused unless
+`output.overwrite: true` is explicitly selected; see
+`docs/RUN_PROVENANCE.md`.
+
 For the stronger energy-balance check, also reconstruct the raw total fields
 at field planes colocated with the entrance and exit particle planes. Supply
 all four optional `*_field_reconstruction` paths. The report then evaluates

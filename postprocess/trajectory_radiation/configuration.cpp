@@ -7,6 +7,7 @@
 #include <stdexcept>
 
 #include "yaml-cpp/yaml.h"
+#include "../yaml_validation.h"
 
 namespace radiation
 {
@@ -221,7 +222,7 @@ namespace radiation
       verticalAxis(0.0, 1.0, 0.0), distanceM(1.0), thetaX(), thetaY(),
       photonEnergyEV(), frequencyBlock(16), thetaYBlock(4),
       minimumRecordsPerParticle(3), outputFile(), compression(0),
-      coherence(), timeAverage()
+      overwrite(false), coherence(), timeAverage()
   {}
 
   TimeAverageConfig::TimeAverageConfig()
@@ -285,11 +286,17 @@ namespace radiation
   RadiationConfig loadConfiguration(const std::string& filename)
   {
     const YAML::Node root = YAML::LoadFile(filename);
+    postprocess_common::validateMapKeys(root, "top level", {
+      "input", "observation", "spectrum", "calculation", "coherence",
+      "time_average", "output"
+    });
     RadiationConfig config;
     config.cardPath = filename;
     const std::string base = directoryName(filename);
 
     const YAML::Node input = required(root, "input");
+    postprocess_common::validateMapKeys(input, "input",
+      {"require_complete", "read_chunk_records", "shots"});
     config.requireComplete = input["require_complete"] ?
       input["require_complete"].as<bool>() : true;
     config.readChunkRecords = input["read_chunk_records"] ?
@@ -299,6 +306,8 @@ namespace radiation
     const YAML::Node shots = required(input, "shots");
     if (!shots.IsSequence() || shots.size() == 0)
       throw std::invalid_argument("input.shots must be a nonempty sequence");
+    postprocess_common::validateSequenceMaps(shots, "input.shots",
+      {"name", "files"});
     std::set<std::string> shotNames;
     for (std::size_t shotIndex = 0; shotIndex < shots.size(); ++shotIndex)
       {
@@ -317,6 +326,13 @@ namespace radiation
       }
 
     const YAML::Node observation = required(root, "observation");
+    postprocess_common::validateMapKeys(observation, "observation", {
+      "axis", "horizontal", "distance_m", "theta_x_rad", "theta_y_rad"
+    });
+    postprocess_common::validateMapKeys(observation["theta_x_rad"],
+      "observation.theta_x_rad", {"min", "max", "count", "spacing"});
+    postprocess_common::validateMapKeys(observation["theta_y_rad"],
+      "observation.theta_y_rad", {"min", "max", "count", "spacing"});
     config.observationAxis = normalized(readVector(
       required(observation, "axis"), "observation.axis"),
       "observation.axis");
@@ -345,6 +361,10 @@ namespace radiation
         "Transverse angular coordinates must stay below 1.4 rad");
 
     const YAML::Node spectrum = required(root, "spectrum");
+    postprocess_common::validateMapKeys(spectrum, "spectrum",
+      {"photon_energy_eV"});
+    postprocess_common::validateMapKeys(spectrum["photon_energy_eV"],
+      "spectrum.photon_energy_eV", {"min", "max", "count", "spacing"});
     config.photonEnergyEV = readAxis(
       required(spectrum, "photon_energy_eV"),
       "spectrum.photon_energy_eV", true);
@@ -354,6 +374,10 @@ namespace radiation
     const YAML::Node calculation = root["calculation"];
     if (calculation)
       {
+        postprocess_common::validateMapKeys(calculation, "calculation", {
+          "frequency_block", "theta_y_block",
+          "minimum_records_per_particle"
+        });
         if (calculation["frequency_block"])
           config.frequencyBlock =
             calculation["frequency_block"].as<std::size_t>();
@@ -374,12 +398,22 @@ namespace radiation
       required(output, "file").as<std::string>());
     config.compression = output["compression"] ?
       output["compression"].as<unsigned int>() : 0;
+    postprocess_common::validateMapKeys(output, "output",
+      {"file", "compression", "overwrite"});
+    config.overwrite = output["overwrite"] ?
+      output["overwrite"].as<bool>() : false;
     if (config.compression > 9)
       throw std::invalid_argument("HDF5 compression must be between 0 and 9");
+    postprocess_common::requireOutputAvailable(
+      config.outputFile, config.overwrite);
 
     const YAML::Node coherence = root["coherence"];
     if (coherence)
       {
+        postprocess_common::validateMapKeys(coherence, "coherence", {
+          "spatial_photon_energy_eV", "spatial_reference_angles_rad",
+          "temporal_photon_energy_eV", "temporal_reference_angles_rad"
+        });
         config.coherence.spatialPhotonEnergyEV = readDoubleList(
           coherence["spatial_photon_energy_eV"],
           "coherence.spatial_photon_energy_eV");
@@ -405,6 +439,11 @@ namespace radiation
     const YAML::Node timeAverage = root["time_average"];
     if (timeAverage)
       {
+        postprocess_common::validateMapKeys(timeAverage, "time_average", {
+          "enabled", "interval_s", "window_duration_s", "window_step_s",
+          "photon_energy_eV", "reference_angles_rad",
+          "maximum_accumulator_mib"
+        });
         config.timeAverage.enabled = timeAverage["enabled"] ?
           timeAverage["enabled"].as<bool>() : true;
         if (config.timeAverage.enabled)

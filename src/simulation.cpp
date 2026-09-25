@@ -8,6 +8,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <sys/stat.h>
 
 #include "particle_initializer.h"
 #include "runtime_control.h"
@@ -166,6 +167,7 @@ namespace fel
     : config_(config), detectorConfig_(config.detectors),
       beamlineElements_(config.beamlineElements),
       communicator_(communicator), rank_(0), size_(1),
+      runMetadata_(),
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0),
       referenceCenterBoxZ_(0.0), frame_(), sources_(),
@@ -288,6 +290,8 @@ namespace fel
       throw std::invalid_argument(
         "Direct E/B solver requires boost_gamma >= 1");
 
+    preflightOutputPaths();
+    runMetadata_ = initializeRunMetadata(config_, communicator_);
     initializeGeometry();
     validateAndReportRadiationResolution();
     initializeSources();
@@ -471,6 +475,67 @@ namespace fel
         if (!config_.initialSelfField.enabled)
           logRoot(communicator_,
             "WARNING: initial_self_field is disabled; the Maxwell state does not satisfy Gauss's law for the input bunch and startup radiation can contaminate the result.");
+      }
+  }
+
+  void Simulation::preflightOutputPaths() const
+  {
+    if (config_.output.overwrite) return;
+    std::vector<std::string> paths;
+    if (rank_ == 0)
+      {
+        paths.push_back(config_.output.manifest);
+        for (std::size_t i = 0; i < config_.detectors.fieldPlanes.size(); ++i)
+          {
+            const FieldDetectorPlaneConfig& plane =
+              config_.detectors.fieldPlanes[i];
+            paths.push_back(joinPath(config_.detectors.directory,
+              plane.name + ".h5"));
+            if (plane.particleBackgroundReference)
+              paths.push_back(joinPath(config_.detectors.directory,
+                plane.name + "-ballistic-reference.h5"));
+          }
+        for (std::size_t i = 0;
+             i < config_.detectors.particlePlanes.size(); ++i)
+          paths.push_back(joinPath(config_.detectors.directory,
+            config_.detectors.particlePlanes[i].name + ".h5"));
+        if (config_.energyLedger.enabled)
+          paths.push_back(joinPath(config_.energyLedger.directory,
+            config_.energyLedger.filename));
+      }
+    if (config_.trajectory.enabled)
+      {
+        std::ostringstream name;
+        name << (config_.trajectory.basename.empty() ?
+          "trajectory" : config_.trajectory.basename)
+             << "-rank-" << std::setfill('0') << std::setw(5)
+             << rank_ << ".h5";
+        paths.push_back(joinPath(config_.trajectory.directory, name.str()));
+      }
+
+    std::string conflict;
+    for (std::size_t i = 0; i < paths.size(); ++i)
+      {
+        struct stat status;
+        if (::stat(paths[i].c_str(), &status) == 0)
+          {
+            conflict = paths[i];
+            break;
+          }
+      }
+    int localConflict = conflict.empty() ? 0 : 1;
+    int anyConflict = 0;
+    MPI_Allreduce(&localConflict, &anyConflict, 1, MPI_INT, MPI_MAX,
+                  communicator_);
+    if (anyConflict)
+      {
+        if (!conflict.empty())
+          throw std::runtime_error("Refusing to overwrite existing output: " +
+            conflict +
+            "; set output.overwrite: true only for an intentional rerun");
+        throw std::runtime_error(
+          "Another MPI rank found an existing output; refusing the run. "
+          "Set output.overwrite: true only for an intentional rerun");
       }
   }
 
@@ -2067,7 +2132,8 @@ namespace fel
              << std::setw(5) << rank_ << ".h5";
     trajectoryWriter_.open(filename.str(), rank_, size_,
       config_.trajectory.bufferRecords, config_.trajectory.compression,
-      config_.runtime.interactive());
+      config_.runtime.interactive(), config_.output.overwrite,
+      &runMetadata_);
     nextTrajectorySampleTime_ = 0.0;
     trajectorySamplesSinceFlush_ = 0;
   }
@@ -2077,7 +2143,8 @@ namespace fel
     if (!detectorConfig_.enabled()) return;
     detectors_.reset(new LabDetectorManager(
       detectorConfig_, globalGeometry_,
-      globalOriginBox_, localOriginBox_, frame_, communicator_));
+      globalOriginBox_, localOriginBox_, frame_, communicator_, NULL,
+      config_.output.overwrite, &runMetadata_));
     if (rank_ == 0)
       {
         std::ostringstream message;
@@ -2229,7 +2296,8 @@ namespace fel
           config_.energyLedger.filename), size_,
         config_.energyLedger.bufferRecords,
         config_.energyLedger.compression,
-        config_.runtime.interactive());
+        config_.runtime.interactive(), config_.output.overwrite,
+        &runMetadata_);
     localInteriorBoundaryPower(energyLedgerPreviousPower_);
     if (rank_ == 0)
       {

@@ -908,7 +908,8 @@ namespace reconstruction
           samples_(field.samples())
       {
         createDirectories(parentDirectory(config.outputFile));
-        file_ = H5Fcreate(config.outputFile.c_str(), H5F_ACC_TRUNC,
+        file_ = H5Fcreate(config.outputFile.c_str(),
+          config.overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
           H5P_DEFAULT, H5P_DEFAULT);
         requireHandle(file_, "Cannot create reconstruction output: " +
           config.outputFile);

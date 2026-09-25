@@ -25,6 +25,7 @@ namespace reconstruction
 
     std::string outputFile;
     unsigned int compression;
+    bool overwrite;
 
     ReconstructionConfig();
   };

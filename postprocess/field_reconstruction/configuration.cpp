@@ -6,6 +6,7 @@
 #include <string>
 
 #include "yaml-cpp/yaml.h"
+#include "../yaml_validation.h"
 
 namespace reconstruction
 {
@@ -73,7 +74,8 @@ namespace reconstruction
       particleReadChunk(65536), fftThreads(1), paddingTime(1),
       paddingY(1), paddingX(1), transverseSmoothing(0.0),
       maximumRelativeGammaSpread(0.1), maximumRmsTransverseBeta(0.1),
-      maximumOutsideChargeFraction(1.0e-3), outputFile(), compression(0)
+      maximumOutsideChargeFraction(1.0e-3), outputFile(), compression(0),
+      overwrite(false)
   {}
 
   ReconstructionConfig loadConfiguration(const std::string& filename)
@@ -81,11 +83,17 @@ namespace reconstruction
     const YAML::Node root = YAML::LoadFile(filename);
     if (!root.IsMap())
       throw cardError(root, "Field-reconstruction card must be a map");
+    postprocess_common::validateMapKeys(root, "top level",
+      {"input", "model", "output"});
     ReconstructionConfig config;
     config.cardPath = filename;
 
     const YAML::Node input = required(root, "input");
     if (!input.IsMap()) throw cardError(input, "input must be a map");
+    postprocess_common::validateMapKeys(input, "input", {
+      "field_file", "particle_file", "require_complete",
+      "particle_read_chunk"
+    });
     config.fieldFile = resolvePath(filename,
       required(input, "field_file").as<std::string>());
     config.particleFile = resolvePath(filename,
@@ -98,6 +106,11 @@ namespace reconstruction
 
     const YAML::Node model = required(root, "model");
     if (!model.IsMap()) throw cardError(model, "model must be a map");
+    postprocess_common::validateMapKeys(model, "model", {
+      "fft_threads", "padding_factor", "transverse_smoothing_m",
+      "maximum_relative_gamma_spread", "maximum_rms_transverse_beta",
+      "maximum_outside_charge_fraction"
+    });
     if (model["fft_threads"])
       config.fftThreads = static_cast<unsigned int>(positiveSize(
         model["fft_threads"], "fft_threads"));
@@ -134,16 +147,22 @@ namespace reconstruction
 
     const YAML::Node output = required(root, "output");
     if (!output.IsMap()) throw cardError(output, "output must be a map");
+    postprocess_common::validateMapKeys(output, "output",
+      {"file", "compression", "overwrite"});
     config.outputFile = resolvePath(filename,
       required(output, "file").as<std::string>());
     if (output["compression"])
       config.compression = output["compression"].as<unsigned int>();
+    if (output["overwrite"])
+      config.overwrite = output["overwrite"].as<bool>();
     if (config.compression > 9)
       throw cardError(output, "output compression must be in [0,9]");
     if (config.outputFile == config.fieldFile ||
         config.outputFile == config.particleFile)
       throw cardError(output,
         "output file must differ from both input files");
+    postprocess_common::requireOutputAvailable(
+      config.outputFile, config.overwrite);
     return config;
   }
 }

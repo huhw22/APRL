@@ -38,6 +38,10 @@ trajectory-far-field file, the photon-energy band, a small transverse read
 batch, and the output HDF5 file. The complete example is in
 `postprocess/field_power_compare/example.yaml`.
 
+All card mappings reject unknown keys. Existing output is refused unless
+`output.overwrite: true` is explicitly selected; see
+`docs/RUN_PROVENANCE.md`.
+
 The two field files must have identical plane geometry and identical stored
 laboratory sample times. Actual detector times need not be perfectly uniform:
 the tool retains them for broadband power and linearly resamples each field

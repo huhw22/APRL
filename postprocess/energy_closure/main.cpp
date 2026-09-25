@@ -17,6 +17,7 @@
 
 #include "hdf5.h"
 #include "yaml-cpp/yaml.h"
+#include "../yaml_validation.h"
 
 namespace
 {
@@ -107,15 +108,31 @@ namespace
     std::string report;
     bool requireComplete;
     bool requireAllParticles;
+    bool overwrite;
   };
 
   Config loadConfig(const std::string& filename)
   {
     const YAML::Node root = YAML::LoadFile(filename);
+    if (!root.IsMap())
+      throw std::runtime_error("Energy-closure card must be a YAML map");
+    postprocess_common::validateMapKeys(root, "top level",
+      {"input", "output"});
     const YAML::Node input = required(root, "input");
     const YAML::Node output = required(root, "output");
-    if (!root.IsMap() || !input.IsMap() || !output.IsMap())
+    if (!input.IsMap() || !output.IsMap())
       throw std::runtime_error("input and output must be YAML maps");
+    postprocess_common::validateMapKeys(input, "input", {
+      "signal_entry_particle_plane", "signal_exit_particle_plane",
+      "baseline_entry_particle_plane", "baseline_exit_particle_plane",
+      "signal_entry_field_reconstruction",
+      "signal_exit_field_reconstruction",
+      "baseline_entry_field_reconstruction",
+      "baseline_exit_field_reconstruction", "field_analysis",
+      "require_complete", "require_all_particles"
+    });
+    postprocess_common::validateMapKeys(output, "output",
+      {"report", "overwrite"});
 
     Config config;
     config.signalEntry = resolvePath(filename,
@@ -180,6 +197,10 @@ namespace
         "reconstructions for the lab control-volume report");
     config.report = resolvePath(filename,
       required(output, "report").as<std::string>());
+    config.overwrite = output["overwrite"] ?
+      output["overwrite"].as<bool>() : false;
+    postprocess_common::requireOutputAvailable(
+      config.report, config.overwrite);
     return config;
   }
 

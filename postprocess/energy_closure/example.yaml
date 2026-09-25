@@ -22,3 +22,4 @@ input:
 
 output:
   report: energy-closure-report.yaml
+  overwrite: false

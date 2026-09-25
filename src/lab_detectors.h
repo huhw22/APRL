@@ -9,6 +9,7 @@
 #include "config.h"
 #include "eb_field.h"
 #include "eb_particles.h"
+#include "run_metadata.h"
 
 namespace fel
 {
@@ -39,7 +40,9 @@ namespace fel
                        const FieldVector<Double>& localOriginBox,
                        const BoostFrameTransform& frame,
                        MPI_Comm communicator,
-                       const LabFieldDetectorBackground* externalBackground = NULL);
+                       const LabFieldDetectorBackground* externalBackground = NULL,
+                       bool overwrite = false,
+                       const RunMetadata* metadata = NULL);
     ~LabDetectorManager();
 
     LabDetectorManager(const LabDetectorManager&) = delete;

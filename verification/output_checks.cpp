@@ -4,6 +4,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <fstream>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
@@ -75,6 +76,21 @@ namespace
     H5Aclose(attribute);
     requireStatus(status, std::string("Cannot read attribute ") + name);
     return value;
+  }
+
+  std::string readStringAttribute(hid_t object, const char* name)
+  {
+    hid_t attribute = H5Aopen(object, name, H5P_DEFAULT);
+    requireHandle(attribute, std::string("Cannot open attribute ") + name);
+    hid_t type = H5Aget_type(attribute);
+    requireHandle(type, std::string("Cannot inspect attribute ") + name);
+    const std::size_t size = H5Tget_size(type);
+    std::vector<char> buffer(size + 1, '\0');
+    const herr_t status = H5Aread(attribute, type, buffer.data());
+    H5Tclose(type);
+    H5Aclose(attribute);
+    requireStatus(status, std::string("Cannot read attribute ") + name);
+    return std::string(buffer.data());
   }
 
   std::vector<hsize_t> dimensions(hid_t dataset)
@@ -206,7 +222,8 @@ namespace
   int checkDetector(const std::string& fieldFilename,
                     const std::string& particleFilename,
                     std::uint64_t expectedParticles,
-                    double minimumInterval)
+                    double minimumInterval,
+                    const std::string& manifestFilename)
   {
     hid_t file = H5Fopen(fieldFilename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     requireHandle(file, "Cannot open field-plane file: " + fieldFilename);
@@ -218,6 +235,13 @@ namespace
       }
     require(readByteScalar(group, "complete") == 1,
       "Field-plane output is not marked complete");
+    const std::string runId = readStringAttribute(group, "run_id");
+    require(!runId.empty(), "Field-plane run_id is empty");
+    require(!readStringAttribute(group,
+      "configuration_digest_fnv1a64").empty(),
+      "Field-plane configuration digest is empty");
+    require(!readStringAttribute(group, "source_revision").empty(),
+      "Field-plane source revision is empty");
     const std::uint64_t committed =
       readUnsignedScalar(group, "committed_samples");
     require(committed >= 2, "Field-plane cadence test needs at least 2 samples");
@@ -272,6 +296,8 @@ namespace
       H5P_DEFAULT);
     requireHandle(particleGroup, "Cannot reopen /particle_plane");
     const double planeZ = readDoubleAttribute(particleGroup, "plane_z_m");
+    require(readStringAttribute(particleGroup, "run_id") == runId,
+      "Field and particle detector files have different run_id values");
     H5Gclose(particleGroup);
     H5Fclose(particleFile);
     for (std::size_t particle = 0; particle < particles.size(); ++particle)
@@ -283,8 +309,73 @@ namespace
         require(nearlyEqual(particles[particle].position[2], planeZ,
           1.0e-15, 1.0e-12), "Particle crossing is not on the detector plane");
       }
+    std::ifstream manifest(manifestFilename.c_str());
+    require(static_cast<bool>(manifest), "Cannot open run manifest");
+    const std::string manifestText((std::istreambuf_iterator<char>(manifest)),
+      std::istreambuf_iterator<char>());
+    require(manifestText.find(runId) != std::string::npos,
+      "Run manifest does not contain the detector run_id");
+    require(manifestText.find("configuration_yaml: |") != std::string::npos,
+      "Run manifest does not preserve the input YAML");
     std::cout << "detector: samples=" << committed
               << ", particle crossings=" << particles.size() << '\n';
+    return EXIT_SUCCESS;
+  }
+
+  void requireCompleteGroup(const std::string& filename,
+                            const char* groupName,
+                            const char* finiteDataset)
+  {
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    requireHandle(file, "Cannot open post-process output: " + filename);
+    hid_t group = H5Gopen2(file, groupName, H5P_DEFAULT);
+    if (group < 0)
+      {
+        H5Fclose(file);
+        throw std::runtime_error("Missing expected group " +
+          std::string(groupName) + " in " + filename);
+      }
+    require(readByteScalar(group, "complete") == 1,
+      "Post-process output is not marked complete: " + filename);
+    hid_t dataset = H5Dopen2(group, finiteDataset, H5P_DEFAULT);
+    requireHandle(dataset, "Missing numerical result " +
+      std::string(finiteDataset) + " in " + filename);
+    const std::vector<hsize_t> shape = dimensions(dataset);
+    hsize_t count = 1;
+    for (std::size_t axis = 0; axis < shape.size(); ++axis)
+      count *= shape[axis];
+    require(count > 0, "Post-process numerical result is empty: " + filename);
+    std::vector<double> values(static_cast<std::size_t>(count), 0.0);
+    requireStatus(H5Dread(dataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+      H5P_DEFAULT, values.data()), "Cannot read numerical result: " + filename);
+    for (std::size_t i = 0; i < values.size(); ++i)
+      require(std::isfinite(values[i]),
+        "Post-process numerical result contains NaN/Inf: " + filename);
+    H5Dclose(dataset);
+    H5Gclose(group);
+    H5Fclose(file);
+  }
+
+  int checkPostprocess(const std::string& reconstruction,
+                       const std::string& fieldAnalysis,
+                       const std::string& trajectory,
+                       const std::string& power,
+                       const std::string& closure)
+  {
+    requireCompleteGroup(reconstruction, "/reconstructed_field", "time_s");
+    requireCompleteGroup(fieldAnalysis, "/field_plane_analysis",
+      "mean_energy_spectrum_J_per_eV");
+    requireCompleteGroup(trajectory, "/far_field", "band_energy_J");
+    requireCompleteGroup(power, "/power_comparison",
+      "signal_forward_power_W");
+    std::ifstream report(closure.c_str());
+    require(static_cast<bool>(report), "Cannot open energy-closure report");
+    const std::string text((std::istreambuf_iterator<char>(report)),
+      std::istreambuf_iterator<char>());
+    require(text.find("particle_energy_loss_J") != std::string::npos &&
+            text.find("forward_radiation_band_energy_J") != std::string::npos,
+      "Energy-closure report is missing required budget fields");
+    std::cout << "post-process chain: all outputs complete and finite\n";
     return EXIT_SUCCESS;
   }
 
@@ -435,15 +526,15 @@ int main(int argc, char** argv)
   try
     {
       require(argc >= 2,
-        "usage: fel_output_checks <detector|compare-particles|ledger> ...");
+        "usage: fel_output_checks <detector|compare-particles|ledger|postprocess> ...");
       const std::string command(argv[1]);
       if (command == "detector")
         {
-          require(argc == 6,
-            "detector needs FIELD_H5 PARTICLE_H5 COUNT MIN_INTERVAL_S");
+          require(argc == 7,
+            "detector needs FIELD_H5 PARTICLE_H5 COUNT MIN_INTERVAL_S MANIFEST");
           return checkDetector(argv[2], argv[3],
             static_cast<std::uint64_t>(std::stoull(argv[4])),
-            std::stod(argv[5]));
+            std::stod(argv[5]), argv[6]);
         }
       if (command == "compare-particles")
         {
@@ -456,6 +547,12 @@ int main(int argc, char** argv)
         {
           require(argc == 3, "ledger needs ENERGY_LEDGER_H5");
           return checkLedger(argv[2]);
+        }
+      if (command == "postprocess")
+        {
+          require(argc == 7,
+            "postprocess needs RECONSTRUCTION ANALYSIS TRAJECTORY POWER CLOSURE");
+          return checkPostprocess(argv[2], argv[3], argv[4], argv[5], argv[6]);
         }
       throw std::runtime_error("unknown output-check command: " + command);
     }

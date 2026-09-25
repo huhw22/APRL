@@ -103,6 +103,7 @@ namespace radiation
 
     std::string outputFile;
     unsigned int compression;
+    bool overwrite;
     CoherenceConfig coherence;
     TimeAverageConfig timeAverage;
 

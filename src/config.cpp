@@ -3,7 +3,10 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <initializer_list>
+#include <fstream>
+#include <iomanip>
 #include <limits>
 #include <set>
 #include <sstream>
@@ -82,8 +85,13 @@ namespace fel
       validateMapKeys(root, "top level", {
         "units", "runtime", "mesh", "radiation_resolution", "boundary",
         "initial_self_field", "beam", "sources", "detectors",
-        "particle_retirement", "stop", "trajectory", "energy_ledger"
+        "particle_retirement", "stop", "trajectory", "energy_ledger",
+        "output"
       });
+
+      const YAML::Node output = root["output"];
+      if (output)
+        validateMapKeys(output, "output", {"overwrite", "manifest"});
 
       const YAML::Node units = root["units"];
       if (units)
@@ -529,6 +537,33 @@ namespace fel
         }
       return name != "." && name != "..";
     }
+
+    std::string readTextFile(const std::string& filename)
+    {
+      std::ifstream stream(filename.c_str(), std::ios::in | std::ios::binary);
+      if (!stream)
+        throw std::runtime_error("Cannot reopen YAML configuration: " +
+          filename);
+      std::ostringstream contents;
+      contents << stream.rdbuf();
+      if (!stream.good() && !stream.eof())
+        throw std::runtime_error("Cannot read YAML configuration bytes: " +
+          filename);
+      return contents.str();
+    }
+
+    std::string fnv1a64(const std::string& value)
+    {
+      std::uint64_t hash = UINT64_C(14695981039346656037);
+      for (std::size_t i = 0; i < value.size(); ++i)
+        {
+          hash ^= static_cast<unsigned char>(value[i]);
+          hash *= UINT64_C(1099511628211);
+        }
+      std::ostringstream result;
+      result << std::hex << std::setfill('0') << std::setw(16) << hash;
+      return result.str();
+    }
   }
 
   UnitSystem::UnitSystem() : length(1.0), time(1.0) {}
@@ -585,6 +620,10 @@ namespace fel
       resourceReport(true), resourceProgressIntervalSteps(1000),
       resourceCalibrationSteps(1), memorySafetyFactor(1.25),
       timeSafetyFactor(1.25)
+  {}
+
+  OutputPolicyConfig::OutputPolicyConfig()
+    : overwrite(false), manifest("run-manifest.yaml")
   {}
 
   bool RuntimeConfig::interactive() const
@@ -656,6 +695,22 @@ namespace fel
     validateConfigurationKeys(root);
 
     SimulationConfig result;
+    result.configurationPath = filename;
+    result.configurationText = readTextFile(filename);
+    result.configurationDigest = fnv1a64(result.configurationText);
+
+    const YAML::Node outputPolicy = root["output"];
+    if (outputPolicy)
+      {
+        if (outputPolicy["overwrite"])
+          result.output.overwrite = outputPolicy["overwrite"].as<bool>();
+        if (outputPolicy["manifest"])
+          result.output.manifest =
+            outputPolicy["manifest"].as<std::string>();
+        if (result.output.manifest.empty())
+          throw configError(outputPolicy["manifest"],
+            "output manifest path cannot be empty");
+      }
     const YAML::Node units = root["units"];
     if (units)
       {

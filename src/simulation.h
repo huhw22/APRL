@@ -20,6 +20,7 @@
 #include "energy_ledger.h"
 #include "lab_detectors.h"
 #include "particle_boundary.h"
+#include "run_metadata.h"
 #include "trajectory_writer.h"
 
 namespace fel
@@ -40,6 +41,7 @@ namespace fel
     };
 
     void initialize();
+    void preflightOutputPaths() const;
     void initializeGeometry();
     void validateAndReportRadiationResolution() const;
     void initializeParticles();
@@ -85,6 +87,7 @@ namespace fel
     MPI_Comm communicator_;
     int rank_;
     int size_;
+    RunMetadata runMetadata_;
 
     EBGridGeometry globalGeometry_;
     EBGridGeometry localGeometry_;

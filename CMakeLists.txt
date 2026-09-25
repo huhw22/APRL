@@ -4,10 +4,30 @@ cmake_minimum_required(VERSION 3.16)
 # left undecided; the executable name "simulator" is also temporary.
 project(unnamed_fel_program LANGUAGES CXX)
 
+execute_process(COMMAND git rev-parse --verify HEAD
+  WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+  OUTPUT_VARIABLE FEL_SOURCE_REVISION
+  OUTPUT_STRIP_TRAILING_WHITESPACE
+  ERROR_QUIET)
+if(NOT FEL_SOURCE_REVISION)
+  set(FEL_SOURCE_REVISION "unknown")
+else()
+  execute_process(COMMAND git status --porcelain --untracked-files=normal
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    OUTPUT_VARIABLE FEL_SOURCE_DIRTY
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET)
+  if(FEL_SOURCE_DIRTY)
+    string(APPEND FEL_SOURCE_REVISION "-dirty")
+  endif()
+endif()
+
 include(CTest)
 
 option(FEL_REQUIRE_PARALLEL_HDF5
   "Reject serial HDF5; required for multi-rank particle input" ON)
+option(FEL_BUILD_POSTPROCESSORS
+  "Build the five production radiation post-processors" ON)
 
 find_package(MPI REQUIRED COMPONENTS CXX)
 set(HDF5_PREFER_PARALLEL TRUE)
@@ -17,6 +37,9 @@ find_package(Threads REQUIRED)
 find_package(ZLIB QUIET)
 find_package(LibLZMA QUIET)
 find_package(GSL QUIET)
+
+set(FEL_BUILD_DESCRIPTION
+  "${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION},${CMAKE_BUILD_TYPE},HDF5-${HDF5_VERSION}")
 
 if(FEL_REQUIRE_PARALLEL_HDF5 AND NOT HDF5_IS_PARALLEL)
   message(FATAL_ERROR
@@ -55,6 +78,7 @@ set(DIRECT_EB_SOURCES
   src/particle_initializer.cpp
   src/particle_boundary.cpp
   src/runtime_control.cpp
+  src/run_metadata.cpp
   src/runtime_util.cpp
   src/simulation.cpp
   src/trajectory_writer.cpp
@@ -74,6 +98,9 @@ target_link_libraries(direct_eb_core
 )
 target_compile_definitions(direct_eb_core
   PUBLIC OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX
+  PRIVATE
+    FEL_SOURCE_REVISION="${FEL_SOURCE_REVISION}"
+    FEL_BUILD_DESCRIPTION="${FEL_BUILD_DESCRIPTION}"
 )
 target_compile_options(direct_eb_core PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
@@ -200,6 +227,14 @@ install(DIRECTORY docs config examples
 install(DIRECTORY postprocess/
   DESTINATION share/unnamed_fel_program/postprocess
   FILES_MATCHING PATTERN "example.yaml")
+
+if(FEL_BUILD_POSTPROCESSORS)
+  add_subdirectory(postprocess/trajectory_radiation)
+  add_subdirectory(postprocess/field_reconstruction)
+  add_subdirectory(postprocess/field_plane_analysis)
+  add_subdirectory(postprocess/field_power_compare)
+  add_subdirectory(postprocess/energy_closure)
+endif()
 
 if(BUILD_TESTING)
   add_subdirectory(verification)

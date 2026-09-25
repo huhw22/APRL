@@ -3,10 +3,10 @@ runtime: {mode: throughput, resource_monitor: {enabled: false}}
 output: {overwrite: true, manifest: run-manifest.yaml}
 mesh:
   field_solver: cowan-z
-  cells: [12, 12, 80]
+  cells: [12, 12, 100]
   cell_size: [0.5, 0.5, 0.1]
   center: [0.0, 0.0, 0.0]
-  duration: 6.0
+  duration: 12.0
   boost_gamma: 2.0
   particle_steps_per_undulator_period: 1
 boundary: {type: pec}
@@ -20,21 +20,35 @@ beam:
     gamma: 4.0
     direction: [0.0, 0.0, 1.0]
     center: [0.0, 0.0, 0.0]
-    sigma_position: [0.0, 0.0, 0.0]
+    sigma_position: [0.02, 0.02, 0.01]
     sigma_proper_velocity: [0.0, 0.0, 0.0]
-    random_seed: 12
+    random_seed: 41
 sources: {incident_waves: [], magnetic_elements: []}
 detectors:
   enabled: true
   directory: detectors
   field_planes:
-    - name: field
+    - name: entry-field
+      z: 0.0
+      rhythm: 0.2
+      buffer_samples: 4
+      compression: 0
+      particle_background: {enabled: false}
+    - name: exit-field
       z: 0.5
       rhythm: 0.2
-      buffer_samples: 2
+      buffer_samples: 4
       compression: 0
       particle_background: {enabled: false}
   particle_planes:
-    - {name: particles, z: 0.5, buffer_records: 8, compression: 0}
+    - {name: entry-particles, z: 0.0, buffer_records: 8, compression: 0}
+    - {name: exit-particles, z: 0.5, buffer_records: 8, compression: 0}
 stop: {mode: after-last-element}
-trajectory: {enabled: false}
+trajectory:
+  enabled: true
+  directory: trajectory
+  basename: particles
+  rhythm: 0.2
+  buffer_records: 32
+  flush_every_samples: 4
+  compression: 0
