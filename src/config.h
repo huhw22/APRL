@@ -35,6 +35,21 @@ namespace fel
     MeshConfig();
   };
 
+  /* Optional target-band preflight.  The target is an on-axis, forward
+   * laboratory photon energy.  Only strict Nyquist failures are fatal; the
+   * configurable quality levels below emit warnings and never change the
+   * Maxwell or detector algorithms. */
+  struct RadiationResolutionConfig
+  {
+    bool enabled;
+    Double maximumPhotonEnergyEV;
+    Double warningGridPointsPerWavelength;
+    Double warningMaxwellSamplesPerCycle;
+    Double warningDetectorSamplesPerCycle;
+
+    RadiationResolutionConfig();
+  };
+
   enum class EBBoundaryType
   {
     Pec,
@@ -289,6 +304,7 @@ namespace fel
   {
     UnitSystem inputUnits;
     MeshConfig mesh;
+    RadiationResolutionConfig radiationResolution;
     BoundaryConfig boundary;
     InitialSelfFieldConfig initialSelfField;
     BeamReferenceConfig reference;

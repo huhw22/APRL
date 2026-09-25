@@ -49,4 +49,6 @@ Consequently a high value can converge an analytical-device orbit while the
 radiation field remains under-resolved. Production cards must refine the
 Maxwell grid/time step against the highest radiation band independently. A
 substep convergence scan should hold the Maxwell grid fixed first; the field
-grid must then receive its own convergence scan.
+grid must then receive its own convergence scan. The optional
+`radiation_resolution` YAML block performs the strict on-axis Nyquist checks
+and prints non-binding quality warnings; it does not replace that scan.

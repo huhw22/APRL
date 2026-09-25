@@ -27,6 +27,15 @@ mesh:
   particle_steps_per_undulator_period: 1
   maximum_particle_substeps: 4096
 
+# The smoke grid is not an EUV production grid. This optional target-band
+# check is therefore shown but disabled.
+radiation_resolution:
+  enabled: false
+  maximum_photon_energy_eV: 124.0
+  warning_grid_points_per_wavelength: 8.0
+  warning_maxwell_samples_per_cycle: 8.0
+  warning_detector_samples_per_cycle: 8.0
+
 boundary:
   type: cpml
   cells: [8, 8, 8]

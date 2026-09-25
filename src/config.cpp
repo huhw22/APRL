@@ -295,6 +295,13 @@ namespace fel
     cells[0] = cells[1] = cells[2] = 0;
   }
 
+  RadiationResolutionConfig::RadiationResolutionConfig()
+    : enabled(false), maximumPhotonEnergyEV(0.0),
+      warningGridPointsPerWavelength(8.0),
+      warningMaxwellSamplesPerCycle(8.0),
+      warningDetectorSamplesPerCycle(8.0)
+  {}
+
   BoundaryConfig::BoundaryConfig()
     : type(EBBoundaryType::Pec), cpml()
   {}
@@ -503,6 +510,51 @@ namespace fel
             "maximum_particle_substeps exceeds the unsigned-int range");
         result.mesh.maximumParticleSubsteps =
           static_cast<unsigned int>(maximumSubsteps);
+      }
+
+    const YAML::Node radiationResolution = root["radiation_resolution"];
+    if (radiationResolution)
+      {
+        if (!radiationResolution.IsMap())
+          throw configError(radiationResolution,
+            "radiation_resolution must be a map");
+        result.radiationResolution.enabled =
+          radiationResolution["enabled"] ?
+          radiationResolution["enabled"].as<bool>() : true;
+        if (result.radiationResolution.enabled)
+          {
+            result.radiationResolution.maximumPhotonEnergyEV = finiteDouble(
+              required(radiationResolution, "maximum_photon_energy_eV"),
+              "radiation-resolution maximum photon energy");
+            if (!(result.radiationResolution.maximumPhotonEnergyEV > 0.0))
+              throw configError(
+                radiationResolution["maximum_photon_energy_eV"],
+                "maximum_photon_energy_eV must be positive");
+          }
+        if (radiationResolution["warning_grid_points_per_wavelength"])
+          result.radiationResolution.warningGridPointsPerWavelength =
+            finiteDouble(
+              radiationResolution["warning_grid_points_per_wavelength"],
+              "radiation-resolution grid warning level");
+        if (radiationResolution["warning_detector_samples_per_cycle"])
+          result.radiationResolution.warningDetectorSamplesPerCycle =
+            finiteDouble(
+              radiationResolution["warning_detector_samples_per_cycle"],
+              "radiation-resolution detector warning level");
+        if (radiationResolution["warning_maxwell_samples_per_cycle"])
+          result.radiationResolution.warningMaxwellSamplesPerCycle =
+            finiteDouble(
+              radiationResolution["warning_maxwell_samples_per_cycle"],
+              "radiation-resolution Maxwell warning level");
+        if (!(result.radiationResolution.warningGridPointsPerWavelength >=
+              2.0) ||
+            !(result.radiationResolution.warningMaxwellSamplesPerCycle >=
+              2.0) ||
+            !(result.radiationResolution.warningDetectorSamplesPerCycle >=
+              2.0))
+          throw configError(radiationResolution,
+            "radiation-resolution warning levels must be at least the "
+            "two-sample Nyquist limit");
       }
 
     const YAML::Node boundary = required(root, "boundary");

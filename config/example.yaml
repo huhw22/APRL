@@ -26,6 +26,15 @@ mesh:
   particle_steps_per_undulator_period: 1
   maximum_particle_substeps: 4096
 
+# Optional production preflight for the shortest laboratory wavelength of
+# interest. Flip enabled to true after setting the intended EUV upper energy.
+radiation_resolution:
+  enabled: false
+  maximum_photon_energy_eV: 124.0
+  warning_grid_points_per_wavelength: 8.0
+  warning_maxwell_samples_per_cycle: 8.0
+  warning_detector_samples_per_cycle: 8.0
+
 boundary:
   type: cpml
   cells: [8, 8, 8]

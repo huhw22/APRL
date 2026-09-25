@@ -86,6 +86,48 @@ the Maxwell Nyquist frequency, resolve intra-step radiation current, or permit
 a coarser radiation grid. The value `1` in the committed examples is only for
 smoke testing. See `docs/PARTICLE_SUBCYCLING.md` for the numerical contract.
 
+## Optional radiation-resolution preflight
+
+```yaml
+radiation_resolution:
+  enabled: true
+  maximum_photon_energy_eV: 124.0
+  warning_grid_points_per_wavelength: 8.0
+  warning_maxwell_samples_per_cycle: 8.0
+  warning_detector_samples_per_cycle: 8.0
+```
+
+This block declares the highest laboratory photon energy that the current run
+is intended to interpret. It is independent of how that EUV frequency arose:
+the program does not assume an FEL resonance formula, a bunching harmonic, or
+a particular magnetic element. The check models a paraxial forward (`+z`)
+laboratory mode, transforms its frequency and wavelength into the boosted
+frame, and reports:
+
+- longitudinal grid points per boosted wavelength;
+- Maxwell/current-deposition samples per boosted optical cycle;
+- for every field plane, the conservative realized laboratory sample gap and
+  samples per target cycle after quantization to complete Maxwell steps.
+
+Only an unavoidable Nyquist failure is fatal: the grid and Maxwell update must
+both exceed two samples per boosted wavelength/cycle, and an enabled field
+plane must exceed two samples per laboratory target cycle. Error messages give
+the limiting `dz`, `dt`, or detector `rhythm`. The three configurable warning
+levels default to eight; falling below them only emits a warning and never
+changes the algorithm. Cowan-z still has exact axial vacuum phase velocity for
+resolved modes, so the appropriate production margin must be established by a
+refinement scan rather than by a universal hard points-per-wavelength rule.
+
+When the block is absent or `enabled: false`, no target frequency is inferred
+from the undulator or bunch and no target-band restriction is applied; startup
+prints that the check is disabled. No higher-order E/B sampling, extra field
+state, communication, or time-loop work is introduced.
+
+The preflight intentionally does not impose `dx/dy < wavelength` for a
+paraxial on-axis carrier. Transverse envelope resolution, accepted angle and
+aperture, macro-particle noise, CPML reflection, pulse-window length and
+off-axis numerical dispersion remain problem-specific convergence checks.
+
 ## Field boundary
 
 The boundary policy is explicit and required. Production-oriented no-seed

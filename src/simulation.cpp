@@ -289,6 +289,7 @@ namespace fel
         "Direct E/B solver requires boost_gamma >= 1");
 
     initializeGeometry();
+    validateAndReportRadiationResolution();
     initializeSources();
 
     if (sources_.maxwellIncidentWaveCount() > 0 &&
@@ -470,6 +471,165 @@ namespace fel
           logRoot(communicator_,
             "WARNING: initial_self_field is disabled; the Maxwell state does not satisfy Gauss's law for the input bunch and startup radiation can contaminate the result.");
       }
+  }
+
+  void Simulation::validateAndReportRadiationResolution() const
+  {
+    const RadiationResolutionConfig& target = config_.radiationResolution;
+    if (!target.enabled)
+      {
+        if (rank_ == 0)
+          logRoot(communicator_,
+            "WARNING: radiation_resolution is disabled; no target-band "
+            "Nyquist check is being made. This does not affect generic "
+            "particle/field runs, but production radiation cards should "
+            "declare maximum_photon_energy_eV.");
+        return;
+      }
+
+    const Double photonEnergyLab = target.maximumPhotonEnergyEV;
+    const Double gamma = config_.mesh.boostGamma;
+    const Double rapidityFactor = gamma +
+      BoostFrameTransform::gammaBetaFromGamma(gamma);
+    const Double onAxisDoppler = 1.0 / rapidityFactor;
+    const Double periodLab = PLANCK_EV_SECOND / photonEnergyLab;
+    const Double wavelengthLab = SI::c * periodLab;
+    const Double periodBox = periodLab / onAxisDoppler;
+    const Double wavelengthBox = wavelengthLab / onAxisDoppler;
+    const Double gridPoints = wavelengthBox / globalGeometry_.dz;
+    const Double maxwellSamples = periodBox / globalGeometry_.dt;
+    const Double nyquistTolerance = 128.0 *
+      std::numeric_limits<Double>::epsilon();
+
+    if (!(gridPoints > 2.0 * (1.0 + nyquistTolerance)) ||
+        !(maxwellSamples > 2.0 * (1.0 + nyquistTolerance)))
+      {
+        std::ostringstream message;
+        message << std::setprecision(10)
+          << "Radiation target at " << photonEnergyLab
+          << " eV is below the strict on-axis +z Nyquist resolution: "
+          << "lab wavelength=" << wavelengthLab
+          << " m, boosted wavelength=" << wavelengthBox
+          << " m, z points/wavelength=" << gridPoints
+          << ", Maxwell samples/boosted cycle=" << maxwellSamples
+          << ". Both must exceed 2. Refine mesh.cell_size z below "
+          << 0.5 * wavelengthBox << " m and/or reduce the Maxwell dt below "
+          << 0.5 * periodBox
+          << " s. Cowan-z uses dt=dz/c, so refining dz satisfies both. "
+             "This guard only covers a forward on-axis mode.";
+        throw std::runtime_error(message.str());
+      }
+
+    if (rank_ == 0)
+      {
+        std::ostringstream message;
+        message << std::setprecision(10)
+          << "Radiation-resolution target (forward on-axis lab mode): "
+          << "maximum photon energy=" << photonEnergyLab
+          << " eV, lab wavelength=" << wavelengthLab
+          << " m, boosted photon energy="
+          << photonEnergyLab * onAxisDoppler
+          << " eV, boosted wavelength=" << wavelengthBox
+          << " m; z points/wavelength=" << gridPoints
+          << ", Maxwell/current samples per boosted cycle="
+          << maxwellSamples << ". Strict Nyquist passed.";
+        logRoot(communicator_, message.str());
+        if (gridPoints < target.warningGridPointsPerWavelength ||
+            maxwellSamples < target.warningMaxwellSamplesPerCycle)
+          {
+            std::ostringstream warning;
+            warning << std::setprecision(8)
+              << "WARNING: target-band grid/current sampling is below a "
+                 "configured quality level (z=" << gridPoints << " versus "
+              << target.warningGridPointsPerWavelength
+              << " points/wavelength, time=" << maxwellSamples << " versus "
+              << target.warningMaxwellSamplesPerCycle
+              << " Maxwell samples/cycle"
+              << "). This is not a hard validity limit: Cowan-z has exact "
+                 "resolved on-axis vacuum phase velocity, but source "
+                 "deposition, interpolation and amplitude still require a "
+                 "problem-specific refinement scan.";
+            logRoot(communicator_, warning.str());
+          }
+      }
+
+    const Double detectorFieldStepLab = globalGeometry_.dt / gamma;
+    for (std::size_t index = 0;
+         index < config_.detectors.fieldPlanes.size(); ++index)
+      {
+        const FieldDetectorPlaneConfig& plane =
+          config_.detectors.fieldPlanes[index];
+        const Double requestedSteps = plane.rhythm / detectorFieldStepLab;
+        const Double roundingTolerance = 128.0 *
+          std::numeric_limits<Double>::epsilon() *
+          std::max(1.0, std::abs(requestedSteps));
+        const Double fieldSteps = std::max(
+          1.0, std::ceil(requestedSteps - roundingTolerance));
+        const Double maximumRealizedGap =
+          fieldSteps * detectorFieldStepLab;
+        const Double detectorSamples = periodLab / maximumRealizedGap;
+        if (!(detectorSamples > 2.0 * (1.0 + nyquistTolerance)))
+          {
+            std::ostringstream message;
+            message << std::setprecision(10)
+              << "Field detector '" << plane.name << "' cannot Nyquist-sample "
+              << photonEnergyLab << " eV: requested rhythm=" << plane.rhythm
+              << " s, one Maxwell step at the fixed lab plane="
+              << detectorFieldStepLab
+              << " s, conservative realized gap=" << maximumRealizedGap
+              << " s, samples/cycle=" << detectorSamples
+              << ". More than 2 are required.";
+            if (!(detectorFieldStepLab < 0.5 * periodLab))
+              message << " Refine the Maxwell step below "
+                      << 0.5 * gamma * periodLab
+                      << " s in the boosted frame";
+            else
+              {
+                const Double maximumSteps = std::max(1.0, std::floor(
+                  0.5 * periodLab / detectorFieldStepLab -
+                  nyquistTolerance));
+                message << " Set detector rhythm to at most "
+                        << maximumSteps * detectorFieldStepLab
+                        << " s (an integer number of fixed-plane Maxwell "
+                           "increments below half a target cycle)";
+              }
+            message << ". No higher-order temporal reconstruction is assumed.";
+            throw std::runtime_error(message.str());
+          }
+        if (rank_ == 0)
+          {
+            std::ostringstream message;
+            message << std::setprecision(10)
+              << "Field detector '" << plane.name
+              << "' target-band cadence: requested rhythm=" << plane.rhythm
+              << " s, fixed-plane Maxwell increment="
+              << detectorFieldStepLab
+              << " s, conservative realized gap=" << maximumRealizedGap
+              << " s, samples/cycle=" << detectorSamples
+              << ". Strict Nyquist passed.";
+            logRoot(communicator_, message.str());
+            if (detectorSamples <
+                target.warningDetectorSamplesPerCycle)
+              {
+                std::ostringstream warning;
+                warning << std::setprecision(8)
+                  << "WARNING: field detector '" << plane.name
+                  << "' has fewer than "
+                  << target.warningDetectorSamplesPerCycle
+                  << " samples per target cycle. Spectral amplitude and "
+                     "phase should be checked by reducing both detector "
+                     "rhythm and, when necessary, the Maxwell step.";
+                logRoot(communicator_, warning.str());
+              }
+          }
+      }
+
+    if (rank_ == 0)
+      logRoot(communicator_,
+        "Radiation-resolution scope: no optical-wavelength condition is "
+        "imposed on dx/dy for an on-axis paraxial carrier. Transverse "
+        "envelope, angular aperture, macro-particle noise, CPML reflection "
+        "and spectral-window convergence remain problem-dependent checks.");
   }
 
   void Simulation::initializeParticleSelfField()
