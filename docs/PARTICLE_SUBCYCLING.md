@@ -22,7 +22,7 @@ required count exceeds that limit, initialization stops before field
 allocation and reports two alternatives: raise the explicit limit or refine
 the Maxwell step (including a maximum Cowan-z `cell_size` z suggestion).
 
-## What one substep does
+## Substep behavior
 
 At the start of a Maxwell step, the code samples staggered grid E/B once at
 the particle position. That grid sample is held fixed while a sequence of

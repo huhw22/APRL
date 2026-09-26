@@ -118,16 +118,16 @@ event do not exist.
 
 The comparison measures whether a force-free continuation is accurate over
 the chosen reference distance. It does not by itself prove that a later field
-subtraction is exact. A useful validation sequence is: check the two-plane
+subtraction is exact. The validation sequence is: check the two-plane
 orbit errors, then use full trajectories only for a very small bunch to compare
 the existing trajectory-to-far-field result with the expected analytical
 spectrum.
 
 ## Background-subtraction boundary
 
-The main field file currently remains the raw total Maxwell field. The detector
-API also has a nullable laboratory background sampler for future analytical
-seed-laser subtraction; it is currently empty and recorded as
+The main field file contains the raw total Maxwell field. The nullable
+laboratory background sampler is reserved for analytical seed-laser
+subtraction; version 1 leaves it empty and records
 `external_background_subtracted=none`. Prescribed undulator fields are not
 written into the radiation-oriented field plane and therefore need no such
 subtraction.

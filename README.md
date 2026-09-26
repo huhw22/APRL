@@ -2,183 +2,167 @@
 
 [中文说明](README.zh-CN.md)
 
-**APRL** is a compact accelerator-radiation code whose name reflects its three
-core objects: accelerator particles, radiation, and Lorentz-frame simulation.
-The main executable is `aprl`.
+APRL is a C++/MPI program for accelerator-particle and radiation simulations
+in Lorentz-boosted frames. The primary executable is `aprl`. Electromagnetic
+evolution uses SI electric and magnetic fields directly; scalar and vector
+potentials are not part of the time-advance state.
 
-## Basic idea
+## Scope
 
-This is a lightweight C++/MPI code for free-electron-laser and related
-relativistic beam simulations. Electric and magnetic fields are advanced
-directly in SI units on a staggered Yee lattice. The primary Maxwell kernel is
-a Cowan/CKC controlled-dispersion stencil with exact axial vacuum propagation
-for the configured z direction; the standard Yee update remains as a
-regression option. Particles are advanced self-consistently with those fields
-while laboratory seed fields and magnetic devices are converted through an
-explicit Lorentz boost. A/phi is not part of the evolution state.
-The mesh input treats integer cell counts and physical cell sizes as the only
-authoritative geometry. Full extents are obtained by multiplication, and MPI z
-slabs use integer quotient/remainder offsets, avoiding a floating length/spacing
-division when constructing unequal-rank partitions.
+Version 1 provides the following computation paths:
 
+- self-consistent relativistic particle and Maxwell evolution;
+- Cowan/CKC controlled-dispersion propagation along the configured z axis;
+- compact CFS-CPML field boundaries and charge-continuous particle escape;
+- analytical laboratory magnetic elements transformed into the simulation
+  frame;
+- HDF5 particle input, deterministic Gaussian test input, and native Elegant
+  SDDS5 conversion through the official SDDS library;
+- fixed laboratory field and particle detector planes;
+- field-plane radiation, spectrum, polarization, coherence, and energy
+  analysis on a separate analysis host;
+- optional small-particle trajectory radiation and global energy accounting.
 
-The main radiation result is a fixed laboratory field plane. Each field plane
-can own a diagnostic-only ballistic-reference region on its left: particles
-continue their fully self-consistent push, while a single crossing record
-supplies the straight-line charged-particle background reference for later
-subtraction.
-Small test runs can additionally compare that virtual straight line with the
-same physical particle at the field plane, one paired record per particle,
-without enabling full trajectory output.
-Particle detector planes remain independent. Full laboratory particle
-histories are retained only as an optional small-particle/debug path because
-their production-scale storage cost is prohibitive. Outputs are intended for
-analysis on a separate, less expensive machine.
+The general Cowan/CPML TF/SF laser or seed-field injection path is not
+implemented in version 1. Seeded-FEL and laser-modulation calculations that
+require that boundary source are outside the validated scope.
 
-Scientific outputs are protected against accidental replacement by default.
-Each run writes a manifest and embeds one shared run identity in its HDF5
-products; see [run provenance and overwrite safety](docs/RUN_PROVENANCE.md).
+## Numerical model
 
-For small validation runs, an independent C++/MPI post-processor reconstructs
-the complex polarized far-field spectrum directly from trajectories. It
-provides angular and integrated energy spectra, Stokes data, and optional
-ensemble cross-spectral density without linking or rerunning the simulation
-core. Stable parts of a single pulse can alternatively be treated as a
-Hann-window ensemble in reduced observer time for spatial and two-frequency
-coherence analysis.
+- E and B are advanced on a staggered Yee lattice in SI units.
+- The default `cowan-z` stencil removes vacuum phase error on the axial
+  propagation direction; the standard Yee update is retained for regression.
+- Relativistic particles use a Boris pusher with optional subcycling for
+  analytical magnetic devices.
+- Initial particle self-fields are obtained from a distributed CIC
+  relativistic-Poisson solve that enforces the discrete Gauss constraint.
+- Integer cell counts and physical cell sizes define the mesh. Physical
+  extents and MPI slab offsets are constructed without floating-point cell
+  counting.
+- The inner CPML surface is the physical particle boundary. Escaping physical
+  trajectories terminate there; compact output-free carriers preserve current
+  continuity through the absorbing layer.
 
-A second standalone C++ post-processor combines a raw laboratory E/B plane
-with either its ballistic-reference crossings or a colocated particle plane.
-It deposits the crossings once, reconstructs the uniform-velocity bunch field
-with a three-dimensional FFT, writes a background-subtracted field, and
-reports the change in forward Poynting power and energy. This keeps the
-production simulation light while retaining a reproducible field-based
-radiation path on the analysis server.
+## Radiation workflow
 
-The cleaned or raw laboratory plane can then be passed to a threaded C++/FFTW
-analysis tool. It writes the forward propagating angular energy spectrum,
-Stokes data, integrated spectrum, coherent/fluctuation split, selected spatial
-cross-spectral densities, a global transverse-coherence/Gram-matrix diagnostic
-and selected two-frequency coherence. Stable portions of one run can be
-divided into energy-normalized Hann windows, keeping this large-run radiation
-path independent of trajectory storage.
+The main radiation observable is a fixed laboratory field plane. A production
+run stores the raw self-consistent Maxwell field; prescribed magnetic-device
+fields are not copied into detector output.
 
-A lightweight energy-closure diagnostic joins two laboratory particle planes
-by particle ID and compares their stable per-particle kinetic-energy loss with
-the forward field-plane radiation energy. It supports a matched zero-radiation
-run and subtracts that baseline per particle before summation, so high-gamma
-roundoff is not amplified by subtracting two total beam energies.
+Two field-analysis routes are available:
 
-An alternative, explicitly experimental radiation path ends physical particle
-push/output after the magnetic system and tapers a compact ballistic current
-carrier to zero before the field plane. It does not change the Maxwell kernel
-and is disabled by default. Because removing net charge inside the domain is
-not continuity exact, every such run must be paired with a zero-radiation
-baseline. A third C++ post-processor subtracts that baseline at the E/B-amplitude
-level, reports instantaneous forward power and band energy, and can compare
-both peak power and energy with the trajectory far field for small tests.
+1. Direct analysis of the raw field plane, including any bound particle field.
+2. Reconstruction and subtraction of a uniform-velocity particle background,
+   using either a detector-owned ballistic-reference file or a colocated
+   laboratory particle plane.
 
-The retirement route can optionally bind one terminal field detector to a
-manual frequency-protection guard. Startup uses the actual maximum laboratory
-particle gamma to verify the requested C2 transition cycles and reserves the
-same conservative gamma-times-transverse-diagonal causal distance used by the
-straight-line diagnostic. A small read-only utility estimates the
-characteristic planar-undulator resonance and the constant boost gamma that
-matches its mean longitudinal particle velocity before the user chooses the
-protected band; it never changes the input card.
+Background subtraction is performed on E/B amplitudes before Poynting power
+or spectral energy is evaluated. The ballistic-reference route is valid only
+when its left reference interval does not overlap a magnetic interaction
+region. Full trajectories are an optional validation output and are not the
+primary production record for large macro-particle counts.
 
-## Intended applications
+The analysis programs are independent executables:
 
-- seeded FEL and laser-modulation studies;
-- boosted-frame electron motion through undulators and other magnetic devices;
-- scalable laboratory field-plane production for radiation analysis;
-- numerical experiments on a direct SI E/B Maxwell-particle formulation.
+| Program | Function |
+|---|---|
+| `field_reconstruction` | Reconstruct and subtract the uniform-velocity particle field |
+| `field_plane_analysis` | Compute angular spectra, energy spectra, Stokes quantities, and coherence |
+| `trajectory_radiation` | Compute small-particle far-field radiation from laboratory trajectories |
+| `field_power_compare` | Perform signal/baseline amplitude subtraction for the experimental retirement route |
+| `energy_closure` | Compare particle-plane kinetic-energy change with field-plane radiation |
+| `energy_ledger_report` | Summarize the runtime particle/field energy ledger |
 
-Runs can end either after all still-valid particles pass the final element's
-finite interaction region, or when the laboratory boost-reference centre
-reaches a configured downstream z coordinate. Laboratory field and particle
-detectors participate in this same ordering model. A field plane has a
-left-only diagnostic interaction extent; a particle plane remains
-geometrically zero-length. Only MPI rank zero writes their HDF5 files;
-disabling detectors constructs no detector object and enters no detector
-communication.
+## Input and output
 
-The runtime policy is selected independently of outputs: `interactive` is the
-small-server test path with coordinated clean signal stopping, while
-`throughput` removes signal polling and periodic durability flushes for
-scheduled supercomputer runs.
+- Configuration uses validated YAML mappings; unknown keys are rejected.
+- Particle input uses versioned HDF5 records with SI coordinates, normalized
+  proper velocity, stable particle identifiers, and positive relative macro
+  weights.
+- Each run creates a YAML manifest and embeds one `run_id`, configuration
+  digest, source revision, and manifest path in all scientific HDF5 products.
+- Existing scientific outputs are rejected unless `output.overwrite: true` is
+  set explicitly.
+- Detector and ledger files are written only by MPI rank 0. Optional trajectory
+  output uses one file per rank.
 
-Production HDF5 input supports a positive relative weight per particle and
-normalizes those weights to the total electron count in the YAML card. The
-generated Gaussian path instead uses the requested total charge and macro-
-particle count with uniform weights. An optional root-only resource report
-gives a pre-run memory/time estimate, periodic batch-log progress, and measured
-peak resident memory and wall time without requiring a live terminal.
-Native Elegant SDDS particle pages can be converted directly in C++ through
-the official SDDS library. The converter preserves fixed-plane arrival times,
-slopes, momentum, particle IDs and optional per-row weights in an HDF5-v4
-record without an intermediate text dump; startup then performs the exact
-ballistic event-to-common-time synchronization before the Lorentz boost.
+## Runtime profiles
 
-An independent optional runtime energy ledger closes the boosted-frame budget
-across active and escaped particle kinetic energy, physical-interior E/B
-energy, six inner-CPML Poynting fluxes and prescribed-device work. It also
-tracks mean laboratory gamma, projected energy spread, linear chirp and the
-linearly detrended spread. Disabled mode adds no loops, collectives or files;
-enabled mode writes one small rank-zero HDF5 stream and has a C++ summary tool.
+`runtime.mode: interactive` enables coordinated SIGINT/SIGTERM handling and
+readable incomplete outputs for local testing. `runtime.mode: throughput`
+removes signal polling and periodic durability flushes for scheduled cluster
+runs. Disabled diagnostics allocate no buffers, open no files, and enter no
+diagnostic communication paths.
 
+The optional resource monitor reports estimated and measured resident memory,
+output bounds, calibrated seconds per step, progress, and wall time in a format
+suitable for batch-log capture.
 
-The implementation is still a development solver. Compact CFS-CPML is
-available for no-seed Cowan runs, and a temporary distributed
-CIC/relativistic-Poisson
-solve now gives the bunch a relativistic-Poisson, Gauss-consistent initial E/B
-field without retaining A/phi. Particle Boris substeps resolve analytical
-laboratory devices without raising the Maxwell cadence; grid E/B sampling,
-current deposition and field
-detectors intentionally remain on the field step. The generalized Cowan/CPML
-TF/SF seed-wave correction remains planned work. Production radiation results
-still require problem-scale convergence, initial-field distance-to-CPML
-convergence, reflection validation, and convergence of the runtime energy
-ledger. The first dense-bunch ledger closes the driven boosted-frame exchange
-to about four percent, which validates the accounting path but is not yet a
-production tolerance.
-A controlled one-electron-equivalent test gives the correct loss sign and the
-same energy scale as its finite-band forward radiation, but the `10^6`-electron
-test is dominated by changing collective/bound-field energy. One downstream
-plane alone cannot close that ledger; stored E/B energy and all boundary fluxes
-remain a production gate.
+## Validation requirements
 
-The inner CPML surface is also the physical particle boundary. A physical
-trajectory ends exactly there and becomes a compact, output-free ballistic
-carrier whose current is damped with the CPML conductivity profile. The outer
-face performs charge-conserving residual cleanup. This avoids treating the
-absorber as an observation region without creating the discontinuity caused by
-immediate particle deletion. The production path uses no dense boundary arrays
-or particle-boundary I/O.
+The required regression suite verifies configuration loading, Lorentz
+transforms, Elegant event reconstruction, Boris convergence, discrete charge
+continuity, Cowan dispersion, CPML reflection, MPI consistency, detector and
+stop behavior, HDF5 compatibility, output safety, both field-analysis routes,
+and the runtime energy-ledger data path.
+
+Passing the regression suite establishes software consistency, not convergence
+of a physical problem. Production results require parameter studies covering
+the field grid and time step, macro-particle count, particle substeps, CPML
+thickness and reflection, transverse aperture, detector window, initial-field
+boundary distance, and energy-ledger residual. The experimental particle
+retirement route is disabled by default and requires a matched zero-radiation
+baseline.
+
+## Build and test
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_COMPILER=mpic++ -DBUILD_TESTING=ON
+cmake --build build -j
+cmake --build build --target verify_required
+./build/aprl config/example.yaml
+```
+
+Parallel HDF5 is required by default for multi-rank particle input. Complete
+dependency, installation, and cluster procedures are specified in the linked
+manuals.
 
 ## Documentation
 
+### Operation and file formats
+
 - [Build, conversion, and execution](docs/BUILD_AND_RUN.md)
 - [Installation, uninstall, and dependency maintenance](docs/INSTALLATION.md)
-- [Layered testing and numerical-analysis workflow](docs/TESTING.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
-- [Run identity, manifests, and overwrite safety](docs/RUN_PROVENANCE.md)
-- [Cowan-z kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
-- [Gauss-consistent initial particle self-field](docs/INITIAL_SELF_FIELD.md)
-- [Laboratory-frame energy diagnostics and 50 A scale estimate](docs/LAB_FRAME_ENERGY_DIAGNOSTICS.md)
-- [Particle subcycling and its field-step limits](docs/PARTICLE_SUBCYCLING.md)
-- [CPML-aware particle boundary](docs/PARTICLE_OPEN_BOUNDARY.md)
-- [Particle HDF5 file specification](docs/PARTICLE_INPUT_HDF5.md)
-- [Laboratory trajectory HDF5 output](docs/TRAJECTORY_OUTPUT_HDF5.md)
-- [Trajectory-to-far-field radiation tool](docs/TRAJECTORY_RADIATION.md)
+- [Particle HDF5 input specification](docs/PARTICLE_INPUT_HDF5.md)
+- [Run identity and overwrite protection](docs/RUN_PROVENANCE.md)
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
+- [Laboratory trajectory HDF5 output](docs/TRAJECTORY_OUTPUT_HDF5.md)
+
+### Numerical methods
+
+- [Cowan-z Maxwell kernel and CPML boundary](docs/MAXWELL_COWAN_CPML.md)
+- [Gauss-consistent initial particle self-field](docs/INITIAL_SELF_FIELD.md)
+- [Particle subcycling](docs/PARTICLE_SUBCYCLING.md)
+- [CPML-aware particle boundary](docs/PARTICLE_OPEN_BOUNDARY.md)
 - [Field-detector ballistic reference region](docs/FIELD_DETECTOR_REFERENCE.md)
+
+### Radiation and energy analysis
+
 - [Particle-background field reconstruction](docs/FIELD_RECONSTRUCTION.md)
 - [Field-plane spectrum and coherence analysis](docs/FIELD_PLANE_ANALYSIS.md)
-- [Particle/field energy-closure diagnostic](docs/ENERGY_CLOSURE.md)
+- [Trajectory-to-far-field radiation](docs/TRAJECTORY_RADIATION.md)
+- [Particle/field energy closure](docs/ENERGY_CLOSURE.md)
 - [Runtime particle/field energy ledger](docs/ENERGY_LEDGER.md)
-- [Particle retirement and matched power comparison](docs/FIELD_POWER_COMPARISON.md)
-- [Numerical validation status](docs/VALIDATION.md)
-- [Current release audit and production gates](docs/RELEASE_AUDIT.md)
-- [HDF5 input example](config/example.yaml)
-- [Generated Gaussian test example](config/generated_gaussian.yaml)
+- [Laboratory-frame energy diagnostics](docs/LAB_FRAME_ENERGY_DIAGNOSTICS.md)
+- [Experimental particle retirement and power comparison](docs/FIELD_POWER_COMPARISON.md)
+
+### Verification and release status
+
+- [Test framework](docs/TESTING.md)
+- [Numerical validation record](docs/VALIDATION.md)
+- [Release readiness and production requirements](docs/RELEASE_AUDIT.md)
+
+Example inputs are provided in [`config/`](config/) and
+[`postprocess/`](postprocess/).

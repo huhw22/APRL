@@ -422,7 +422,7 @@ accumulation.
 
 ## Integer mesh and unequal-slab regression
 
-The committed mesh cards now use `cells: [40, 40, 60]` and
+The reference mesh cards use `cells: [40, 40, 60]` and
 `cell_size: [1.0, 1.0, 0.2]`. The global physical extent is produced by
 multiplication; no length/spacing quotient is rounded into a cell count.
 

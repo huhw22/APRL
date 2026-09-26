@@ -24,7 +24,7 @@ so its boosted-frame energy component need not vanish. The tools below keep
 the two observers separate instead of trying to cancel that mixing by
 subtracting unrelated scalar energies.
 
-## What can be separated at low cost
+## Low-cost separable quantities
 
 Two fixed laboratory particle planes give a numerically stable particle
 kinetic-energy change. A laboratory field plane gives the radiation contained
@@ -140,9 +140,9 @@ not a prediction for a pre-bunched beam. Current, gamma, and rms size do not
 determine the longitudinal form factor; a coherent enhancement must be
 provided manually from a separately justified bunching calculation.
 
-## Requested 50 A scale test
+## 50 A reference scale test
 
-The committed example uses `I=50 A`, `sigma_x=sigma_y=60 um`, `gamma=1174`,
+The reference example uses `I=50 A`, `sigma_x=sigma_y=60 um`, `gamma=1174`,
 `lambda_u=2.34 cm`, `K=1.093`, and `b=10 sigma`. Because no bunch duration or
 device length was specified, the fundamental results are normalized per metre
 of flat-top bunch and per undulator period. A 100-period device is included as
@@ -223,7 +223,7 @@ Doubling the longitudinal cell count at unchanged start/stop time left the
 62.45% result unchanged. Detector duration, rather than `Nz`, was the dominant
 error source in this case.
 
-## Recommended production interpretation
+## Production interpretation requirements
 
 1. Place identical laboratory particle planes before and after the magnetic
    interaction region in the signal and `K=0` control runs.

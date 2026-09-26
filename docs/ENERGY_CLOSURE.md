@@ -14,7 +14,7 @@ an optional two-plane longitudinal Poynting balance.
 See `LAB_FRAME_ENERGY_DIAGNOSTICS.md` for the interpretation and the fast
 50 A analytical scale tool.
 
-## Recommended experiment
+## Reference comparison setup
 
 Use an entrance plane before the first magnetic interaction boundary and an
 exit plane after its final fringe. The field detector must retain the complete

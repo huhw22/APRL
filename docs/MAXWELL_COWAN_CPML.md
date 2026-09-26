@@ -87,15 +87,16 @@ total, but each history is allocated only where its derivative coordinate lies
 inside a PML slab. No disabled axis and no non-PML interior point receives
 history storage. The outermost surface is terminated by PEC.
 
-Current limitations:
+Version 1 limitations:
 
-- TF/SF incident seed waves are rejected while CPML is active; their closed
-  injection surface must later be placed and corrected inside the CPML
-  interior.
+- TF/SF incident seed waves are rejected while CPML is active. Supporting this
+  combination requires a closed injection surface and complete correction
+  terms inside the CPML interior; these are not implemented in version 1.
 - Each z CPML slab must fit on its endpoint MPI rank. The program checks this
   before particle input and reports how to change ranks, z cells or thickness.
-- CPML absorbs fields. Particles retain the existing box-exit removal policy;
-  no separate particle absorber is introduced here.
+- CPML absorbs fields. Particle escape uses the CPML-aware carrier treatment
+  specified in [PARTICLE_OPEN_BOUNDARY.md](PARTICLE_OPEN_BOUNDARY.md); it does
+  not introduce a physical absorbing material model.
 
 Reference: J. A. Roden and S. D. Gedney, [Convolution PML: An efficient FDTD
 implementation of the CFS-PML for arbitrary

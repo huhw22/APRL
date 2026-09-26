@@ -19,9 +19,9 @@ with the radiating magnetic strength set to zero. The comparison tool subtracts
 this baseline at the E/B-amplitude level. This measures straight-beam
 near field plus retirement/initialization/boundary artifacts. It is a screening
 baseline, not a mathematically exact counterfactual when the magnet changes the
-particle distribution at the retirement entrance. A future state-replay
-baseline initialized from that entrance would isolate the retirement artifact
-more exactly.
+particle distribution at the retirement entrance. Entrance-state replay is
+not implemented in version 1; such a baseline would isolate the retirement
+artifact more exactly.
 
 ## Build and run
 

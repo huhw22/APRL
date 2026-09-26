@@ -224,7 +224,7 @@ for preparation outside the expensive simulation allocation. Production runs
 read the resulting HDF5 file directly and collectively, one contiguous range
 per MPI rank.
 
-The committed example HDF5 can be regenerated with:
+The reference example HDF5 can be regenerated with:
 
 ```bash
 ./build/particle_text_to_hdf5 \
@@ -246,7 +246,7 @@ batch run choose `runtime.mode: throughput`. The choice is global, so local
 signal stopping still works when trajectory output is disabled and only a
 detector plane is active.
 
-The committed cards enable the root-only resource report. Before the time
+The reference cards enable the root-only resource report. Before the time
 loop it prints an estimated per-rank peak resident set, aggregate modeled
 memory, uncompressed output upper bounds, calibrated seconds per step, and a
 wall-time upper estimate. During a long run it prints one compact progress

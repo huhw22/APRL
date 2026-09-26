@@ -42,7 +42,7 @@ d^2 W / (d omega d Omega)
   = |A|^2 / (16 pi^3 epsilon_0 c).
 ```
 
-实现依据 A. G. R. Thomas, *Phys. Rev. ST Accel. Beams* **13**, 020702 (2010)，<https://doi.org/10.1103/PhysRevSTAB.13.020702>。第一版内核使用分段直线端点形式；未来可在不改变输出契约的情况下加入高阶路径插值。
+实现依据 A. G. R. Thomas, *Phys. Rev. ST Accel. Beams* **13**, 020702 (2010)，<https://doi.org/10.1103/PhysRevSTAB.13.020702>。第一版内核仅实现分段直线端点形式，不提供高阶路径插值；现有输出契约与高阶插值兼容。
 
 ## 构建与运行
 

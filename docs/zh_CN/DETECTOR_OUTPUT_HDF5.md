@@ -15,9 +15,9 @@
 
 组属性包括 `plane_z_m`、`x_first_m`、`y_first_m`、`dx_m`、`dy_m`、`nx`、`ny`、`reference_entrance_z_m`、`reference_distance_m`、`reference_rho_guard_m` 和 `reference_gamma_guard`。x、y 为单元中心坐标。E/B 从 Yee 位置在空间上配准，不分配三维共点副本。B 在已存 leapfrog 半时刻采样，`magnetic_time_stagger` 属性明确记录这一点。
 
-场面保存 Maxwell 网格场，包括自洽场和未来的 Maxwell 注入种子场；规定磁元件场不会复制到这一面向辐射的输出，后处理若需要可从输入卡重新获得。
+场面保存自洽 Maxwell 网格场。Maxwell 注入种子场在实现后也属于网格场输出，但第一版未提供该注入路径。规定磁元件场不会复制到这一面向辐射的输出，后处理需要时可从输入卡重新获得。
 
-文件始终保存原始总场。`particle_background_status` 指示是否生成弹道参考 companion，`particle_background_validation` 指示是否启用双面比较。`external_background_subtracted` 当前为 `none`；探测器 API 已接受可空的实验室系本底采样器，未来可扣除解析注入激光而不修改传播网格。
+文件始终保存原始总场。`particle_background_status` 指示是否生成弹道参考 companion，`particle_background_validation` 指示是否启用双面比较。第一版的 `external_background_subtracted` 为 `none`。可空的实验室系本底采样器是为解析注入激光扣除保留的接口，本版本未提供相应采样器。
 
 `particle_current_policy` 记录普通物理粒子或实验性 C2 五次退休电流。退休文件还含 `particle_retirement_entrance_z_m` 与 `particle_retirement_exit_z_m`。这些都是审计元数据；写出时不会暗中扣除基线。
 

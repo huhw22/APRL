@@ -122,7 +122,7 @@ ledger sample adjacent to a fixed laboratory entrance plane:
 
 No Python package is required.
 
-## What energy-spread growth means
+## Interpretation of energy-spread growth
 
 Energy spread is a variance, not a separate reservoir in the conservation
 equation. The total particle energy is controlled by the weighted mean gamma.

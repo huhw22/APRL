@@ -25,7 +25,7 @@
 
 MPI C++ wrapper、MPI launcher 和 parallel HDF5 必须来自同一套 MPI/编译器环境。例如，用 Open MPI 的 `mpic++` 链接由 MPICH 编译的 HDF5，即使 CMake 能找到文件，也不是可用环境。集群上还应避免同时启用系统库、Conda MPI 和管理员 module 中的 HDF5。
 
-建议从干净的登录环境开始，只加载一套编译器/MPI/HDF5 module，再运行依赖体检。`CMAKE_PREFIX_PATH`、`HDF5_ROOT`、`PKG_CONFIG_PATH` 和 `SDDS_ROOT` 可以用于明确选择管理员提供的非系统安装。若需要额外 CMake 参数，安装脚本支持重复的 `--cmake-arg`。
+依赖检查应从干净的登录环境开始，并且只加载一套编译器/MPI/HDF5 module。`CMAKE_PREFIX_PATH`、`HDF5_ROOT`、`PKG_CONFIG_PATH` 和 `SDDS_ROOT` 用于明确选择管理员提供的非系统安装。额外 CMake 参数可通过重复指定 `--cmake-arg` 传入安装脚本。
 
 ## 依赖体检
 
@@ -79,16 +79,16 @@ sudo ./install_dependencies.sh --profile full \
 
 工具支持 `apt-get`、`dnf`、`yum`、`zypper` 和 `pacman`，安装编译器、CMake、MPI、parallel HDF5、yaml-cpp、FFTW 及 SDDS 所需的系统支持库。包名随发行版和软件源可能变化；若安装失败，完整的包管理器输出仍保留在日志中。
 
-这个脚本有意要求 `root`，不会在内部自行调用 `sudo`，也不会修改源码。它不负责安装官方 SDDS。安装结束后会以 root-safe 模式重新编译和链接依赖探针，但跳过两 rank 启动；普通用户仍应在实际作业环境中完成 MPI 运行检查。
+脚本要求以 `root` 身份运行，不会在内部自行调用 `sudo`，也不会修改源码。脚本不安装官方 SDDS。安装结束后以 root-safe 模式重新编译和链接依赖探针，但跳过两 rank 启动；MPI 运行检查仍须在实际作业环境中以普通用户身份完成。
 
-离线超算通常不应运行自动包安装器。直接运行 `check_dependencies.sh` 生成需求日志，并让管理员提供一致的 module。若站点有离线软件源，可以由管理员使用 `--skip-refresh` 调用安装器。
+离线集群环境不适用自动包安装器。此类环境应运行 `check_dependencies.sh` 生成需求日志，并由管理员提供一致的 module。具有离线软件源的站点可由管理员使用 `--skip-refresh` 调用安装器。
 
 ## 安装程序
 
 默认安装完整配置，包括主程序、通用小工具和五个后处理器：
 
 ```bash
-./install.sh --prefix /path/you/can/write
+./install.sh --prefix /path/to/install-prefix
 ```
 
 若需要系统安装：
@@ -100,7 +100,7 @@ sudo ./install.sh --prefix /opt/aprl
 如果需要原生 SDDS 转换器：
 
 ```bash
-./install.sh --prefix /path/you/can/write \
+./install.sh --prefix /path/to/install-prefix \
   --sdds-root /path/to/built/SDDS \
   --require-sdds
 ```
@@ -128,13 +128,13 @@ sudo ./install.sh --prefix /opt/aprl
 先检查目标：
 
 ```bash
-./uninstall.sh --prefix /path/you/can/write --dry-run
+./uninstall.sh --prefix /path/to/install-prefix --dry-run
 ```
 
 确认后卸载：
 
 ```bash
-./uninstall.sh --prefix /path/you/can/write
+./uninstall.sh --prefix /path/to/install-prefix
 ```
 
 卸载器只读取 `install.sh` 创建的绝对路径回执，并拒绝任何不在指定前缀内的条目。它删除安装副本和默认的 `build-install` 编译目录，但不删除输出数据、依赖库、系统包或源码。没有合法回执时不会根据文件名猜测并删除内容。

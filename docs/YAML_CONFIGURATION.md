@@ -112,7 +112,7 @@ enclosing Maxwell step, and charge-conserving current deposition and detector
 output use the start-to-final-position field-step chord. Thus this setting
 improves orbit integration through prescribed devices, but it does not raise
 the Maxwell Nyquist frequency, resolve intra-step radiation current, or permit
-a coarser radiation grid. The value `1` in the committed examples is only for
+a coarser radiation grid. The value `1` in the reference examples is only for
 smoke testing. See `docs/PARTICLE_SUBCYCLING.md` for the numerical contract.
 
 `boost_gamma` selects one constant inertial computational frame for the whole
@@ -445,9 +445,9 @@ buffers and reports maximum per-rank and aggregate memory. With no incident
 wave it also benchmarks `calibration_steps` zero-field Maxwell updates and a
 bounded sample of particle push/deposition work without advancing the physical
 state. The estimate applies the configured factors, which must be at least one.
-The current seed-wave combinations are rejected earlier, so skipping the
-microbenchmark for a nonempty incident-wave list is an explicit future-facing
-safeguard rather than a hidden fallback.
+Unsupported seed-wave combinations are rejected before this stage. The
+nonempty-incident-wave branch therefore skips the microbenchmark explicitly
+and must not be interpreted as an operational fallback.
 
 `progress_interval_steps: 0` suppresses periodic records but retains the
 startup estimate and final measurement. Otherwise rank zero writes a flushed,

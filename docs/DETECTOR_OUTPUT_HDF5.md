@@ -37,10 +37,10 @@ the input card if a downstream analysis explicitly needs them.
 The stored field remains the raw total Maxwell field. The attribute
 `particle_background_status` states whether a companion ballistic-reference
 file was produced, and `particle_background_validation` states whether its
-two-plane comparison is active. `external_background_subtracted` is currently `none`; the
-detector API already accepts a detector-only laboratory background sampler so
-a future analytical injected-laser field can be removed without changing the
-propagated grid.
+two-plane comparison is active. `external_background_subtracted` is `none` in
+version 1. The nullable detector-only laboratory background sampler is a
+reserved interface for analytical injected-laser subtraction; no such sampler
+is implemented in this version.
 
 `particle_current_policy` records whether the run used ordinary physical
 particles or the experimental C2-quintic retirement current. Retirement files
@@ -65,7 +65,7 @@ auditable without reopening the input particle file.
 
 Poynting flux is intentionally not duplicated in the file: downstream tools
 can compute `S = E cross B / mu0` from the saved laboratory fields.
-The committed `field_reconstruction` post-processor performs this calculation
+The `field_reconstruction` post-processor performs this calculation
 for both the raw and particle-background-subtracted fields and stores their
 forward power and time-integrated energy. See
 [FIELD_RECONSTRUCTION.md](FIELD_RECONSTRUCTION.md).

@@ -124,7 +124,7 @@ tool preserves that raw stagger while evaluating the analytical background at
 the labelled sample time. This residual is expected to decrease with the main
 time step and must be included in convergence tests.
 
-## Practical use
+## Application procedure
 
 Use the ballistic-reference file for normal production because it needs only
 one compact record per particle. Enable two-plane validation only on a small

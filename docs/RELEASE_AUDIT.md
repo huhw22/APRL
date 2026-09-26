@@ -1,8 +1,9 @@
-# Current release audit and production gates
+# Release readiness and production requirements
 
-This document separates implemented paths from planned work. A successful
-smoke test is not treated as evidence that every requested radiation product
-is production-ready.
+This document defines the implemented scope, unresolved limitations, and
+requirements for production calculations. A successful smoke test establishes
+software operability only; it does not establish physical convergence of every
+radiation product.
 
 ## Capability matrix
 
