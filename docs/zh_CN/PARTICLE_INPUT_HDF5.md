@@ -43,6 +43,10 @@ r_i(T) = r_i(tau_i) + beta_i*c*(T-tau_i),
 
 版本 3 仍可读取旧式 `position_m=(x_plane,y_plane,zeta)` 表示，使用参考速度近似 `zeta=-v_reference*(t-t_ref)`，并以 `ux/uz`、`uy/uz` 推进横向坐标。版本 1、2 是旧的共同时间相对快照；版本 1 没有 `macro_weight`，按单位权重解释。版本 1、2 不使用 `input_plane_z`。新的 Elegant 转换应使用版本 4。
 
+独立 `sase_bunch_generator` 有意写版本 2，因为其输出已经是共同实验室时刻相对
+快照。Fawley quiet-start/shot-noise 构造和微聚束诊断保存为 `/particles` 属性，见
+[独立 SASE 初始束团生成器](SASE_BUNCH_GENERATOR.md)。
+
 SDDS 转换文件还保存所选页、协议版本、源数据的二进制/ASCII 模式、绝对参考到达时刻，以及 ID 和权重选择说明。读取器以格式版本和复合字段的名称/类型为准，描述属性仅供检查。
 
 ## MPI 读取行为

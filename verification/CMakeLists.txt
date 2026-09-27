@@ -17,7 +17,7 @@ set(APRL_VERIFY_WORK "${CMAKE_CURRENT_BINARY_DIR}/work")
 set(APRL_VERIFY_CARDS "${CMAKE_CURRENT_SOURCE_DIR}/cards")
 foreach(directory
     smoke detector mpi-one mpi-two ledger invalid-key invalid-stop
-    physics-k0 physics-signal hdf5)
+    physics-k0 physics-signal hdf5 sase)
   file(MAKE_DIRECTORY "${APRL_VERIFY_WORK}/${directory}")
 endforeach()
 file(MAKE_DIRECTORY
@@ -82,6 +82,54 @@ aprl_required_test(required.hdf5-versions
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
   ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_core_checks> hdf5-versions
   "${APRL_VERIFY_WORK}/hdf5" ${MPIEXEC_POSTFLAGS})
+
+if(APRL_BUILD_SASE_BUNCH_GENERATOR)
+  aprl_required_test(required.sase-generator.self-test
+    $<TARGET_FILE:sase_bunch_generator> --self-test)
+
+  aprl_required_test(required.sase-generator.cleanup
+    ${CMAKE_COMMAND} -E rm -f
+    "${APRL_VERIFY_WORK}/sase/generated.h5")
+
+  aprl_required_test(required.sase-generator.output
+    $<TARGET_FILE:sase_bunch_generator>
+    --output "${APRL_VERIFY_WORK}/sase/generated.h5"
+    --electrons 1.0e8
+    --length-m 8.0e-6
+    --resonant-wavelength-m 1.0e-6
+    --gamma 50.0
+    --sigma-gamma 0.02
+    --sigma-x-m 2.0e-5
+    --sigma-y-m 3.0e-5
+    --emittance-n-x-m 1.0e-6
+    --emittance-n-y-m 1.5e-6
+    --harmonics 3
+    --beamlets-per-wavelength 8
+    --seed 17)
+  set_tests_properties(required.sase-generator.output PROPERTIES
+    DEPENDS required.sase-generator.cleanup)
+
+  aprl_required_test(required.sase-generator.aprl-read
+    ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+    ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_core_checks>
+    sase-generator-file "${APRL_VERIFY_WORK}/sase/generated.h5"
+    ${MPIEXEC_POSTFLAGS})
+  set_tests_properties(required.sase-generator.aprl-read PROPERTIES
+    DEPENDS required.sase-generator.output)
+
+  aprl_required_test(required.sase-generator.refuses-overwrite
+    $<TARGET_FILE:sase_bunch_generator>
+    --output "${APRL_VERIFY_WORK}/sase/generated.h5"
+    --electrons 1.0e8
+    --length-m 8.0e-6
+    --resonant-wavelength-m 1.0e-6
+    --gamma 50.0
+    --sigma-x-m 2.0e-5
+    --sigma-y-m 3.0e-5)
+  set_tests_properties(required.sase-generator.refuses-overwrite PROPERTIES
+    DEPENDS required.sase-generator.output
+    WILL_FAIL TRUE)
+endif()
 
 aprl_required_test(required.detector-stop.run
   $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/detector-stop.yaml")
@@ -288,6 +336,10 @@ add_custom_target(verify_required
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
   USES_TERMINAL
 )
+
+if(APRL_BUILD_SASE_BUNCH_GENERATOR)
+  add_dependencies(verify_required sase_bunch_generator)
+endif()
 
 if(APRL_BUILD_POSTPROCESSORS)
   add_dependencies(verify_required trajectory_radiation field_reconstruction

@@ -67,6 +67,12 @@ has no `macro_weight` field and is interpreted as unit weight for every record.
 Versions 1/2 do not use `input_plane_z`. New Elegant conversions should use
 version 4.
 
+The standalone `sase_bunch_generator` deliberately writes version 2 because
+its output is already a common-laboratory-time relative snapshot. It records
+the Fawley quiet-start/shot-noise construction and bunching diagnostics as
+`/particles` attributes. See
+[SASE_BUNCH_GENERATOR.md](SASE_BUNCH_GENERATOR.md).
+
 Files produced by the SDDS converter also carry the selected SDDS page,
 protocol version, source binary/ASCII mode, absolute reference arrival time,
 and descriptions of the source-ID and weight choices. Readers rely on the

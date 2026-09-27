@@ -31,9 +31,15 @@ single-rank local build may opt out with
 with multiple MPI ranks.
 
 This produces `build/aprl`, `build/particle_text_to_hdf5`,
+`build/sase_bunch_generator`,
 `build/elegant_sdds_to_hdf5` when SDDS is found,
 `build/undulator_resonance`, `build/energy_ledger_report`, and
 `build/lab_frame_energy_estimate`.
+
+The SASE input generator is a standalone preprocessor and may be omitted with
+`-DAPRL_BUILD_SASE_BUNCH_GENERATOR=OFF`. Its Fawley quiet-start/shot-noise
+model, command line, diagnostics, and applicability limits are documented in
+[SASE_BUNCH_GENERATOR.md](SASE_BUNCH_GENERATOR.md).
 
 Before a production run, execute the lightweight required regression suite:
 

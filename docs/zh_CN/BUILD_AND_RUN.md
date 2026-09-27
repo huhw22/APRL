@@ -26,11 +26,17 @@ cmake --build build -j
 
 - `build/aprl`；
 - `build/particle_text_to_hdf5`；
+- `build/sase_bunch_generator`；
 - 找到 SDDS 时的 `build/elegant_sdds_to_hdf5`；
 - `build/undulator_resonance`；
 - `build/energy_ledger_report`；
 - `build/lab_frame_energy_estimate`；
 - 默认还会统一构建五个后处理器。
+
+SASE 输入生成器是独立预处理程序，可用
+`-DAPRL_BUILD_SASE_BUNCH_GENERATOR=OFF` 关闭而不影响模拟内核。其 Fawley
+quiet-start/shot-noise 模型、命令、诊断和适用边界见
+[独立 SASE 初始束团生成器](SASE_BUNCH_GENERATOR.md)。
 
 正式运行前执行轻量发布门禁：
 

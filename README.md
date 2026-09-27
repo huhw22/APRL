@@ -18,6 +18,8 @@ Version 1 provides the following computation paths:
   frame;
 - HDF5 particle input, deterministic Gaussian test input, and native Elegant
   SDDS5 conversion through the official SDDS library;
+- a standalone multiharmonic quiet-start/shot-noise bunch generator for SASE
+  input, without adding a generator path to the simulation kernel;
 - fixed laboratory field and particle detector planes;
 - field-plane radiation, spectrum, polarization, coherence, and energy
   analysis on a separate analysis host;
@@ -136,6 +138,7 @@ manuals.
 - [Installation, uninstall, and dependency maintenance](docs/INSTALLATION.md)
 - [YAML input-card specification](docs/YAML_CONFIGURATION.md)
 - [Particle HDF5 input specification](docs/PARTICLE_INPUT_HDF5.md)
+- [Standalone SASE bunch generator](docs/SASE_BUNCH_GENERATOR.md)
 - [Run identity and overwrite protection](docs/RUN_PROVENANCE.md)
 - [Laboratory detector HDF5 output](docs/DETECTOR_OUTPUT_HDF5.md)
 - [Laboratory trajectory HDF5 output](docs/TRAJECTORY_OUTPUT_HDF5.md)

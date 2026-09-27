@@ -14,8 +14,9 @@
 1. [构建、粒子转换与运行](BUILD_AND_RUN.md)
 2. [YAML 输入卡完整规范](YAML_CONFIGURATION.md)
 3. [粒子 HDF5 输入规范](PARTICLE_INPUT_HDF5.md)
-4. [发布状态与生产计算要求](RELEASE_AUDIT.md)
-5. [数值验证状态](VALIDATION.md)
+4. [独立 SASE 初始束团生成器](SASE_BUNCH_GENERATOR.md)
+5. [发布状态与生产计算要求](RELEASE_AUDIT.md)
+6. [数值验证状态](VALIDATION.md)
 
 ## 推进内核与边界
 

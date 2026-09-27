@@ -17,6 +17,7 @@ Frames**。APRL 是采用 C++/MPI 实现的加速器粒子与辐射模拟程序�
 - 由 Lorentz 变换接入的实验室系解析磁元件；
 - HDF5 粒子输入、确定性高斯测试输入和基于官方 SDDS 库的 Elegant SDDS5
   转换；
+- 不进入模拟内核的独立多谐波 quiet-start/SASE shot-noise 束团生成器；
 - 固定实验室系场探测面与粒子探测面；
 - 可在独立分析服务器运行的场面频谱、偏振、相干性和能量后处理；
 - 用于少量粒子验证的轨迹辐射工具，以及可选的全局能量账本。
@@ -110,6 +111,7 @@ cmake --build build --target verify_required
 - [安装、卸载与依赖维护](docs/INSTALLATION.md)
 - [YAML 输入卡规范](docs/zh_CN/YAML_CONFIGURATION.md)
 - [粒子 HDF5 输入规范](docs/zh_CN/PARTICLE_INPUT_HDF5.md)
+- [独立 SASE 初始束团生成器](docs/zh_CN/SASE_BUNCH_GENERATOR.md)
 - [运行身份与覆盖保护](docs/zh_CN/RUN_PROVENANCE.md)
 - [实验室系探测器 HDF5 输出](docs/zh_CN/DETECTOR_OUTPUT_HDF5.md)
 - [实验室系轨迹 HDF5 输出](docs/zh_CN/TRAJECTORY_OUTPUT_HDF5.md)

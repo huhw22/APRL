@@ -613,6 +613,55 @@ namespace
       std::cout << "particle_hdf5_versions=1,2,3,4 mpi_distribution=passed"
                 << std::endl;
   }
+
+  void checkSaseGeneratorFile(const std::string& filename,
+                              MPI_Comm communicator, int rank)
+  {
+    const double electrons = 1.0e8;
+    const unsigned long long expectedRecords = 512;
+    aprl::FieldVector<double> offset(0.0);
+    unsigned long long records = 0;
+    int version = 0;
+    const std::vector<aprl::RelativisticParticleSI> particles =
+      aprl::ParticleHdf5File::readDistributed(filename, electrons, offset,
+        communicator, records, version);
+    require(records == expectedRecords && version == 2,
+      "SASE generator APRL input contract changed");
+
+    unsigned long long localRecords = particles.size();
+    long double localCharge = 0.0L;
+    for (std::size_t i = 0; i < particles.size(); ++i)
+      {
+        const aprl::RelativisticParticleSI& particle = particles[i];
+        require(particle.sourceId >= 1 &&
+                particle.sourceId <= expectedRecords,
+          "SASE generator source ID is outside the record range");
+        require(std::abs(particle.weight - 1.0) < 1.0e-15,
+          "SASE generator macro weight is not unity");
+        require(particle.position[2] >= -4.0e-6 &&
+                particle.position[2] < 4.0e-6,
+          "SASE generator longitudinal support changed");
+        require(particle.properVelocity[2] > 0.0 &&
+                std::isfinite(particle.properVelocity[2]),
+          "SASE generator produced invalid forward momentum");
+        localCharge += particle.charge;
+      }
+    unsigned long long globalRecords = 0;
+    long double globalCharge = 0.0L;
+    MPI_Allreduce(&localRecords, &globalRecords, 1,
+      MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator);
+    MPI_Allreduce(&localCharge, &globalCharge, 1,
+      MPI_LONG_DOUBLE, MPI_SUM, communicator);
+    require(globalRecords == expectedRecords,
+      "SASE generator MPI hyperslabs do not cover all records");
+    const long double expectedCharge = -static_cast<long double>(electrons) *
+      static_cast<long double>(aprl::SI::elementaryCharge);
+    require(std::abs((globalCharge - expectedCharge) / expectedCharge) <
+      2.0e-15L, "SASE generator represented charge changed");
+    if (rank == 0)
+      std::cout << "sase_generator_aprl_read=passed records="
+                << records << " format_version=" << version << std::endl;
+  }
 }
 
 int main(int argc, char** argv)
@@ -629,7 +678,7 @@ int main(int argc, char** argv)
         throw std::invalid_argument(
           "Usage: aprl_core_checks <lorentz-elegant|boris-phase|"
           "charge-continuity|cowan-dispersion|cpml-reflection|"
-          "hdf5-versions> [work-directory]");
+          "hdf5-versions|sase-generator-file> [path]");
       const std::string check(argv[1]);
       if (check == "lorentz-elegant")
         checkLorentzAndElegant(MPI_COMM_WORLD, rank, size);
@@ -647,6 +696,13 @@ int main(int argc, char** argv)
             throw std::invalid_argument(
               "hdf5-versions requires a writable work directory");
           checkHdf5Versions(argv[2], MPI_COMM_WORLD, rank);
+        }
+      else if (check == "sase-generator-file")
+        {
+          if (argc != 3)
+            throw std::invalid_argument(
+              "sase-generator-file requires a generated HDF5 path");
+          checkSaseGeneratorFile(argv[2], MPI_COMM_WORLD, rank);
         }
       else
         throw std::invalid_argument("Unknown core check: " + check);

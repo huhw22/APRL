@@ -27,6 +27,8 @@ option(APRL_REQUIRE_PARALLEL_HDF5
   "Reject serial HDF5; required for multi-rank particle input" ON)
 option(APRL_BUILD_POSTPROCESSORS
   "Build the five production radiation post-processors" ON)
+option(APRL_BUILD_SASE_BUNCH_GENERATOR
+  "Build the standalone SASE shot-noise bunch generator" ON)
 
 find_package(MPI REQUIRED COMPONENTS CXX)
 set(HDF5_PREFER_PARALLEL TRUE)
@@ -119,6 +121,22 @@ target_link_libraries(particle_text_to_hdf5 PRIVATE
 target_compile_options(particle_text_to_hdf5 PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
+
+if(APRL_BUILD_SASE_BUNCH_GENERATOR)
+  add_executable(sase_bunch_generator
+    utilities/sase_bunch_generator.cpp
+  )
+  target_include_directories(sase_bunch_generator PRIVATE
+    ${HDF5_INCLUDE_DIRS}
+  )
+  target_link_libraries(sase_bunch_generator PRIVATE
+    MPI::MPI_CXX
+    ${HDF5_LIBRARIES}
+  )
+  target_compile_options(sase_bunch_generator PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
+  )
+endif()
 
 # Elegant's SDDS5 protocol includes binary layout, endian, page, compression,
 # and 64-bit integer details.  Use the official SDDS library rather than a
@@ -216,6 +234,9 @@ target_compile_options(lab_frame_energy_estimate PRIVATE
 install(TARGETS aprl particle_text_to_hdf5 undulator_resonance
   energy_ledger_report lab_frame_energy_estimate
   RUNTIME DESTINATION bin)
+if(APRL_BUILD_SASE_BUNCH_GENERATOR)
+  install(TARGETS sase_bunch_generator RUNTIME DESTINATION bin)
+endif()
 if(HAVE_ELEGANT_SDDS_CONVERTER)
   install(TARGETS elegant_sdds_to_hdf5 RUNTIME DESTINATION bin)
 endif()
