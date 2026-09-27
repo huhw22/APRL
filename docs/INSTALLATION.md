@@ -10,7 +10,7 @@
 |---|---|---|
 | 操作系统 | Linux/Unix 风格环境，Bash | 自动包安装器目前面向 Linux |
 | CMake | 3.16 或更新 | 安装和依赖探针使用相同下限 |
-| C++ | 完整 C++11 编译器 | 必须与 MPI wrapper 所用编译器 ABI 一致 |
+| C/C++ | C 编译器和完整 C++11 编译器 | C 用于 HDF5 配置探针；C++ 必须与 MPI wrapper 所用编译器 ABI 一致 |
 | MPI | 提供 C++ 编译 wrapper 和运行器 | 不限定 Open MPI/MPICH；编译和运行必须使用同一家族 |
 | HDF5 C | 1.10 或更新 | 生产 MPI 输入要求 parallel HDF5 |
 | yaml-cpp | 0.6 或更新 | 主程序和多个独立工具需要 |
