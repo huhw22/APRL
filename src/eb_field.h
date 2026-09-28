@@ -27,6 +27,15 @@ namespace aprl
     CowanZ
   };
 
+  /* Optional digital smoothing of deposited mesh current.  This is kept
+   * separate from the Maxwell-solver choice: Cowan changes Faraday's curl,
+   * whereas this filter changes the particle source seen by Ampere's law. */
+  enum class EBCurrentFilter
+  {
+    None,
+    CompensatedBilinear
+  };
+
   struct EBCowanCoefficients
   {
     Double alpha[3];

@@ -27,6 +27,7 @@ output:
 ```yaml
 mesh:
   field_solver: cowan-z
+  current_filter: none
   cells: [40, 40, 60]
   cell_size: [1.0, 1.0, 0.2]
   center: [0.0, 0.0, 0.0]
@@ -41,6 +42,27 @@ mesh:
 `cowan-z` 要求 `dx>=dz`、`dy>=dz`，在分配场和读粒子前检查，并由 `dz` 给出最小横向 `cell_size`。时间步为 `dt=dz/c`，使已分辨真空模沿 z 精确无色散。启动日志报告纵横比平方、全部 Cowan 系数以及每波长 16 单元时横向轴相/群速度比；后者只是诊断，不表示任意斜模无色散。
 
 当前 TF/SF 种子边界修正仍是 Yee 形式，因此 `cowan-z` 与非空 `incident_waves` 会在读粒子前被拒绝。通用 Cowan TF/SF 完成前，种子注入只能用于 Yee 回归；CPML 仍拒绝非空入射波。
+
+`current_filter` 可省略，默认值为 `none`；实验选项
+`compensated-bilinear` 只允许与 `cowan-z` 一起使用。电荷守恒电流沉积和
+MPI 求和之后，它分别沿 x、y、z 应用紧致模板
+
+```text
+J_i^f = (-J_{i-2} + 4 J_{i-1} + 10 J_i + 4 J_{i+1} - J_{i+2}) / 16。
+```
+
+这等价于一次双线性滤波再接一次补偿，单轴增益为
+`H(k)=1-sin^4(k*cell_size/2)`：Nyquist 源被置零，而长波误差从四阶开始；
+三维增益为三个轴向增益的乘积。每个一维滤波在物理网格首末各两点保持原值，
+不虚构盒外源；z 向使用两层 halo，MPI 分片面不会成为假边界。
+
+该开关只滤波沉积后的 `Jx/Jy/Jz`，不会改变 Cowan 旋度系数、初始 Poisson
+电荷或粒子场 gather。因此它是显式的噪声/不稳定性判别实验，不是新的默认
+物理路线。正式判断必须使用同一随机种子成对比较 `none` 与
+`compensated-bilinear`，同时检查目标辐射频带以及完整的粒子—场—边界能量账本。
+原始输入卡会进入 manifest，启动日志也会记录滤波状态。这个模板来自
+[WarpX 滤波理论](https://warpx.readthedocs.io/en/24.08/theory/pic.html#filtering)
+所述的补偿三点 PIC 滤波，与 Cowan 可控色散 Maxwell 模板是两个不同操作。
 
 `cells`、`cell_size`、`center` 定义计算系盒子。`cells` 是权威整数数目，每轴至少 3 格；z 还要求每 MPI rank 至少 2 格。总尺寸只由
 

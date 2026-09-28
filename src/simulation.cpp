@@ -235,7 +235,7 @@ namespace aprl
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
 
         pushDepositAndMigrate();
-        halo_->advanceElectric(*fields_);
+        halo_->advanceElectric(*fields_, config_.mesh.currentFilter);
         if (incident_)
           incident_->correctAfterElectricUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
@@ -425,6 +425,13 @@ namespace aprl
             logRoot(communicator_, coefficientMessage.str());
             logRoot(communicator_,
               "Cowan-z stability guard passed: dz is the smallest spacing, the coefficient factorization is valid, and c*dt=dz. This is the analytic Courant boundary, so problem-scale convergence testing is still required.");
+            if (config_.mesh.currentFilter ==
+                EBCurrentFilter::CompensatedBilinear)
+              logRoot(communicator_,
+                "Experimental current filter: compensated-bilinear is active on Jx/Jy/Jz after charge-conserving deposition and MPI current summation. The separable one-axis response is H=1-sin^4(k*cell_size/2), so Nyquist current is removed while the long-wave error begins at fourth order. Each axis pass leaves its two physical endpoint samples unchanged. Initial self-field charge is not filtered, and particle-field gather is not adjoint-filtered; energy-closure and radiation-band convergence must therefore be compared explicitly against current_filter: none.");
+            else
+              logRoot(communicator_,
+                "Current filter: none; deposited J enters Ampere's law unchanged.");
           }
         else
           logRoot(communicator_,
@@ -600,6 +607,22 @@ namespace aprl
           << ", Maxwell/current samples per boosted cycle="
           << maxwellSamples << ". Strict Nyquist passed.";
         logRoot(communicator_, message.str());
+        if (config_.mesh.currentFilter ==
+            EBCurrentFilter::CompensatedBilinear)
+          {
+            const Double filterGain = 1.0 - std::pow(
+              std::sin(3.1415926535897932384626433832795 / gridPoints),
+              4.0);
+            std::ostringstream filterMessage;
+            filterMessage << std::setprecision(10)
+              << "Current-filter target-band response (forward on-axis "
+                 "deposited source): amplitude gain=" << filterGain
+              << ", squared-gain proxy=" << filterGain * filterGain
+              << " at " << photonEnergyLab
+              << " eV. This analytical source response is not a guarantee "
+                 "of nonlinear FEL power or bunching accuracy.";
+            logRoot(communicator_, filterMessage.str());
+          }
         if (gridPoints < target.warningGridPointsPerWavelength ||
             maxwellSamples < target.warningMaxwellSamplesPerCycle)
           {
@@ -819,7 +842,7 @@ namespace aprl
          ++repetition)
       {
         halo_->advanceMagnetic(*fields_);
-        halo_->advanceElectric(*fields_);
+        halo_->advanceElectric(*fields_, config_.mesh.currentFilter);
         fields_->clearCurrent();
       }
     MPI_Barrier(communicator_);

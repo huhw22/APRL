@@ -29,8 +29,11 @@ namespace aprl
 
     void installPhysicalBoundaryMask(EBFieldGrid& fields) const;
     void sumSharedTangentialCurrent(EBFieldGrid& fields);
+    void synchronizeAndFilterCurrent(EBFieldGrid& fields,
+                                     EBCurrentFilter filter);
     void advanceMagnetic(EBFieldGrid& fields);
-    void advanceElectric(EBFieldGrid& fields);
+    void advanceElectric(EBFieldGrid& fields,
+                         EBCurrentFilter filter = EBCurrentFilter::None);
     void advance(EBFieldGrid& fields);
     void advanceWithIncident(
         EBFieldGrid& fields,
@@ -46,6 +49,11 @@ namespace aprl
     void verifyGeometry(const EBFieldGrid& fields) const;
     void exchangeCurrentPlane(YeeComponent& component,
                               int tagUpper, int tagLower);
+    void filterX(YeeComponent& component);
+    void filterY(YeeComponent& component);
+    void filterZ(YeeComponent& component, bool zNodeCentered,
+                 std::size_t haloOffset);
+    void exchangeFilterPlanes(const EBFieldGrid& fields);
     void exchangeElectricPlanes(const EBFieldGrid& fields);
     void exchangeMagneticPlanes(const EBFieldGrid& fields);
     void updateLowerInterface(EBFieldGrid& fields);
@@ -68,6 +76,11 @@ namespace aprl
     std::vector<Double> sendUpperMagnetic_;
     std::vector<Double> receiveLowerPlane_;
     std::vector<Double> receiveUpperPlane_;
+    std::vector<Double> filterLine_;
+    std::vector<Double> sendLowerFilter_;
+    std::vector<Double> sendUpperFilter_;
+    std::vector<Double> receiveLowerFilter_;
+    std::vector<Double> receiveUpperFilter_;
     std::vector<Double> lowerElectric_;
     std::vector<Double> upperElectric_;
     std::vector<Double> sendLowerElectric_;

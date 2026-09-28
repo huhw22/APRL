@@ -22,6 +22,9 @@ output:
 mesh:
   # z-priority Cowan/CKC stencil; use yee only for regression runs.
   field_solver: cowan-z
+  # Experimental PIC source treatment. Use compensated-bilinear only for a
+  # paired filtered/unfiltered convergence campaign; none is the default.
+  current_filter: none
   cells: [40, 40, 60]
   cell_size: [1.0, 1.0, 0.2]
   center: [0.0, 0.0, 0.0]

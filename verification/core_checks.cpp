@@ -19,6 +19,7 @@
 #include "eb_cpml.h"
 #include "eb_deposition.h"
 #include "eb_field.h"
+#include "eb_mpi.h"
 #include "eb_particles.h"
 #include "particle_file.h"
 
@@ -350,6 +351,127 @@ namespace
       "Cowan-z axial analytical dispersion is not exact");
   }
 
+  void fillFilterMode(aprl::YeeComponent& current,
+                      std::size_t localCells, int rank,
+                      bool nyquist, double theta)
+  {
+    for (std::size_t k = 0; k < current.nz(); ++k)
+      {
+        const std::size_t globalK =
+          static_cast<std::size_t>(rank) * localCells + k;
+        const double value = nyquist ?
+          (globalK % 2 == 0 ? 1.0 : -1.0) :
+          std::cos(theta * static_cast<double>(globalK));
+        /* Tangential-current planes are shared.  Give the lower-rank copy
+         * the complete synthetic value and its neighbour zero so the normal
+         * MPI summation reconstructs exactly one global mode. */
+        const double localValue = (rank > 0 && k == 0) ? 0.0 : value;
+        for (std::size_t j = 0; j < current.ny(); ++j)
+          for (std::size_t i = 0; i < current.nx(); ++i)
+            current(i, j, k) = localValue;
+      }
+  }
+
+  void fillTensorFilterMode(aprl::YeeComponent& current,
+                            std::size_t localCells, int rank,
+                            bool zNodeCentered, double theta)
+  {
+    for (std::size_t k = 0; k < current.nz(); ++k)
+      {
+        const std::size_t globalK =
+          static_cast<std::size_t>(rank) * localCells + k;
+        const bool duplicateLowerNode =
+          zNodeCentered && rank > 0 && k == 0;
+        for (std::size_t j = 0; j < current.ny(); ++j)
+          for (std::size_t i = 0; i < current.nx(); ++i)
+            current(i, j, k) = duplicateLowerNode ? 0.0 :
+              std::cos(theta * static_cast<double>(i)) *
+              std::cos(theta * static_cast<double>(j)) *
+              std::cos(theta * static_cast<double>(globalK));
+      }
+  }
+
+  void checkCurrentFilter(MPI_Comm communicator, int rank, int size)
+  {
+    require(size == 2,
+      "current-filter verification requires exactly two MPI ranks");
+    const std::size_t localCells = 8;
+    const std::size_t globalCells = localCells *
+      static_cast<std::size_t>(size);
+    const aprl::EBGridGeometry geometry(
+      8, 8, localCells, 4.0e-5, 5.0e-5, 1.0e-5,
+      1.0e-5 / aprl::SI::c, aprl::EBMaxwellSolver::CowanZ);
+    aprl::EBFieldGrid fields(geometry);
+    aprl::EBZSlabHaloExchange halo(communicator);
+    const std::size_t i = 4;
+    const std::size_t j = 4;
+
+    fillFilterMode(fields.jx(), localCells, rank, true, 0.0);
+    halo.synchronizeAndFilterCurrent(
+      fields, aprl::EBCurrentFilter::CompensatedBilinear);
+    double localNyquistError = 0.0;
+    for (std::size_t k = 0; k < fields.jx().nz(); ++k)
+      {
+        const std::size_t globalK =
+          static_cast<std::size_t>(rank) * localCells + k;
+        if (globalK >= 2 && globalK + 2 <= globalCells)
+          localNyquistError = std::max(localNyquistError,
+            std::abs(fields.jx()(i, j, k)));
+      }
+    double nyquistError = 0.0;
+    MPI_Allreduce(&localNyquistError, &nyquistError, 1, MPI_DOUBLE,
+                  MPI_MAX, communicator);
+
+    fields.clearCurrent();
+    const double theta = 2.0 * pi / 16.0;
+    const double response = 1.0 -
+      std::pow(std::sin(0.5 * theta), 4.0);
+    fillTensorFilterMode(fields.jx(), localCells, rank, true, theta);
+    fillTensorFilterMode(fields.jy(), localCells, rank, true, theta);
+    fillTensorFilterMode(fields.jz(), localCells, rank, false, theta);
+    halo.synchronizeAndFilterCurrent(
+      fields, aprl::EBCurrentFilter::CompensatedBilinear);
+    double localPassbandError = 0.0;
+    const aprl::YeeComponent* component[3] = {
+      &fields.jx(), &fields.jy(), &fields.jz()
+    };
+    const bool zNodeCentered[3] = {true, true, false};
+    const std::size_t passbandI = 3;
+    const std::size_t passbandJ = 3;
+    for (unsigned int field = 0; field < 3; ++field)
+      for (std::size_t k = 0; k < component[field]->nz(); ++k)
+        {
+          const std::size_t globalK =
+            static_cast<std::size_t>(rank) * localCells + k;
+          const bool hasStencil = globalK >= 2 &&
+            (zNodeCentered[field] ? globalK + 2 <= globalCells :
+                                    globalK + 2 < globalCells);
+          if (hasStencil)
+            {
+              const double expected = response * response * response *
+                std::cos(theta * static_cast<double>(passbandI)) *
+                std::cos(theta * static_cast<double>(passbandJ)) *
+                std::cos(theta * static_cast<double>(globalK));
+              localPassbandError = std::max(localPassbandError,
+                std::abs((*component[field])(
+                  passbandI, passbandJ, k) - expected));
+            }
+        }
+    double passbandError = 0.0;
+    MPI_Allreduce(&localPassbandError, &passbandError, 1, MPI_DOUBLE,
+                  MPI_MAX, communicator);
+
+    require(nyquistError < 2.0e-15,
+      "Compensated current filter did not cancel the z Nyquist mode");
+    require(passbandError < 2.0e-15,
+      "Compensated current-filter response or MPI halo is incorrect");
+    if (rank == 0)
+      std::cout << std::setprecision(12)
+                << "current_filter_nyquist_error=" << nyquistError
+                << " passband_response=" << response
+                << " passband_error=" << passbandError << std::endl;
+  }
+
   struct ReflectionResult
   {
     double incident;
@@ -677,7 +799,7 @@ int main(int argc, char** argv)
       if (argc < 2)
         throw std::invalid_argument(
           "Usage: aprl_core_checks <lorentz-elegant|boris-phase|"
-          "charge-continuity|cowan-dispersion|cpml-reflection|"
+          "charge-continuity|cowan-dispersion|current-filter|cpml-reflection|"
           "hdf5-versions|sase-generator-file> [path]");
       const std::string check(argv[1]);
       if (check == "lorentz-elegant")
@@ -688,6 +810,8 @@ int main(int argc, char** argv)
         checkChargeContinuity(rank);
       else if (check == "cowan-dispersion")
         checkCowanDispersion(rank);
+      else if (check == "current-filter")
+        checkCurrentFilter(MPI_COMM_WORLD, rank, size);
       else if (check == "cpml-reflection")
         checkCpmlReflection(rank);
       else if (check == "hdf5-versions")

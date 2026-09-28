@@ -42,6 +42,14 @@ alpha = 1 - 4 beta - 4 delta = 7/12 .
 
 参考：B. M. Cowan 等，[Generalized algorithm for control of numerical dispersion in explicit time-domain electromagnetic simulations](https://doi.org/10.1103/PhysRevSTAB.16.041303)，2013。
 
+## 可选沉积电流滤波
+
+实验路径 `mesh.current_filter: compensated-bilinear` 不属于上面的 Cowan
+旋度模板。它在 Ampere 更新之前，以可分离补偿双线性模板滤波三个沉积电流分量；
+精确频响和验证要求见 [YAML 规范](YAML_CONFIGURATION.md#网格与-boost)。该功能默认
+关闭，因为它改变了场推进看到的粒子源；必须用其余设置完全相同的无滤波算例比较
+辐射频带和能量闭合。
+
 ## CFS-CPML 耦合
 
 边界采用非分裂复频移卷积 PML。方向 `i` 上的拉伸导数为

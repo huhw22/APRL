@@ -16,6 +16,16 @@ namespace aprl
     const int MAGNETIC_LOWER = 321;
     const int ELECTRIC_UPPER = 322;
     const int ELECTRIC_LOWER = 323;
+    const int FILTER_UPPER = 330;
+    const int FILTER_LOWER = 331;
+
+    Double compensatedBilinear(Double minusTwo, Double minusOne,
+                               Double centre, Double plusOne,
+                               Double plusTwo)
+    {
+      return (-minusTwo + 4.0 * minusOne + 10.0 * centre +
+              4.0 * plusOne - plusTwo) / 16.0;
+    }
   }
 
   EBZSlabHaloExchange::EBZSlabHaloExchange(MPI_Comm communicator)
@@ -23,6 +33,8 @@ namespace aprl
       lowerRank_(MPI_PROC_NULL), upperRank_(MPI_PROC_NULL),
       lowerMagnetic_(), upperMagnetic_(), sendLowerMagnetic_(),
       sendUpperMagnetic_(), receiveLowerPlane_(), receiveUpperPlane_(),
+      filterLine_(), sendLowerFilter_(), sendUpperFilter_(),
+      receiveLowerFilter_(), receiveUpperFilter_(),
       lowerElectric_(), upperElectric_(), sendLowerElectric_(),
       sendUpperElectric_()
   {
@@ -84,20 +96,180 @@ namespace aprl
     fields.advanceMagnetic(halo);
   }
 
-  void EBZSlabHaloExchange::advanceElectric(EBFieldGrid& fields)
+  void EBZSlabHaloExchange::advanceElectric(EBFieldGrid& fields,
+                                             EBCurrentFilter filter)
   {
     verifyGeometry(fields);
     if (size_ == 1)
       {
+        synchronizeAndFilterCurrent(fields, filter);
         fields.advanceElectric();
         return;
       }
 
-    sumSharedTangentialCurrent(fields);
+    synchronizeAndFilterCurrent(fields, filter);
     exchangeMagneticPlanes(fields);
     fields.advanceElectric();
     if (lowerRank_ != MPI_PROC_NULL) updateLowerInterface(fields);
     if (upperRank_ != MPI_PROC_NULL) updateUpperInterface(fields);
+  }
+
+  void EBZSlabHaloExchange::synchronizeAndFilterCurrent(
+      EBFieldGrid& fields, EBCurrentFilter filter)
+  {
+    verifyGeometry(fields);
+    sumSharedTangentialCurrent(fields);
+    if (filter == EBCurrentFilter::None) return;
+    if (filter != EBCurrentFilter::CompensatedBilinear)
+      throw std::invalid_argument("Unsupported E/B current filter");
+    if (fields.geometry().solver != EBMaxwellSolver::CowanZ)
+      throw std::invalid_argument(
+        "Compensated current filtering is restricted to Cowan-z runs");
+
+    /* The separable filter is a bilinear pass followed by its standard
+     * compensation pass, collapsed to the five-point stencil
+     * [-1, 4, 10, 4, -1]/16.  Its one-axis response is
+     * 1-sin^4(k*delta/2): fourth-order-flat at k=0 and zero at Nyquist.
+     * Each one-dimensional pass leaves its two physical endpoint samples
+     * untouched rather than extending a synthetic source beyond the box. */
+    filterX(fields.jx()); filterY(fields.jx());
+    filterX(fields.jy()); filterY(fields.jy());
+    filterX(fields.jz()); filterY(fields.jz());
+    if (size_ > 1) exchangeFilterPlanes(fields);
+    const std::size_t jxHaloValues =
+      2 * fields.jx().nx() * fields.jx().ny();
+    const std::size_t jyHaloValues =
+      2 * fields.jy().nx() * fields.jy().ny();
+    filterZ(fields.jx(), true, 0);
+    filterZ(fields.jy(), true, jxHaloValues);
+    filterZ(fields.jz(), false, jxHaloValues + jyHaloValues);
+  }
+
+  void EBZSlabHaloExchange::filterX(YeeComponent& component)
+  {
+    const std::size_t n = component.nx();
+    if (n < 5) return;
+    filterLine_.resize(n);
+    for (std::size_t k = 0; k < component.nz(); ++k)
+      for (std::size_t j = 0; j < component.ny(); ++j)
+        {
+          for (std::size_t i = 0; i < n; ++i)
+            filterLine_[i] = component(i, j, k);
+          for (std::size_t i = 2; i + 2 < n; ++i)
+            component(i, j, k) = compensatedBilinear(
+              filterLine_[i - 2], filterLine_[i - 1], filterLine_[i],
+              filterLine_[i + 1], filterLine_[i + 2]);
+        }
+  }
+
+  void EBZSlabHaloExchange::filterY(YeeComponent& component)
+  {
+    const std::size_t n = component.ny();
+    if (n < 5) return;
+    filterLine_.resize(n);
+    for (std::size_t k = 0; k < component.nz(); ++k)
+      for (std::size_t i = 0; i < component.nx(); ++i)
+        {
+          for (std::size_t j = 0; j < n; ++j)
+            filterLine_[j] = component(i, j, k);
+          for (std::size_t j = 2; j + 2 < n; ++j)
+            component(i, j, k) = compensatedBilinear(
+              filterLine_[j - 2], filterLine_[j - 1], filterLine_[j],
+              filterLine_[j + 1], filterLine_[j + 2]);
+        }
+  }
+
+  void EBZSlabHaloExchange::exchangeFilterPlanes(
+      const EBFieldGrid& fields)
+  {
+    const YeeComponent* component[3] = {
+      &fields.jx(), &fields.jy(), &fields.jz()
+    };
+    const bool zNodeCentered[3] = {true, true, false};
+    std::size_t values = 0;
+    for (unsigned int field = 0; field < 3; ++field)
+      values += 2 * component[field]->nx() * component[field]->ny();
+    if (values > static_cast<std::size_t>(INT_MAX))
+      throw std::overflow_error("E/B filter halo exceeds MPI int count");
+    sendLowerFilter_.resize(values);
+    sendUpperFilter_.resize(values);
+    receiveLowerFilter_.resize(values);
+    receiveUpperFilter_.resize(values);
+    std::size_t offset = 0;
+    for (unsigned int field = 0; field < 3; ++field)
+      {
+        const std::size_t planeValues =
+          component[field]->nx() * component[field]->ny();
+        const std::size_t n = component[field]->nz();
+        const std::size_t lowerStart = zNodeCentered[field] ? 1 : 0;
+        const std::size_t upperStart =
+          zNodeCentered[field] ? n - 3 : n - 2;
+        for (std::size_t layer = 0; layer < 2; ++layer)
+          {
+            const Double* lower = component[field]->data() +
+              (lowerStart + layer) * planeValues;
+            const Double* upper = component[field]->data() +
+              (upperStart + layer) * planeValues;
+            std::copy(lower, lower + planeValues,
+                      sendLowerFilter_.begin() + offset +
+                        layer * planeValues);
+            std::copy(upper, upper + planeValues,
+                      sendUpperFilter_.begin() + offset +
+                        layer * planeValues);
+          }
+        offset += 2 * planeValues;
+      }
+
+    MPI_Sendrecv(sendUpperFilter_.data(), static_cast<int>(values), MPI_DOUBLE,
+                 upperRank_, FILTER_UPPER,
+                 receiveLowerFilter_.data(), static_cast<int>(values),
+                 MPI_DOUBLE, lowerRank_, FILTER_UPPER,
+                 communicator_, MPI_STATUS_IGNORE);
+    MPI_Sendrecv(sendLowerFilter_.data(), static_cast<int>(values), MPI_DOUBLE,
+                 lowerRank_, FILTER_LOWER,
+                 receiveUpperFilter_.data(), static_cast<int>(values),
+                 MPI_DOUBLE, upperRank_, FILTER_LOWER,
+                 communicator_, MPI_STATUS_IGNORE);
+  }
+
+  void EBZSlabHaloExchange::filterZ(YeeComponent& component,
+                                     bool zNodeCentered,
+                                     std::size_t haloOffset)
+  {
+    const std::size_t n = component.nz();
+    if (n < (zNodeCentered ? 3u : 2u))
+      throw std::invalid_argument(
+        "Current filter needs at least two z cells per MPI rank");
+    filterLine_.resize(n);
+    const std::size_t planeValues = component.nx() * component.ny();
+
+    for (std::size_t j = 0; j < component.ny(); ++j)
+      for (std::size_t i = 0; i < component.nx(); ++i)
+        {
+          for (std::size_t k = 0; k < n; ++k)
+            filterLine_[k] = component(i, j, k);
+          for (std::size_t k = 0; k < n; ++k)
+            {
+              if ((lowerRank_ == MPI_PROC_NULL && k < 2) ||
+                  (upperRank_ == MPI_PROC_NULL && k + 2 >= n))
+                continue;
+              const std::size_t planeIndex = j * component.nx() + i;
+              const Double minusTwo = k >= 2 ? filterLine_[k - 2] :
+                receiveLowerFilter_[haloOffset +
+                                    (k == 0 ? 0 : 1) * planeValues +
+                                    planeIndex];
+              const Double minusOne = k >= 1 ? filterLine_[k - 1] :
+                receiveLowerFilter_[haloOffset + planeValues + planeIndex];
+              const Double plusOne = k + 1 < n ? filterLine_[k + 1] :
+                receiveUpperFilter_[haloOffset + planeIndex];
+              const Double plusTwo = k + 2 < n ? filterLine_[k + 2] :
+                receiveUpperFilter_[haloOffset +
+                                    (k + 1 == n ? 1 : 0) * planeValues +
+                                    planeIndex];
+              component(i, j, k) = compensatedBilinear(
+                minusTwo, minusOne, filterLine_[k], plusOne, plusTwo);
+            }
+        }
   }
 
   void EBZSlabHaloExchange::advance(EBFieldGrid& fields)
@@ -130,7 +302,10 @@ namespace aprl
     return sizeof(Double) * (lowerMagnetic_.capacity() +
       upperMagnetic_.capacity() + sendLowerMagnetic_.capacity() +
       sendUpperMagnetic_.capacity() + receiveLowerPlane_.capacity() +
-      receiveUpperPlane_.capacity() + lowerElectric_.capacity() +
+      receiveUpperPlane_.capacity() + filterLine_.capacity() +
+      sendLowerFilter_.capacity() + sendUpperFilter_.capacity() +
+      receiveLowerFilter_.capacity() + receiveUpperFilter_.capacity() +
+      lowerElectric_.capacity() +
       upperElectric_.capacity() + sendLowerElectric_.capacity() +
       sendUpperElectric_.capacity());
   }

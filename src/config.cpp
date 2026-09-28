@@ -114,8 +114,8 @@ namespace aprl
       const YAML::Node mesh = root["mesh"];
       if (mesh)
         validateMapKeys(mesh, "mesh", {
-          "field_solver", "cells", "cell_size", "center", "duration",
-          "boost_gamma", "particle_steps_per_undulator_period",
+          "field_solver", "current_filter", "cells", "cell_size", "center",
+          "duration", "boost_gamma", "particle_steps_per_undulator_period",
           "maximum_particle_substeps", "lengths", "resolution"
         });
 
@@ -504,6 +504,16 @@ namespace aprl
         "field_solver must be yee or cowan-z");
     }
 
+    EBCurrentFilter currentFilter(const YAML::Node& node)
+    {
+      const std::string value = lower(node.as<std::string>());
+      if (value == "none") return EBCurrentFilter::None;
+      if (value == "compensated-bilinear")
+        return EBCurrentFilter::CompensatedBilinear;
+      throw configError(node,
+        "current_filter must be none or compensated-bilinear");
+    }
+
     EBBoundaryType boundaryType(const YAML::Node& node)
     {
       const std::string value = lower(node.as<std::string>());
@@ -572,7 +582,8 @@ namespace aprl
     : cellSize(0.0), extent(0.0), center(0.0), duration(0.0),
       boostGamma(1.0), particleStepsPerUndulatorPeriod(1024),
       maximumParticleSubsteps(4096),
-      fieldSolver(EBMaxwellSolver::CowanZ)
+      fieldSolver(EBMaxwellSolver::CowanZ),
+      currentFilter(EBCurrentFilter::None)
   {
     cells[0] = cells[1] = cells[2] = 0;
   }
@@ -795,6 +806,13 @@ namespace aprl
     result.mesh.boostGamma = finiteDouble(required(mesh, "boost_gamma"),
       "boost gamma");
     result.mesh.fieldSolver = fieldSolver(required(mesh, "field_solver"));
+    result.mesh.currentFilter = mesh["current_filter"] ?
+      currentFilter(mesh["current_filter"]) : EBCurrentFilter::None;
+    if (result.mesh.currentFilter != EBCurrentFilter::None &&
+        result.mesh.fieldSolver != EBMaxwellSolver::CowanZ)
+      throw configError(mesh["current_filter"],
+        "current_filter is an experimental Cowan-z source treatment; use "
+        "field_solver: cowan-z or set current_filter: none");
     const std::size_t particleSteps = positiveSize(
       required(mesh, "particle_steps_per_undulator_period"),
       "particle_steps_per_undulator_period");

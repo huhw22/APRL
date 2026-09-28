@@ -75,6 +75,11 @@ aprl_required_test(required.charge-continuity
 aprl_required_test(required.cowan-dispersion
   $<TARGET_FILE:aprl_core_checks> cowan-dispersion)
 
+aprl_required_test(required.current-filter
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_core_checks> current-filter
+  ${MPIEXEC_POSTFLAGS})
+
 aprl_required_test(required.cpml-reflection
   $<TARGET_FILE:aprl_core_checks> cpml-reflection)
 

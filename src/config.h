@@ -31,6 +31,7 @@ namespace aprl
     unsigned int particleStepsPerUndulatorPeriod;
     unsigned int maximumParticleSubsteps;
     EBMaxwellSolver fieldSolver;
+    EBCurrentFilter currentFilter;
 
     MeshConfig();
   };

@@ -41,6 +41,7 @@ input identity. The same identity is embedded in all output HDF5 groups. See
 ```yaml
 mesh:
   field_solver: cowan-z
+  current_filter: none
   cells: [40, 40, 60]
   cell_size: [1.0, 1.0, 0.2]
   center: [0.0, 0.0, 0.0]
@@ -70,6 +71,33 @@ The present TF/SF seed-wave boundary correction is still the Yee form, so a
 configuration that combines `cowan-z` with a nonempty `incident_waves` list is
 rejected before particle input. Use `yee` for seed-injection regression until
 the generalized Cowan TF/SF correction is implemented.
+
+`current_filter` is optional and defaults to `none`. The experimental
+`compensated-bilinear` choice is accepted only with `cowan-z`. After
+charge-conserving current deposition and MPI summation it applies, separately
+on x, y and z, the compact stencil
+
+```text
+J_i^f = (-J_{i-2} + 4 J_{i-1} + 10 J_i + 4 J_{i+1} - J_{i+2}) / 16.
+```
+
+This is one bilinear pass followed by its compensation pass. Its one-axis
+gain is `H(k)=1-sin^4(k*cell_size/2)`: the Nyquist source is zero, while the
+long-wavelength error starts at fourth order. The 3-D gain is the product of
+the three axis gains. Each one-dimensional pass leaves the first and last two
+physical-grid samples unchanged rather than inventing source values outside
+the box. Two-plane z halos make the result independent of MPI slab seams.
+
+This switch filters deposited `Jx/Jy/Jz`; it does not alter the Cowan curl
+coefficients, the initial Poisson charge, or particle field gather. It is
+therefore an explicitly experimental noise/instability discriminator, not a
+new default. A credible run must compare `none` and `compensated-bilinear` at
+identical random seed and check both the target radiation band and the complete
+particle-plus-field-plus-boundary energy ledger. The exact run card in the
+manifest and the startup filter line make the choice auditable. The stencil is
+the compensated three-point PIC filter described in the
+[WarpX filtering theory](https://warpx.readthedocs.io/en/24.08/theory/pic.html#filtering);
+it is distinct from Cowan's controlled-dispersion Maxwell stencil.
 
 `cells`, `cell_size`, and `center` describe the boosted computational box.
 `cells` contains the authoritative integer counts and each direction needs at
