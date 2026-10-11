@@ -29,6 +29,22 @@ option(APRL_BUILD_POSTPROCESSORS
   "Build the five production radiation post-processors" ON)
 option(APRL_BUILD_SASE_BUNCH_GENERATOR
   "Build the standalone SASE shot-noise bunch generator" ON)
+option(APRL_PORTABLE_INSTALL
+  "Use relative install RPATHs for libraries bundled beside APRL" OFF)
+
+if(APRL_PORTABLE_INSTALL)
+  if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR
+      "APRL_PORTABLE_INSTALL currently supports Linux runtime loaders")
+  endif()
+  # Every installed executable is placed in <prefix>/bin while bootstrapped
+  # libraries are placed in <prefix>/lib (or lib64).  Do not bake build-host
+  # module paths into the installed copy; a site MPI remains supplied by the
+  # active scheduler/module environment.
+  set(CMAKE_BUILD_RPATH_USE_ORIGIN TRUE)
+  set(CMAKE_INSTALL_RPATH "$ORIGIN/../lib;$ORIGIN/../lib64")
+  set(CMAKE_INSTALL_RPATH_USE_LINK_PATH FALSE)
+endif()
 
 find_package(MPI REQUIRED COMPONENTS CXX)
 set(HDF5_PREFER_PARALLEL TRUE)

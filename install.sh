@@ -9,10 +9,16 @@ Validate dependencies, build, test and install. Successful installation
 removes compilation products by default, but never removes source files.
 
 Options:
-  --prefix DIR             install prefix (default: /usr/local)
+  --prefix DIR             install prefix (/usr/local; with bootstrap: ./aprl-runtime)
   --build-dir DIR          disposable build root (default: build-install)
   --profile core|full      main program only, or include post-processors
   --jobs N                 parallel build jobs
+  --bootstrap-deps         build verified dependencies into --prefix
+  --bundle-mpi             with --bootstrap-deps, build a private MPICH
+  --dependency-cache DIR   verified source archive cache
+  --bootstrap-build-dir DIR disposable third-party build tree
+  --offline-deps           bootstrap only from the verified local cache
+  --mpi-cc COMMAND         MPI C wrapper used to build parallel HDF5
   --mpi-cxx COMMAND        MPI C++ wrapper (default: $MPICXX or mpic++)
   --mpi-launcher COMMAND   launcher accepting '-n 2' (default: mpiexec)
   --generator NAME         CMake generator (default: Ninja when available)
@@ -29,9 +35,16 @@ EOF
 
 source_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 prefix="/usr/local"
+prefix_explicit=false
 build_dir="$source_root/build-install"
 profile="full"
 jobs=""
+bootstrap_deps=false
+bundle_mpi=false
+dependency_cache="$source_root/.cache/aprl-dependencies"
+bootstrap_build_dir="$source_root/build-bootstrap"
+offline_deps=false
+mpi_cc="${MPICC:-}"
 mpi_cxx="${MPICXX:-mpic++}"
 mpi_launcher="${MPIEXEC:-mpiexec}"
 generator=""
@@ -47,7 +60,7 @@ while (($#)); do
   case "$1" in
     --prefix)
       [[ $# -ge 2 ]] || { echo "--prefix needs a value" >&2; exit 2; }
-      prefix="$2"; shift 2 ;;
+      prefix="$2"; prefix_explicit=true; shift 2 ;;
     --build-dir)
       [[ $# -ge 2 ]] || { echo "--build-dir needs a value" >&2; exit 2; }
       build_dir="$2"; shift 2 ;;
@@ -57,6 +70,18 @@ while (($#)); do
     --jobs)
       [[ $# -ge 2 ]] || { echo "--jobs needs a value" >&2; exit 2; }
       jobs="$2"; shift 2 ;;
+    --bootstrap-deps) bootstrap_deps=true; shift ;;
+    --bundle-mpi) bundle_mpi=true; shift ;;
+    --dependency-cache)
+      [[ $# -ge 2 ]] || { echo "--dependency-cache needs a value" >&2; exit 2; }
+      dependency_cache="$2"; shift 2 ;;
+    --bootstrap-build-dir)
+      [[ $# -ge 2 ]] || { echo "--bootstrap-build-dir needs a value" >&2; exit 2; }
+      bootstrap_build_dir="$2"; shift 2 ;;
+    --offline-deps) offline_deps=true; shift ;;
+    --mpi-cc)
+      [[ $# -ge 2 ]] || { echo "--mpi-cc needs a value" >&2; exit 2; }
+      mpi_cc="$2"; shift 2 ;;
     --mpi-cxx)
       [[ $# -ge 2 ]] || { echo "--mpi-cxx needs a value" >&2; exit 2; }
       mpi_cxx="$2"; shift 2 ;;
@@ -90,19 +115,30 @@ if $require_sdds && [[ -z "$sdds_root" ]]; then
   echo "--require-sdds needs --sdds-root DIR (or SDDS_ROOT)" >&2
   exit 2
 fi
+if $bundle_mpi && ! $bootstrap_deps; then
+  echo "--bundle-mpi requires --bootstrap-deps" >&2
+  exit 2
+fi
+if $offline_deps && ! $bootstrap_deps; then
+  echo "--offline-deps requires --bootstrap-deps" >&2
+  exit 2
+fi
+if $bootstrap_deps && ! $prefix_explicit; then
+  prefix="$source_root/aprl-runtime"
+fi
 if [[ -n "$jobs" && ! "$jobs" =~ ^[1-9][0-9]*$ ]]; then
   echo "--jobs must be a positive integer" >&2
   exit 2
 fi
 if [[ -z "$jobs" ]]; then
-  if command -v nproc >/dev/null 2>&1; then
+  if [[ -n "${SLURM_CPUS_PER_TASK:-}" &&
+        "${SLURM_CPUS_PER_TASK}" =~ ^[1-9][0-9]*$ ]]; then
+    jobs="$SLURM_CPUS_PER_TASK"
+  elif command -v nproc >/dev/null 2>&1; then
     jobs="$(nproc)"
   else
     jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
   fi
-fi
-if [[ -z "$generator" ]] && command -v ninja >/dev/null 2>&1; then
-  generator="Ninja"
 fi
 
 absolute_path() {
@@ -118,6 +154,8 @@ absolute_path() {
 
 prefix="$(absolute_path "$prefix")"
 build_dir="$(absolute_path "$build_dir")"
+dependency_cache="$(absolute_path "$dependency_cache")"
+bootstrap_build_dir="$(absolute_path "$bootstrap_build_dir")"
 if [[ -z "$prefix" || "$prefix" == "/" ]]; then
   echo "Refusing an empty or root install prefix" >&2
   exit 2
@@ -132,6 +170,72 @@ case "$source_root/" in
     echo "Build directory may not contain the source tree: $build_dir" >&2
     exit 2 ;;
 esac
+
+if $bootstrap_deps; then
+  if ! $bundle_mpi; then
+    if [[ "$mpi_cxx" == */* ]]; then
+      [[ -x "$mpi_cxx" ]] || {
+        echo "MPI C++ wrapper is not executable: $mpi_cxx" >&2
+        exit 1
+      }
+      mpi_cxx="$(command -v -- "$mpi_cxx")"
+    else
+      mpi_cxx="$(command -v -- "$mpi_cxx" 2>/dev/null || true)"
+    fi
+    if [[ -z "$mpi_cxx" ]]; then
+      echo "No platform MPI C++ wrapper found; load the site MPI or add --bundle-mpi." >&2
+      exit 1
+    fi
+    if [[ -n "$mpi_cc" ]]; then
+      if [[ "$mpi_cc" == */* ]]; then
+        [[ -x "$mpi_cc" ]] || {
+          echo "MPI C wrapper is not executable: $mpi_cc" >&2
+          exit 1
+        }
+        mpi_cc="$(command -v -- "$mpi_cc")"
+      else
+        mpi_cc="$(command -v -- "$mpi_cc" 2>/dev/null || true)"
+      fi
+    fi
+    if [[ "$mpi_launcher" == */* ]]; then
+      [[ -x "$mpi_launcher" ]] || {
+        echo "MPI launcher is not executable: $mpi_launcher" >&2
+        exit 1
+      }
+      mpi_launcher="$(command -v -- "$mpi_launcher")"
+    elif command -v -- "$mpi_launcher" >/dev/null 2>&1; then
+      mpi_launcher="$(command -v -- "$mpi_launcher")"
+    fi
+  fi
+
+  bootstrap_args=(
+    --prefix "$prefix"
+    --build-dir "$bootstrap_build_dir"
+    --cache-dir "$dependency_cache"
+    --profile "$profile"
+    --jobs "$jobs"
+    --mpi-cxx "$mpi_cxx"
+    --mpi-launcher "$mpi_launcher"
+  )
+  [[ -n "$mpi_cc" ]] && bootstrap_args+=(--mpi-cc "$mpi_cc")
+  $bundle_mpi && bootstrap_args+=(--bundle-mpi)
+  $offline_deps && bootstrap_args+=(--offline)
+  $keep_build && bootstrap_args+=(--keep-build)
+  "$source_root/bootstrap_dependencies.sh" "${bootstrap_args[@]}"
+
+  if $bundle_mpi; then
+    mpi_cc="$prefix/bin/mpicc"
+    mpi_cxx="$prefix/bin/mpic++"
+    mpi_launcher="$prefix/bin/mpiexec"
+  fi
+  # shellcheck source=/dev/null
+  source "$prefix/share/aprl/runtime-env.sh"
+  export HDF5_ROOT="$prefix"
+fi
+
+if [[ -z "$generator" ]] && command -v ninja >/dev/null 2>&1; then
+  generator="Ninja"
+fi
 
 dependency_report="${build_dir}.dependency-report.log"
 dependency_args=(--profile "$profile" --report "$dependency_report"
@@ -159,6 +263,13 @@ common_cmake_args=(
   -DCMAKE_INSTALL_PREFIX="$prefix"
   -DHDF5_PREFER_PARALLEL=TRUE
 )
+if $bootstrap_deps; then
+  common_cmake_args+=(
+    -DCMAKE_PREFIX_PATH="$prefix"
+    -DHDF5_ROOT="$prefix"
+    -DAPRL_PORTABLE_INSTALL=ON
+  )
+fi
 
 root_configure=(cmake -S "$source_root" -B "$build_dir/core")
 root_configure+=("${generator_args[@]}")
@@ -241,6 +352,10 @@ source_revision=$source_revision
 profile=$profile
 prefix=$prefix
 mpi_cxx=$mpi_cxx
+mpi_cc=${mpi_cc:-auto}
+mpi_launcher=$mpi_launcher
+bootstrapped_dependencies=$bootstrap_deps
+bundled_mpi=$bundle_mpi
 parallel_hdf5_required=$parallel_requirement
 sdds_converter=$([[ -x "$build_dir/core/elegant_sdds_to_hdf5" ]] && echo yes || echo no)
 EOF
@@ -259,6 +374,43 @@ while IFS= read -r installed_path || [[ -n "$installed_path" ]]; do
   esac
 done < "$build_dir/install-manifest.sorted.txt"
 cmake -E copy "$build_dir/install-manifest.sorted.txt" "$receipt"
+
+if $bootstrap_deps && command -v ldd >/dev/null 2>&1; then
+  echo "Verifying installed runtime library resolution"
+  runtime_missing=0
+  runtime_ld_path=""
+  IFS=':' read -r -a runtime_library_dirs <<<"${LD_LIBRARY_PATH:-}"
+  for runtime_library_dir in "${runtime_library_dirs[@]}"; do
+    [[ -n "$runtime_library_dir" ]] || continue
+    case "$runtime_library_dir" in
+      "$prefix/lib"|"$prefix/lib64") continue ;;
+    esac
+    runtime_ld_path+="${runtime_ld_path:+:}$runtime_library_dir"
+  done
+  while IFS= read -r installed_path || [[ -n "$installed_path" ]]; do
+    case "$installed_path" in
+      "$prefix/bin/"*) ;;
+      *) continue ;;
+    esac
+    [[ -x "$installed_path" ]] || continue
+    if [[ -n "$runtime_ld_path" ]]; then
+      ldd_output="$(env LD_LIBRARY_PATH="$runtime_ld_path" \
+        ldd "$installed_path" 2>&1 || true)"
+    else
+      ldd_output="$(env -u LD_LIBRARY_PATH ldd "$installed_path" 2>&1 || true)"
+    fi
+    if grep -q 'not found' <<<"$ldd_output"; then
+      echo "Unresolved libraries for $installed_path:" >&2
+      echo "$ldd_output" >&2
+      runtime_missing=1
+    fi
+  done < "$build_dir/install-manifest.sorted.txt"
+  if ((runtime_missing)); then
+    echo "Installation completed, but its local runtime is incomplete." >&2
+    exit 1
+  fi
+  echo "Installed runtime libraries resolved without 'not found' entries."
+fi
 
 if [[ -n "$previous_manifest" ]]; then
   while IFS= read -r previous_path || [[ -n "$previous_path" ]]; do
@@ -279,6 +431,10 @@ echo "  prefix: $prefix"
 echo "  profile: $profile"
 echo "  manifest: $receipt"
 echo "Add $prefix/bin to PATH if the prefix is not already searched."
+if $bootstrap_deps; then
+  echo "Portable dependency environment: $prefix/share/aprl/runtime-env.sh"
+  echo "Installed executables use relative RPATH for $prefix/lib and lib64."
+fi
 
 if $keep_build; then
   echo "Build products retained: $build_dir"

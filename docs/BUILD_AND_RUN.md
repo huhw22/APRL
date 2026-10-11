@@ -19,6 +19,24 @@ uninstall procedures are in [INSTALLATION.md](INSTALLATION.md).
 
 ## Build
 
+On a new machine, prefer the unprivileged local dependency bootstrap.  It
+reuses the selected MPI and places parallel HDF5, yaml-cpp, and APRL in one
+prefix:
+
+```bash
+./install.sh --bootstrap-deps --profile core \
+  --prefix "$PWD/aprl-runtime" --jobs 8
+```
+
+On a managed cluster, load the site compiler/MPI module first.  Add
+`--skip-mpi-run` on a login node that forbids MPI launch, then repeat the
+two-rank dependency check inside an allocation.  `--bundle-mpi` is available
+for a single-node host without a platform MPI; production multi-node runs
+should keep the site MPI.  Cache, offline, and runtime-library details are in
+[installation and dependency maintenance](INSTALLATION.md).
+
+When every system dependency is already present, configure directly:
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++

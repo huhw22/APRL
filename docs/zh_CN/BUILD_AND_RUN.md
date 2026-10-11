@@ -14,6 +14,17 @@
 
 ## 构建
 
+新机器上优先使用普通用户本地依赖引导；它复用当前 MPI，并把 parallel HDF5、yaml-cpp 和 APRL 放入同一个前缀：
+
+```bash
+./install.sh --bootstrap-deps --profile core \
+  --prefix "$PWD/aprl-runtime" --jobs 8
+```
+
+超算上应先加载平台编译器/MPI module，再执行该命令。登录节点禁止启动 MPI 时增加 `--skip-mpi-run`，并在计算节点分配中补做双 rank 依赖检查。没有平台 MPI 的单节点机器可以增加 `--bundle-mpi`；多节点正式计算仍推荐站点 MPI。完整缓存、离线和运行库说明见[安装、卸载与依赖维护](../INSTALLATION.md)。
+
+若所有系统依赖已经存在，也可以直接配置构建：
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++

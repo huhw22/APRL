@@ -1,6 +1,6 @@
 # 安装、卸载与依赖维护
 
-本项目提供四个顶层维护脚本。它们只处理依赖、构建目录和已安装副本，不提供删除源码树的操作。
+本项目提供依赖引导、体检、系统包安装、程序安装和卸载脚本。它们只处理依赖、构建目录和已安装副本，不提供删除源码树的操作。
 
 ## 支持的编译环境
 
@@ -8,7 +8,7 @@
 
 | 组件 | 要求 | 说明 |
 |---|---|---|
-| 操作系统 | Linux/Unix 风格环境，Bash | 自动包安装器目前面向 Linux |
+| 操作系统 | Linux，Bash | 自动包安装器目前面向 Linux |
 | CMake | 3.16 或更新 | 安装和依赖探针使用相同下限 |
 | C/C++ | C 编译器和完整 C++11 编译器 | C 用于 HDF5 配置探针；C++ 必须与 MPI wrapper 所用编译器 ABI 一致 |
 | MPI | 提供 C++ 编译 wrapper 和运行器 | 不限定 Open MPI/MPICH；编译和运行必须使用同一家族 |
@@ -26,6 +26,48 @@
 MPI C++ wrapper、MPI launcher 和 parallel HDF5 必须来自同一套 MPI/编译器环境。例如，用 Open MPI 的 `mpic++` 链接由 MPICH 编译的 HDF5，即使 CMake 能找到文件，也不是可用环境。集群上还应避免同时启用系统库、Conda MPI 和管理员 module 中的 HDF5。
 
 依赖检查应从干净的登录环境开始，并且只加载一套编译器/MPI/HDF5 module。`CMAKE_PREFIX_PATH`、`HDF5_ROOT`、`PKG_CONFIG_PATH` 和 `SDDS_ROOT` 用于明确选择管理员提供的非系统安装。额外 CMake 参数可通过重复指定 `--cmake-arg` 传入安装脚本。
+
+## 无管理员权限的本地依赖引导
+
+联网机器可以把经过 SHA-256 校验的固定版本依赖编译到 APRL 安装前缀，不修改操作系统：
+
+```bash
+./install.sh --bootstrap-deps --profile core \
+  --prefix "$PWD/aprl-runtime" --jobs 8
+```
+
+该命令自动准备 CMake（主机缺少合格版本时）、yaml-cpp 和由当前 MPI C wrapper 编译的 parallel HDF5；`full` 配置还准备 FFTW3 double precision 与线程库。源码包缓存于 `.cache/aprl-dependencies`，后续重复安装不重新下载。已经填充缓存的离线机器可增加 `--offline-deps`。
+
+安装前缀包含 `bin/`、`lib/`、头文件、依赖锁文件和 `share/aprl/runtime-env.sh`。APRL 可执行文件写入相对 `$ORIGIN/../lib`/`lib64` RPATH，因此本地 HDF5 与 yaml-cpp 不需要安装到每个计算节点；前缀只需位于所有节点可见的共享文件系统。可在作业脚本中按需执行：
+
+```bash
+source /shared/path/aprl-runtime/share/aprl/runtime-env.sh
+```
+
+托管集群默认复用站点 MPI，并只在本地构建其余库：
+
+```bash
+./install.sh --bootstrap-deps --profile core \
+  --prefix "$PWD/aprl-runtime" \
+  --mpi-cc "$(command -v mpicc)" \
+  --mpi-cxx "$(command -v mpic++)" \
+  --mpi-launcher srun --skip-mpi-run --jobs 8
+```
+
+登录节点禁止 MPI 启动时先使用 `--skip-mpi-run`，随后必须在真实调度分配中重新执行 `check_dependencies.sh` 的双 rank 检查。平台 MPI/module 在运行作业中仍须加载，因为它负责 Slurm、PMI/PMIx 和高速互联。普通工作站或不依赖站点网络的单节点环境可显式使用私有 MPICH：
+
+```bash
+./install.sh --bootstrap-deps --bundle-mpi --profile core \
+  --prefix "$PWD/aprl-runtime" --jobs 8
+```
+
+不要在同一前缀内从私有 MPICH 切换为平台 MPI；安装器会拒绝这种混用，应选择新前缀。`glibc`、Linux 内核、基础 C/C++ 编译器、`make`、`tar` 以及下载/校验工具仍由主机提供。私有 MPI 使用通用 TCP socket 通信，是方便的单节点兜底，不等价于针对超算高速网络优化的站点 MPI。
+
+只查看下载、版本和构建计划而不修改文件：
+
+```bash
+./bootstrap_dependencies.sh --profile core --plan-only
+```
 
 ## 依赖体检
 

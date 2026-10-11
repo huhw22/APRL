@@ -118,6 +118,21 @@ baseline.
 
 ## Build and test
 
+On a networked host, APRL, parallel HDF5, and yaml-cpp can be installed into
+one user-owned prefix.  A managed cluster reuses its site MPI by default:
+
+```bash
+./install.sh --bootstrap-deps --profile core \
+  --prefix "$PWD/aprl-runtime" --jobs 8
+```
+
+The installer verifies pinned source archives, builds parallel HDF5 with the
+selected MPI, and gives installed executables relative runtime search paths.
+Only one `aprl-runtime` tree is needed on a shared filesystem.  A single-node
+workstation without a platform MPI may add `--bundle-mpi`.
+
+The direct build remains available when all dependencies already exist:
+
 ```bash
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++ -DBUILD_TESTING=ON
