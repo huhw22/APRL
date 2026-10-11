@@ -360,6 +360,16 @@ if [[ -z "$cmake_command" ]]; then
   cmake_command="$prefix/bin/cmake"
 fi
 echo "cmake_command=$cmake_command"
+cmake_selected_version="$("$cmake_command" --version | awk 'NR==1 {print $3}')"
+cmake_policy_args=()
+if [[ "${cmake_selected_version%%.*}" =~ ^[0-9]+$ ]] &&
+   (( ${cmake_selected_version%%.*} >= 4 )); then
+  # yaml-cpp 0.8.0 still declares compatibility with CMake 3.1.  CMake 4
+  # intentionally removed policy compatibility below 3.5; this bounded
+  # override is the upstream-recommended migration path and does not change
+  # APRL's own policy level.
+  cmake_policy_args=(-DCMAKE_POLICY_VERSION_MINIMUM=3.5)
+fi
 
 resolve_command() {
   local request="$1"
@@ -458,7 +468,8 @@ if [[ ! -f "$yaml_marker" || ! -e "$prefix/lib/libyaml-cpp.so" ]]; then
     -DYAML_BUILD_SHARED_LIBS=ON \
     -DYAML_CPP_BUILD_TESTS=OFF \
     -DYAML_CPP_BUILD_TOOLS=OFF \
-    -DYAML_CPP_BUILD_CONTRIB=OFF
+    -DYAML_CPP_BUILD_CONTRIB=OFF \
+    "${cmake_policy_args[@]}"
   "$cmake_command" --build "$yaml_build" --parallel "$jobs"
   "$cmake_command" --install "$yaml_build"
   : > "$yaml_marker"
