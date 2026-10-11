@@ -18,6 +18,14 @@ find_package(HDF5 1.10 REQUIRED COMPONENTS C)
 find_package(yaml-cpp 0.6 REQUIRED)
 find_package(Threads REQUIRED)
 
+if(TARGET yaml-cpp::yaml-cpp)
+  set(APRL_PROBE_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+  set(APRL_PROBE_YAML_CPP_TARGET yaml-cpp)
+else()
+  message(FATAL_ERROR "yaml-cpp was found but exported no supported CMake target")
+endif()
+
 if(APRL_PROBE_REQUIRE_PARALLEL_HDF5 AND NOT HDF5_IS_PARALLEL)
   message(FATAL_ERROR
     "The selected HDF5 is serial. A production MPI build needs parallel "
@@ -29,7 +37,7 @@ target_include_directories(aprl_dependency_probe PRIVATE ${HDF5_INCLUDE_DIRS})
 target_link_libraries(aprl_dependency_probe PRIVATE
   MPI::MPI_CXX
   ${HDF5_LIBRARIES}
-  yaml-cpp
+  ${APRL_PROBE_YAML_CPP_TARGET}
   Threads::Threads
 )
 target_compile_definitions(aprl_dependency_probe PRIVATE
@@ -101,4 +109,3 @@ message(STATUS "Probe MPI compiler: ${MPI_CXX_COMPILER}")
 message(STATUS "Probe HDF5: ${HDF5_VERSION}; parallel=${HDF5_IS_PARALLEL}")
 message(STATUS "Probe full post-processing dependencies: ${APRL_PROBE_FULL}")
 message(STATUS "Probe official SDDS build: ${APRL_PROBE_SDDS}")
-

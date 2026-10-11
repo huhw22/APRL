@@ -55,6 +55,18 @@ find_package(ZLIB QUIET)
 find_package(LibLZMA QUIET)
 find_package(GSL QUIET)
 
+# yaml-cpp <= 0.7 commonly exported an un-namespaced target, while 0.8
+# exports yaml-cpp::yaml-cpp.  A plain "yaml-cpp" item degrades to
+# "-lyaml-cpp" when only the namespaced target exists and loses the private
+# installation prefix's library search path.
+if(TARGET yaml-cpp::yaml-cpp)
+  set(APRL_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+elseif(TARGET yaml-cpp)
+  set(APRL_YAML_CPP_TARGET yaml-cpp)
+else()
+  message(FATAL_ERROR "yaml-cpp was found but exported no supported CMake target")
+endif()
+
 set(APRL_BUILD_DESCRIPTION
   "${CMAKE_CXX_COMPILER_ID}-${CMAKE_CXX_COMPILER_VERSION},${CMAKE_BUILD_TYPE},HDF5-${HDF5_VERSION}")
 
@@ -111,7 +123,7 @@ target_link_libraries(direct_eb_core
   PUBLIC
     MPI::MPI_CXX
     ${HDF5_LIBRARIES}
-    yaml-cpp
+    ${APRL_YAML_CPP_TARGET}
 )
 target_compile_definitions(direct_eb_core
   PUBLIC OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX
@@ -228,7 +240,7 @@ else()
 endif()
 
 add_executable(undulator_resonance utilities/undulator_resonance.cpp)
-target_link_libraries(undulator_resonance PRIVATE yaml-cpp)
+target_link_libraries(undulator_resonance PRIVATE ${APRL_YAML_CPP_TARGET})
 target_compile_options(undulator_resonance PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
@@ -242,7 +254,7 @@ target_compile_options(energy_ledger_report PRIVATE
 add_executable(lab_frame_energy_estimate
   utilities/lab_frame_energy_estimate.cpp
 )
-target_link_libraries(lab_frame_energy_estimate PRIVATE yaml-cpp)
+target_link_libraries(lab_frame_energy_estimate PRIVATE ${APRL_YAML_CPP_TARGET})
 target_compile_options(lab_frame_energy_estimate PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
