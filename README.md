@@ -126,6 +126,10 @@ by default:
 ./install_online.sh --profile core
 ```
 
+Large online-install archives use the official CMake, zlib, and HDF Group
+download sites instead of GitHub releases. Every archive is pinned by SHA-256
+and cached for reuse.
+
 The installer verifies pinned source archives, builds parallel HDF5 with the
 selected MPI, and gives installed executables relative runtime search paths.
 Only one `aprl-runtime` tree is needed on a shared filesystem.  A single-node

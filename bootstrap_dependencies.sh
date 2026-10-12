@@ -58,11 +58,11 @@ hdf5_version="1.14.6"
 fftw_version="3.3.10"
 mpich_version="5.0.2"
 
-yaml_cpp_url="${APRL_YAML_CPP_URL:-https://github.com/jbeder/yaml-cpp/archive/refs/tags/${yaml_cpp_version}.tar.gz}"
+yaml_cpp_url="${APRL_YAML_CPP_URL:-https://mirror.nju.edu.cn/gentoo/distfiles/91/yaml-cpp-${yaml_cpp_version}.gh.tar.gz}"
 yaml_cpp_sha256="${APRL_YAML_CPP_SHA256:-fbe74bbdcee21d656715688706da3c8becfd946d92cd44705cc6098bb23b3a16}"
-zlib_url="${APRL_ZLIB_URL:-https://github.com/madler/zlib/releases/download/v${zlib_version}/zlib-${zlib_version}.tar.gz}"
+zlib_url="${APRL_ZLIB_URL:-https://zlib.net/fossils/zlib-${zlib_version}.tar.gz}"
 zlib_sha256="${APRL_ZLIB_SHA256:-9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23}"
-hdf5_url="${APRL_HDF5_URL:-https://github.com/HDFGroup/hdf5/releases/download/hdf5_${hdf5_version}/hdf5-${hdf5_version}.tar.gz}"
+hdf5_url="${APRL_HDF5_URL:-https://support.hdfgroup.org/releases/hdf5/v1_14/v1_14_6/downloads/hdf5-${hdf5_version}.tar.gz}"
 hdf5_sha256="${APRL_HDF5_SHA256:-e4defbac30f50d64e1556374aa49e574417c9e72c6b1de7a4ff88c4b1bea6e9b}"
 fftw_url="${APRL_FFTW_URL:-https://fftw.org/pub/fftw/fftw-${fftw_version}.tar.gz}"
 fftw_sha256="${APRL_FFTW_SHA256:-56c932549852cddcfafdab3820b0200c7742675be92179e59e6215b340e26467}"
@@ -180,7 +180,8 @@ case "$host_arch" in
     cmake_sha256="${APRL_CMAKE_SHA256:-}"
     ;;
 esac
-cmake_url="${APRL_CMAKE_URL:-https://github.com/Kitware/CMake/releases/download/v${cmake_version}/cmake-${cmake_version}-${cmake_platform}.tar.gz}"
+cmake_series="${cmake_version%.*}"
+cmake_url="${APRL_CMAKE_URL:-https://cmake.org/files/v${cmake_series}/cmake-${cmake_version}-${cmake_platform}.tar.gz}"
 
 cat <<EOF
 === APRL local dependency bootstrap ===

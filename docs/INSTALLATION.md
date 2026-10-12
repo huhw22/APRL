@@ -98,6 +98,12 @@ allocation 内检查才确认两 rank collective parallel-HDF5 与站点启动�
 
 该命令自动准备 CMake（主机缺少合格版本时）、yaml-cpp、zlib 和由当前 MPI C wrapper 编译且启用 deflate 的 parallel HDF5；`full` 配置还准备 FFTW3 double precision 与线程库。源码包缓存于 `.cache/aprl-dependencies`，后续重复安装不重新下载。已经填充缓存的离线机器可增加 `--offline-deps`。依赖标记同时包含源码校验值和当前 MPI/C/C++ 工具链指纹；更换 module 或编译器后不会静默复用旧 ABI 的库。
 
+默认下载避免 GitHub release 大文件：CMake 使用 `cmake.org`，zlib 使用
+`zlib.net`，HDF5 使用 HDF Group 的 `support.hdfgroup.org`，yaml-cpp 使用南京大学
+Gentoo distfiles 镜像。所有归档仍按固定 SHA-256 校验；站点网络需要其他镜像时，
+可分别设置 `APRL_CMAKE_URL`、`APRL_YAML_CPP_URL`、`APRL_ZLIB_URL` 和
+`APRL_HDF5_URL`，镜像提供字节相同的归档时无需修改校验值。
+
 安装前缀包含 `bin/`、`lib/`、头文件、依赖锁文件和 `share/aprl/runtime-env.sh`。APRL 可执行文件写入相对 `$ORIGIN/../lib`/`lib64` RPATH，因此本地 HDF5、zlib 与 yaml-cpp 不需要安装到每个计算节点；前缀只需位于所有节点可见的共享文件系统。平台 MPI 仍由 module 提供，因此顺序必须是先加载与编译时相同的 module，再载入私有运行环境：
 
 ```bash

@@ -99,6 +99,9 @@ seeded-FEL 与 laser-modulation 计算不属于已验证范围。
 ./install_online.sh --profile core
 ```
 
+联网安装的大文件默认使用 CMake、zlib 与 HDF Group 官方下载站点，不依赖
+GitHub release；下载内容均经过固定 SHA-256 校验并缓存以供重复安装。
+
 安装程序读取当前系统和 MPI 环境，校验固定版本源码，在同一 MPI 下构建
 parallel HDF5，并给可执行文件写入相对 RPATH。共享文件系统中只需保留一份
 `aprl-runtime`。没有平台 MPI 的单节点工作站可使用底层
