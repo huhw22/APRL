@@ -29,9 +29,9 @@ Options:
   -h, --help            show this help
 
 Pinned sources may be overridden for controlled mirrors with matching
-APRL_CMAKE_*, APRL_YAML_CPP_*, APRL_HDF5_*, APRL_FFTW_* or APRL_MPICH_*
-URL/SHA256 environment variables.  The selected values are recorded in the
-generated dependency lock file.
+APRL_CMAKE_*, APRL_YAML_CPP_*, APRL_ZLIB_*, APRL_HDF5_*, APRL_FFTW_* or
+APRL_MPICH_* URL/SHA256 environment variables.  The selected values are
+recorded in the generated dependency lock file.
 EOF
 }
 
@@ -53,12 +53,15 @@ plan_only=false
 # only when it provides byte-identical content.
 cmake_version="3.31.8"
 yaml_cpp_version="0.8.0"
+zlib_version="1.3.1"
 hdf5_version="1.14.6"
 fftw_version="3.3.10"
 mpich_version="5.0.2"
 
 yaml_cpp_url="${APRL_YAML_CPP_URL:-https://github.com/jbeder/yaml-cpp/archive/refs/tags/${yaml_cpp_version}.tar.gz}"
 yaml_cpp_sha256="${APRL_YAML_CPP_SHA256:-fbe74bbdcee21d656715688706da3c8becfd946d92cd44705cc6098bb23b3a16}"
+zlib_url="${APRL_ZLIB_URL:-https://github.com/madler/zlib/releases/download/v${zlib_version}/zlib-${zlib_version}.tar.gz}"
+zlib_sha256="${APRL_ZLIB_SHA256:-9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23}"
 hdf5_url="${APRL_HDF5_URL:-https://github.com/HDFGroup/hdf5/releases/download/hdf5_${hdf5_version}/hdf5-${hdf5_version}.tar.gz}"
 hdf5_sha256="${APRL_HDF5_SHA256:-e4defbac30f50d64e1556374aa49e574417c9e72c6b1de7a4ff88c4b1bea6e9b}"
 fftw_url="${APRL_FFTW_URL:-https://fftw.org/pub/fftw/fftw-${fftw_version}.tar.gz}"
@@ -118,6 +121,7 @@ if [[ -z "$jobs" ]]; then
   else
     jobs=1
   fi
+  if ((jobs > 16)); then jobs=16; fi
 fi
 
 absolute_path() {
@@ -145,6 +149,13 @@ for retained_path in "$source_root" "$prefix" "$cache_dir"; do
   case "$retained_path/" in
     "$build_dir/"*)
       echo "Build directory may not contain retained path: $retained_path" >&2
+      exit 2 ;;
+  esac
+done
+for retained_path in "$prefix" "$cache_dir"; do
+  case "$build_dir/" in
+    "$retained_path/"*)
+      echo "Disposable build directory may not be inside retained path: $retained_path" >&2
       exit 2 ;;
   esac
 done
@@ -186,6 +197,7 @@ mpi_launcher_request=$mpi_launcher
 offline=$offline
 cmake=$cmake_version
 yaml_cpp=$yaml_cpp_version
+zlib=$zlib_version
 hdf5=$hdf5_version
 fftw=$([[ "$profile" == "full" ]] && echo "$fftw_version" || echo disabled)
 mpich=$($bundle_mpi && echo "$mpich_version" || echo disabled)
@@ -219,11 +231,44 @@ fi
 mkdir -p -- "$prefix" "$build_dir" "$cache_dir"
 state_dir="$prefix/share/aprl/bootstrap"
 mkdir -p -- "$state_dir"
+if command -v flock >/dev/null 2>&1; then
+  bootstrap_lock_dir="$source_root/.cache/aprl-locks"
+  mkdir -p -- "$bootstrap_lock_dir"
+  exec {bootstrap_lock_fd}>"$bootstrap_lock_dir/bootstrap.lock"
+  if ! flock -n "$bootstrap_lock_fd"; then
+    echo "Another dependency bootstrap is using this source tree." >&2
+    exit 1
+  fi
+fi
 if ! $bundle_mpi && compgen -G "$state_dir/mpich-*.installed" >/dev/null; then
   echo "This prefix already contains a bootstrapped MPICH." >&2
   echo "Use --bundle-mpi again or choose a fresh prefix for the platform MPI." >&2
   echo "Mixing the retained private MPI runtime with a new site MPI is unsafe." >&2
   exit 1
+fi
+if ! $bundle_mpi; then
+  private_mpi_artifact=""
+  for candidate in "$prefix/bin/mpicc" "$prefix/bin/mpic++" \
+      "$prefix/bin/mpiexec" "$prefix/bin/mpirun"; do
+    if [[ -e "$candidate" ]]; then
+      private_mpi_artifact="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$private_mpi_artifact" ]]; then
+    for mpi_library_dir in "$prefix/lib" "$prefix/lib64"; do
+      private_mpi_artifact="$(
+        compgen -G "$mpi_library_dir/libmpi*.so*" | head -n 1 || true
+      )"
+      [[ -z "$private_mpi_artifact" ]] || break
+    done
+  fi
+  if [[ -n "$private_mpi_artifact" ]]; then
+    echo "Platform-MPI mode found a private MPI artifact in the prefix:" >&2
+    echo "  $private_mpi_artifact" >&2
+    echo "Use a fresh prefix; a partial or old bundled MPI must not be mixed with the site MPI." >&2
+    exit 1
+  fi
 fi
 
 sha256_file() {
@@ -290,10 +335,12 @@ remove_tree() {
     "$build_dir"|"$build_dir"/*) ;;
     *) echo "Refusing to remove path outside build root: $target" >&2; exit 1 ;;
   esac
-  if [[ -x "$prefix/bin/cmake" ]]; then
+  if [[ -x "$prefix/bin/cmake" ]] &&
+     "$prefix/bin/cmake" --version >/dev/null 2>&1; then
     "$prefix/bin/cmake" -E remove_directory "$target"
-  elif command -v cmake >/dev/null 2>&1; then
-    cmake -E remove_directory "$target"
+  elif command -v cmake >/dev/null 2>&1 &&
+       cmake --version >/dev/null 2>&1; then
+    "$(command -v cmake)" -E remove_directory "$target"
   else
     rm -rf -- "$target"
   fi
@@ -329,34 +376,54 @@ version_at_least() {
 }
 
 cmake_command=""
-if [[ -x "$prefix/bin/cmake" ]]; then
+cmake_marker="$state_dir/cmake-${cmake_version}-${cmake_sha256}.installed"
+repair_private_cmake=false
+if [[ -x "$prefix/bin/cmake" && -f "$cmake_marker" ]]; then
   candidate_cmake="$prefix/bin/cmake"
-  candidate_version="$("$candidate_cmake" --version | awk 'NR==1 {print $3}')"
-  if version_at_least "$candidate_version" "3.16"; then
-    cmake_command="$candidate_cmake"
-  fi
-elif command -v cmake >/dev/null 2>&1; then
-  candidate_cmake="$(command -v cmake)"
-  candidate_version="$("$candidate_cmake" --version | awk 'NR==1 {print $3}')"
-  if version_at_least "$candidate_version" "3.16"; then
+  candidate_version="$("$candidate_cmake" --version 2>/dev/null |
+    awk 'NR==1 {print $3}' || true)"
+  if [[ "$candidate_version" == "$cmake_version" ]]; then
     cmake_command="$candidate_cmake"
   fi
 fi
-if [[ -z "$cmake_command" ]]; then
+if [[ -z "$cmake_command" ]] &&
+   { [[ -e "$prefix/bin/cmake" ]] ||
+     compgen -G "$state_dir/cmake-*.installed" >/dev/null; }; then
+  # runtime-env.sh prepends prefix/bin.  A stale private CMake must therefore
+  # be repaired instead of merely falling back to a healthy host CMake.
+  repair_private_cmake=true
+fi
+if ! $repair_private_cmake && [[ -z "$cmake_command" ]] &&
+   command -v cmake >/dev/null 2>&1; then
+  candidate_cmake="$(command -v cmake)"
+  candidate_version="$("$candidate_cmake" --version 2>/dev/null |
+    awk 'NR==1 {print $3}' || true)"
+  if [[ -n "$candidate_version" ]] &&
+     version_at_least "$candidate_version" "3.18"; then
+    cmake_command="$candidate_cmake"
+  fi
+fi
+if $repair_private_cmake || [[ -z "$cmake_command" ]]; then
   if [[ -z "$cmake_platform" ]]; then
-    echo "No CMake >= 3.16 was found and no prebuilt CMake is pinned for $host_arch." >&2
+    echo "No CMake >= 3.18 was found and no prebuilt CMake is pinned for $host_arch." >&2
     echo "Supply CMake on PATH or set APRL_CMAKE_URL and APRL_CMAKE_SHA256." >&2
     exit 1
   fi
   cmake_archive="$(download_verified \
     "cmake-${cmake_version}-${cmake_platform}.tar.gz" \
     "$cmake_url" "$cmake_sha256")"
-  cmake_marker="$state_dir/cmake-${cmake_version}.installed"
-  if [[ ! -x "$prefix/bin/cmake" || ! -f "$cmake_marker" ]]; then
-    echo "Installing private CMake $cmake_version"
-    tar -xzf "$cmake_archive" --strip-components=1 -C "$prefix"
-    : > "$cmake_marker"
+  echo "Installing private CMake $cmake_version"
+  rm -f -- "$cmake_marker"
+  tar -xzf "$cmake_archive" --strip-components=1 -C "$prefix"
+  installed_cmake_version="$("$prefix/bin/cmake" --version 2>/dev/null |
+    awk 'NR==1 {print $3}' || true)"
+  if [[ "$installed_cmake_version" != "$cmake_version" ]]; then
+    echo "Private CMake installation is incomplete or reports an unexpected version." >&2
+    exit 1
   fi
+  find "$state_dir" -maxdepth 1 -type f -name 'cmake-*.installed' \
+    ! -name "$(basename -- "$cmake_marker")" -delete
+  : > "$cmake_marker"
   cmake_command="$prefix/bin/cmake"
 fi
 echo "cmake_command=$cmake_command"
@@ -391,11 +458,34 @@ derive_mpi_cc() {
       return 0
     fi
   done
-  command -v mpicc 2>/dev/null || return 1
+  return 1
 }
 
+command_identity() {
+  local request="$1"
+  local executable=""
+  executable="$(command -v -- "$request" 2>/dev/null || true)"
+  if [[ -z "$executable" ]]; then
+    printf 'command=%s\nstatus=missing\n' "$request"
+    return 0
+  fi
+  printf 'command=%s\npath=%s\nrealpath=%s\n' \
+    "$request" "$executable" "$(realpath -m -- "$executable")"
+  "$executable" --version 2>&1 | head -n 4 || true
+  "$executable" -dumpfullversion -dumpversion 2>/dev/null || true
+}
+
+host_toolchain_identity="$(
+  {
+    command_identity cc
+    command_identity c++
+  } | sha256_text
+)"
+
 if $bundle_mpi; then
-  mpich_marker="$state_dir/mpich-${mpich_version}-ch3-sock.installed"
+  mpich_build_identity="$(printf '%s\n%s\n' \
+    "$mpich_sha256" "$host_toolchain_identity" | sha256_text)"
+  mpich_marker="$state_dir/mpich-${mpich_version}-ch3-sock-${mpich_build_identity}.installed"
   if [[ ! -x "$prefix/bin/mpic++" || ! -x "$prefix/bin/mpicc" ||
         ! -f "$mpich_marker" ]]; then
     mpich_archive="$(download_verified "mpich-${mpich_version}.tar.gz" \
@@ -441,16 +531,54 @@ else
     echo "Could not derive the MPI C wrapper next to $mpi_cxx; pass --mpi-cc." >&2
     exit 1
   fi
+  mpi_launcher="$(resolve_command "$mpi_launcher" || true)"
+  if [[ -z "$mpi_launcher" ]]; then
+    echo "MPI launcher not found; load the site MPI module or pass --mpi-launcher." >&2
+    exit 1
+  fi
 fi
 
-mpi_show="$($mpi_cc -show 2>/dev/null || $mpi_cc --showme 2>/dev/null || true)"
-mpi_identity="$(printf '%s\n%s\n' "$mpi_cc" "$mpi_show" | sha256_text)"
+mpi_cc_show="$($mpi_cc --showme 2>/dev/null || $mpi_cc -show 2>/dev/null || true)"
+mpi_cxx_show="$($mpi_cxx --showme 2>/dev/null || $mpi_cxx -show 2>/dev/null || true)"
+mpi_cc_command="$($mpi_cc --showme:command 2>/dev/null || true)"
+mpi_cxx_command="$($mpi_cxx --showme:command 2>/dev/null || true)"
+if [[ -z "$mpi_cc_command" ]]; then
+  read -r mpi_cc_command _ <<<"$mpi_cc_show"
+fi
+if [[ -z "$mpi_cxx_command" ]]; then
+  read -r mpi_cxx_command _ <<<"$mpi_cxx_show"
+fi
+mpi_cc_compiler="$(command -v -- "$mpi_cc_command" 2>/dev/null || true)"
+mpi_cxx_compiler="$(command -v -- "$mpi_cxx_command" 2>/dev/null || true)"
+if [[ -z "$mpi_cc_compiler" || -z "$mpi_cxx_compiler" ]]; then
+  echo "Could not resolve the compilers used by the selected MPI wrappers." >&2
+  echo "  mpicc command: $mpi_cc_command" >&2
+  echo "  mpic++ command: $mpi_cxx_command" >&2
+  exit 1
+fi
+toolchain_identity_text="$(
+  {
+    printf 'mpi_cc=%s\nmpi_cc_realpath=%s\nmpi_cc_show=%s\n' \
+      "$mpi_cc" "$(realpath -m -- "$mpi_cc")" "$mpi_cc_show"
+    printf 'mpi_cxx=%s\nmpi_cxx_realpath=%s\nmpi_cxx_show=%s\n' \
+      "$mpi_cxx" "$(realpath -m -- "$mpi_cxx")" "$mpi_cxx_show"
+    command_identity "$mpi_cc_compiler"
+    command_identity "$mpi_cxx_compiler"
+    printf 'mpi_launcher=%s\nmpi_launcher_realpath=%s\n' \
+      "$mpi_launcher" "$(realpath -m -- "$mpi_launcher")"
+    "$mpi_launcher" --version 2>&1 | head -n 6 || true
+  }
+)"
+toolchain_identity="$(printf '%s\n' "$toolchain_identity_text" | sha256_text)"
+mpi_identity="$toolchain_identity"
 echo "mpi_cc=$mpi_cc"
 echo "mpi_cxx=$mpi_cxx"
 echo "mpi_launcher=$mpi_launcher"
-echo "mpi_identity=$mpi_identity"
+echo "toolchain_identity=$toolchain_identity"
 
-yaml_marker="$state_dir/yaml-cpp-${yaml_cpp_version}.installed"
+yaml_build_identity="$(printf '%s\n%s\n' \
+  "$yaml_cpp_sha256" "$toolchain_identity" | sha256_text)"
+yaml_marker="$state_dir/yaml-cpp-${yaml_cpp_version}-${yaml_build_identity}.installed"
 if [[ ! -f "$yaml_marker" || ! -e "$prefix/lib/libyaml-cpp.so" ]]; then
   yaml_archive="$(download_verified "yaml-cpp-${yaml_cpp_version}.tar.gz" \
     "$yaml_cpp_url" "$yaml_cpp_sha256")"
@@ -461,9 +589,10 @@ if [[ ! -f "$yaml_marker" || ! -e "$prefix/lib/libyaml-cpp.so" ]]; then
   remove_tree "$yaml_build"
   "$cmake_command" -S "$yaml_source" -B "$yaml_build" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_CXX_COMPILER="$mpi_cxx" \
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_INSTALL_LIBDIR=lib \
-    -DCMAKE_INSTALL_RPATH='\$ORIGIN' \
+    -DCMAKE_INSTALL_RPATH='$ORIGIN' \
     -DBUILD_SHARED_LIBS=ON \
     -DYAML_BUILD_SHARED_LIBS=ON \
     -DYAML_CPP_BUILD_TESTS=OFF \
@@ -472,10 +601,40 @@ if [[ ! -f "$yaml_marker" || ! -e "$prefix/lib/libyaml-cpp.so" ]]; then
     "${cmake_policy_args[@]}"
   "$cmake_command" --build "$yaml_build" --parallel "$jobs"
   "$cmake_command" --install "$yaml_build"
+  find "$state_dir" -maxdepth 1 -type f -name 'yaml-cpp-*.installed' \
+    ! -name "$(basename -- "$yaml_marker")" -delete
   : > "$yaml_marker"
 fi
 
-hdf5_marker="$state_dir/hdf5-${hdf5_version}-shared-${mpi_identity}.installed"
+zlib_build_identity="$(printf '%s\n%s\n' \
+  "$zlib_sha256" "$toolchain_identity" | sha256_text)"
+zlib_marker="$state_dir/zlib-${zlib_version}-${zlib_build_identity}.installed"
+if [[ ! -f "$zlib_marker" || ! -e "$prefix/lib/libz.so" ]]; then
+  zlib_archive="$(download_verified "zlib-${zlib_version}.tar.gz" \
+    "$zlib_url" "$zlib_sha256")"
+  echo "Building zlib $zlib_version"
+  zlib_source="$build_dir/zlib-source"
+  zlib_build="$build_dir/zlib-build"
+  extract_source "$zlib_archive" "$zlib_source"
+  remove_tree "$zlib_build"
+  "$cmake_command" -S "$zlib_source" -B "$zlib_build" \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER="$mpi_cc_compiler" \
+    -DCMAKE_INSTALL_PREFIX="$prefix" \
+    -DCMAKE_INSTALL_LIBDIR=lib \
+    -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+    -DZLIB_BUILD_EXAMPLES=OFF \
+    "${cmake_policy_args[@]}"
+  "$cmake_command" --build "$zlib_build" --parallel "$jobs"
+  "$cmake_command" --install "$zlib_build"
+  find "$state_dir" -maxdepth 1 -type f -name 'zlib-*.installed' \
+    ! -name "$(basename -- "$zlib_marker")" -delete
+  : > "$zlib_marker"
+fi
+
+hdf5_build_identity="$(printf '%s\n%s\n%s\n' \
+  "$hdf5_sha256" "$zlib_build_identity" "$toolchain_identity" | sha256_text)"
+hdf5_marker="$state_dir/hdf5-${hdf5_version}-shared-${hdf5_build_identity}.installed"
 if [[ ! -f "$hdf5_marker" || ! -e "$prefix/lib/libhdf5.so" ||
       ! -x "$prefix/bin/h5pcc" ]]; then
   hdf5_archive="$(download_verified "hdf5-${hdf5_version}.tar.gz" \
@@ -490,7 +649,9 @@ if [[ ! -f "$hdf5_marker" || ! -e "$prefix/lib/libhdf5.so" ||
     -DCMAKE_INSTALL_PREFIX="$prefix" \
     -DCMAKE_INSTALL_LIBDIR=lib \
     -DCMAKE_C_COMPILER="$mpi_cc" \
-    -DCMAKE_INSTALL_RPATH='\$ORIGIN' \
+    -DCMAKE_PREFIX_PATH="$prefix" \
+    -DZLIB_ROOT="$prefix" \
+    -DCMAKE_INSTALL_RPATH='$ORIGIN' \
     -DBUILD_SHARED_LIBS=ON \
     -DBUILD_STATIC_LIBS=OFF \
     -DONLY_SHARED_LIBS=ON \
@@ -501,7 +662,7 @@ if [[ ! -f "$hdf5_marker" || ! -e "$prefix/lib/libhdf5.so" ||
     -DHDF5_BUILD_JAVA=OFF \
     -DHDF5_BUILD_TOOLS=OFF \
     -DHDF5_BUILD_EXAMPLES=OFF \
-    -DHDF5_ENABLE_Z_LIB_SUPPORT=OFF \
+    -DHDF5_ENABLE_Z_LIB_SUPPORT=ON \
     -DHDF5_ENABLE_SZIP_SUPPORT=OFF
   "$cmake_command" --build "$hdf5_build" --parallel "$jobs"
   "$cmake_command" --install "$hdf5_build"
@@ -511,7 +672,10 @@ if [[ ! -f "$hdf5_marker" || ! -e "$prefix/lib/libhdf5.so" ||
 fi
 
 if [[ "$profile" == "full" ]]; then
-  fftw_marker="$state_dir/fftw-${fftw_version}-portable.installed"
+  fftw_effective_cflags="${APRL_FFTW_CFLAGS:--O3 -fomit-frame-pointer}"
+  fftw_build_identity="$(printf '%s\n%s\n%s\n' \
+    "$fftw_sha256" "$toolchain_identity" "$fftw_effective_cflags" | sha256_text)"
+  fftw_marker="$state_dir/fftw-${fftw_version}-portable-${fftw_build_identity}.installed"
   if [[ ! -f "$fftw_marker" || ! -e "$prefix/lib/libfftw3.so" ||
         ! -e "$prefix/lib/libfftw3_threads.so" ]]; then
     fftw_archive="$(download_verified "fftw-${fftw_version}.tar.gz" \
@@ -526,13 +690,15 @@ if [[ "$profile" == "full" ]]; then
       cd "$fftw_build"
       # FFTW otherwise adds -mtune=native automatically.  Keep the local
       # runtime usable on heterogeneous nodes of the same architecture.
-      CFLAGS="${APRL_FFTW_CFLAGS:--O3 -fomit-frame-pointer}" \
+      CC="$mpi_cc_compiler" \
+      CFLAGS="$fftw_effective_cflags" \
         "$fftw_source/configure" \
         --prefix="$prefix" \
         --libdir="$prefix/lib" \
         --enable-shared \
         --disable-static \
         --enable-threads \
+        --enable-silent-rules \
         --disable-fortran
       make -j "$jobs"
       make install
@@ -546,8 +712,8 @@ fi
 runtime_env="$prefix/share/aprl/runtime-env.sh"
 cat > "$runtime_env" <<'EOF'
 #!/usr/bin/env bash
-# Source this file before running an APRL installation whose site MPI module
-# is not already active.  APRL binaries themselves also carry relative RPATHs.
+# For a platform-MPI build, load the same site MPI module first and then source
+# this file. APRL binaries themselves also carry relative dependency RPATHs.
 _aprl_runtime_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 export PATH="${_aprl_runtime_root}/bin:${PATH}"
 export LD_LIBRARY_PATH="${_aprl_runtime_root}/lib:${_aprl_runtime_root}/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -564,12 +730,18 @@ host_os=$host_os
 host_arch=$host_arch
 profile=$profile
 prefix=$prefix
-cmake_version=$cmake_version
+cmake_pinned_version=$cmake_version
 cmake_url=$cmake_url
 cmake_sha256=$cmake_sha256
+cmake_command=$cmake_command
+cmake_selected_version=$cmake_selected_version
+cmake_provider=$([[ "$cmake_command" == "$prefix/bin/cmake" ]] && echo private-prefix || echo host-path)
 yaml_cpp_version=$yaml_cpp_version
 yaml_cpp_url=$yaml_cpp_url
 yaml_cpp_sha256=$yaml_cpp_sha256
+zlib_version=$zlib_version
+zlib_url=$zlib_url
+zlib_sha256=$zlib_sha256
 hdf5_version=$hdf5_version
 hdf5_url=$hdf5_url
 hdf5_sha256=$hdf5_sha256
@@ -581,6 +753,10 @@ mpi_cc=$mpi_cc
 mpi_cxx=$mpi_cxx
 mpi_launcher=$mpi_launcher
 mpi_identity=$mpi_identity
+toolchain_identity=$toolchain_identity
+host_toolchain_identity=$host_toolchain_identity
+mpi_cc_compiler=$mpi_cc_compiler
+mpi_cxx_compiler=$mpi_cxx_compiler
 mpich_version=$($bundle_mpi && echo "$mpich_version" || echo disabled)
 mpich_url=$mpich_url
 mpich_sha256=$mpich_sha256
@@ -589,7 +765,7 @@ EOF
 if [[ -x "$prefix/bin/h5pcc" ]]; then
   echo "=== local parallel-HDF5 verification ==="
   "$prefix/bin/h5pcc" -showconfig 2>/dev/null |
-    grep -E 'HDF5 Version|Parallel HDF5|C Compiler|Installation point' || true
+    grep -E 'HDF5 Version|Parallel HDF5|C Compiler|Installation point|Filters' || true
 fi
 
 if ! $keep_build; then

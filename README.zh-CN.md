@@ -93,14 +93,16 @@ seeded-FEL 与 laser-modulation 计算不属于已验证范围。
 
 ## 构建与测试
 
-在联网机器上可把 APRL、parallel HDF5 和 yaml-cpp 一次性安装到项目内的自包含前缀；超算默认复用平台 MPI：
+在联网机器上可把 APRL、启用 zlib 压缩的 parallel HDF5 和 yaml-cpp 一次性安装到项目内的自包含前缀；超算默认复用平台 MPI：
 
 ```bash
-./install.sh --bootstrap-deps --profile core \
-  --prefix "$PWD/aprl-runtime" --jobs 8
+./install_online.sh --profile core
 ```
 
-安装程序校验固定版本源码，在同一 MPI 下构建 parallel HDF5，并给可执行文件写入相对 RPATH。共享文件系统中只需保留一份 `aprl-runtime`。没有平台 MPI 的单节点工作站可增加 `--bundle-mpi`。
+安装程序读取当前系统和 MPI 环境，校验固定版本源码，在同一 MPI 下构建
+parallel HDF5，并给可执行文件写入相对 RPATH。共享文件系统中只需保留一份
+`aprl-runtime`。没有平台 MPI 的单节点工作站可使用底层
+`./install.sh --bootstrap-deps --bundle-mpi` 路线。
 
 已有完整系统依赖时仍可直接构建：
 

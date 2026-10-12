@@ -52,6 +52,14 @@ function(aprl_required_test name)
   )
 endfunction()
 
+function(aprl_required_mpi_test name)
+  add_test(NAME ${name} COMMAND ${ARGN})
+  set_tests_properties(${name} PROPERTIES
+    LABELS "required;functional;mpi"
+    TIMEOUT 60
+  )
+endfunction()
+
 add_test(NAME required.runtime.smoke
   COMMAND $<TARGET_FILE:aprl>
           "${APRL_VERIFY_CARDS}/runtime-smoke.yaml")
@@ -61,7 +69,7 @@ set_tests_properties(required.runtime.smoke PROPERTIES
   TIMEOUT 60
 )
 
-aprl_required_test(required.lorentz-elegant
+aprl_required_mpi_test(required.lorentz-elegant
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
   ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_core_checks> lorentz-elegant
   ${MPIEXEC_POSTFLAGS})
@@ -75,7 +83,7 @@ aprl_required_test(required.charge-continuity
 aprl_required_test(required.cowan-dispersion
   $<TARGET_FILE:aprl_core_checks> cowan-dispersion)
 
-aprl_required_test(required.current-filter
+aprl_required_mpi_test(required.current-filter
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
   ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_core_checks> current-filter
   ${MPIEXEC_POSTFLAGS})
@@ -83,7 +91,7 @@ aprl_required_test(required.current-filter
 aprl_required_test(required.cpml-reflection
   $<TARGET_FILE:aprl_core_checks> cpml-reflection)
 
-aprl_required_test(required.hdf5-versions
+aprl_required_mpi_test(required.hdf5-versions
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
   ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_core_checks> hdf5-versions
   "${APRL_VERIFY_WORK}/hdf5" ${MPIEXEC_POSTFLAGS})
@@ -114,7 +122,7 @@ if(APRL_BUILD_SASE_BUNCH_GENERATOR)
   set_tests_properties(required.sase-generator.output PROPERTIES
     DEPENDS required.sase-generator.cleanup)
 
-  aprl_required_test(required.sase-generator.aprl-read
+  aprl_required_mpi_test(required.sase-generator.aprl-read
     ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
     ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_core_checks>
     sase-generator-file "${APRL_VERIFY_WORK}/sase/generated.h5"
@@ -178,21 +186,21 @@ set_tests_properties(required.output-safety.refuses-overwrite PROPERTIES
   DEPENDS required.output-safety.first-run
   WILL_FAIL TRUE)
 
-aprl_required_test(required.mpi.one-rank
+aprl_required_mpi_test(required.mpi.one-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
   ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
   "${APRL_VERIFY_CARDS}/mpi-consistency.yaml" ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.mpi.one-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/mpi-one")
 
-aprl_required_test(required.mpi.two-rank
+aprl_required_mpi_test(required.mpi.two-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
   ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
   "${APRL_VERIFY_CARDS}/mpi-consistency.yaml" ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.mpi.two-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/mpi-two")
 
-aprl_required_test(required.mpi.compare
+aprl_required_mpi_test(required.mpi.compare
   $<TARGET_FILE:aprl_output_checks> compare-particles
   "${APRL_VERIFY_WORK}/mpi-one/detectors/particles.h5"
   "${APRL_VERIFY_WORK}/mpi-two/detectors/particles.h5" 8)
@@ -342,13 +350,25 @@ add_custom_target(verify_required
   USES_TERMINAL
 )
 
+add_custom_target(verify_required_no_mpi
+  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -L required -LE mpi
+  DEPENDS aprl aprl_core_checks aprl_output_checks
+  WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
+  USES_TERMINAL
+  COMMENT "Running required non-MPI APRL verification tests"
+)
+
 if(APRL_BUILD_SASE_BUNCH_GENERATOR)
   add_dependencies(verify_required sase_bunch_generator)
+  add_dependencies(verify_required_no_mpi sase_bunch_generator)
 endif()
 
 if(APRL_BUILD_POSTPROCESSORS)
   add_dependencies(verify_required trajectory_radiation field_reconstruction
     field_plane_analysis field_power_compare energy_closure)
+  add_dependencies(verify_required_no_mpi trajectory_radiation
+    field_reconstruction field_plane_analysis field_power_compare
+    energy_closure)
 endif()
 
 if(APRL_ENABLE_PHYSICS_ANALYSIS)

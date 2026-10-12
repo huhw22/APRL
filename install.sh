@@ -25,7 +25,7 @@ Options:
   --sdds-root DIR          use and validate an official built SDDS tree
   --require-sdds           fail if the native SDDS converter is unavailable
   --allow-serial-hdf5      single-rank/local build only
-  --skip-mpi-run           skip dependency check's two-rank launch
+  --skip-mpi-run           skip dependency and regression MPI launches
   --skip-tests             do not run the required lightweight regressions
   --keep-build             retain build products after successful install
   --cmake-arg ARG          extra CMake argument; may be repeated
@@ -139,6 +139,7 @@ if [[ -z "$jobs" ]]; then
   else
     jobs="$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 1)"
   fi
+  if ((jobs > 16)); then jobs=16; fi
 fi
 
 absolute_path() {
@@ -170,6 +171,27 @@ case "$source_root/" in
     echo "Build directory may not contain the source tree: $build_dir" >&2
     exit 2 ;;
 esac
+case "$prefix/" in
+  "$build_dir/"*)
+    echo "Install prefix may not be inside the disposable build tree: $prefix" >&2
+    exit 2 ;;
+esac
+case "$build_dir/" in
+  "$prefix/"*)
+    echo "Disposable build tree may not be inside the install prefix: $build_dir" >&2
+    exit 2 ;;
+esac
+
+mkdir -p -- "$(dirname -- "$build_dir")"
+if command -v flock >/dev/null 2>&1; then
+  install_lock_dir="$source_root/.cache/aprl-locks"
+  mkdir -p -- "$install_lock_dir"
+  exec {install_lock_fd}>"$install_lock_dir/install.lock"
+  if ! flock -n "$install_lock_fd"; then
+    echo "Another APRL installation is using this source tree." >&2
+    exit 1
+  fi
+fi
 
 if $bootstrap_deps; then
   if ! $bundle_mpi; then
@@ -196,6 +218,18 @@ if $bootstrap_deps; then
       else
         mpi_cc="$(command -v -- "$mpi_cc" 2>/dev/null || true)"
       fi
+    else
+      mpi_wrapper_dir="$(dirname -- "$mpi_cxx")"
+      for mpi_cc_candidate in mpicc mpiicc mpcc; do
+        if [[ -x "$mpi_wrapper_dir/$mpi_cc_candidate" ]]; then
+          mpi_cc="$mpi_wrapper_dir/$mpi_cc_candidate"
+          break
+        fi
+      done
+    fi
+    if [[ -z "$mpi_cc" ]]; then
+      echo "Could not derive the MPI C wrapper next to $mpi_cxx; pass --mpi-cc." >&2
+      exit 1
     fi
     if [[ "$mpi_launcher" == */* ]]; then
       [[ -x "$mpi_launcher" ]] || {
@@ -205,6 +239,9 @@ if $bootstrap_deps; then
       mpi_launcher="$(command -v -- "$mpi_launcher")"
     elif command -v -- "$mpi_launcher" >/dev/null 2>&1; then
       mpi_launcher="$(command -v -- "$mpi_launcher")"
+    else
+      echo "MPI launcher not found: $mpi_launcher" >&2
+      exit 1
     fi
   fi
 
@@ -260,11 +297,13 @@ $skip_tests && testing=OFF
 common_cmake_args=(
   -DCMAKE_BUILD_TYPE=Release
   -DCMAKE_CXX_COMPILER="$mpi_cxx"
+  -DMPIEXEC_EXECUTABLE="$mpi_launcher"
   -DCMAKE_INSTALL_PREFIX="$prefix"
   -DHDF5_PREFER_PARALLEL=TRUE
 )
 if $bootstrap_deps; then
   common_cmake_args+=(
+    -DCMAKE_C_COMPILER="$mpi_cc"
     -DCMAKE_PREFIX_PATH="$prefix"
     -DHDF5_ROOT="$prefix"
     -DAPRL_PORTABLE_INSTALL=ON
@@ -296,8 +335,13 @@ fi
 if ! $skip_tests; then
   if $allow_serial_hdf5; then
     echo "Running required tests except the parallel-HDF5 version test"
-    ctest --test-dir "$build_dir/core" --output-on-failure -L required \
-      -E '^required\.hdf5-versions$'
+    test_args=(--test-dir "$build_dir/core" --output-on-failure -L required
+      -E '^required\.hdf5-versions$')
+    $skip_mpi_run && test_args+=(-LE mpi)
+    ctest "${test_args[@]}"
+  elif $skip_mpi_run; then
+    echo "Running required non-MPI tests; MPI tests are deferred"
+    cmake --build "$build_dir/core" --target verify_required_no_mpi
   else
     cmake --build "$build_dir/core" --target verify_required
   fi
@@ -354,6 +398,7 @@ prefix=$prefix
 mpi_cxx=$mpi_cxx
 mpi_cc=${mpi_cc:-auto}
 mpi_launcher=$mpi_launcher
+mpi_tests_run=$(! $skip_mpi_run && echo yes || echo no)
 bootstrapped_dependencies=$bootstrap_deps
 bundled_mpi=$bundle_mpi
 parallel_hdf5_required=$parallel_requirement
@@ -373,8 +418,6 @@ while IFS= read -r installed_path || [[ -n "$installed_path" ]]; do
       exit 1 ;;
   esac
 done < "$build_dir/install-manifest.sorted.txt"
-cmake -E copy "$build_dir/install-manifest.sorted.txt" "$receipt"
-
 if $bootstrap_deps && command -v ldd >/dev/null 2>&1; then
   echo "Verifying installed runtime library resolution"
   runtime_missing=0
@@ -425,6 +468,13 @@ if [[ -n "$previous_manifest" ]]; then
     fi
   done < "$previous_manifest"
 fi
+
+# Publish the new receipt only after runtime verification and obsolete-file
+# cleanup succeed.  Rename within the receipt directory so replacement is
+# atomic and a failed update leaves the previous installation auditable.
+receipt_temp="$receipt_dir/.install-manifest.txt.tmp.$$"
+cp -- "$build_dir/install-manifest.sorted.txt" "$receipt_temp"
+mv -f -- "$receipt_temp" "$receipt"
 
 echo "Installation complete"
 echo "  prefix: $prefix"

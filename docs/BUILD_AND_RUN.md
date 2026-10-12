@@ -2,7 +2,8 @@
 
 ## Dependencies
 
-- CMake 3.16 or newer;
+- CMake 3.16 or newer for APRL itself; the online dependency bootstrap uses
+  CMake 3.18 or supplies a private newer version for HDF5 1.14.6;
 - a C++11 compiler;
 - MPI;
 - HDF5 1.10 or newer development libraries, with parallel HDF5 required for multi-rank
@@ -20,20 +21,20 @@ uninstall procedures are in [INSTALLATION.md](INSTALLATION.md).
 ## Build
 
 On a new machine, prefer the unprivileged local dependency bootstrap.  It
-reuses the selected MPI and places parallel HDF5, yaml-cpp, and APRL in one
-prefix:
+reuses the selected MPI and places zlib-enabled parallel HDF5, yaml-cpp, and
+APRL in one prefix:
 
 ```bash
-./install.sh --bootstrap-deps --profile core \
-  --prefix "$PWD/aprl-runtime" --jobs 8
+./install_online.sh --profile core
 ```
 
-On a managed cluster, load the site compiler/MPI module first.  Add
-`--skip-mpi-run` on a login node that forbids MPI launch, then repeat the
-two-rank dependency check inside an allocation.  `--bundle-mpi` is available
-for a single-node host without a platform MPI; production multi-node runs
-should keep the site MPI.  Cache, offline, and runtime-library details are in
-[installation and dependency maintenance](INSTALLATION.md).
+The online installer rejects Conda MPI on a managed cluster, can load a site
+MPI with `--mpi-module`, and skips the two-rank launch on a login node by
+default. Repeat the MPI preflight inside an allocation before production.
+The lower-level installer and `--bundle-mpi` single-node fallback remain
+available; production multi-node runs should keep the site MPI. Cache,
+offline, and runtime-library details are in [installation and dependency
+maintenance](INSTALLATION.md).
 
 When every system dependency is already present, configure directly:
 
@@ -259,10 +260,17 @@ The reference example HDF5 can be regenerated with:
 
 ## Run
 
+For the recommended project-local installation:
+
 ```bash
-./build/aprl config/example.yaml
-mpirun -n 4 ./build/aprl config/example.yaml
+module load <the same site MPI module used for installation>
+source ./aprl-runtime/share/aprl/runtime-env.sh
+aprl config/example.yaml
+mpirun -n 4 aprl config/example.yaml
 ```
+
+A developer who deliberately retained a direct CMake build can substitute
+`./build/aprl` for `aprl`.
 
 Use `config/generated_gaussian.yaml` for the file-free test input. For a local
 debug run choose global `runtime.mode: interactive`; for an uninterrupted
@@ -281,7 +289,9 @@ prefixed with `[resource]`, so ordinary batch redirection is sufficient:
 ```bash
 sbatch --output=run-%j.log run.sh
 # run.sh ultimately executes, for example:
-srun ./build/aprl config/production.yaml
+module load <the same site MPI module used for installation>
+source /shared/path/APRL/aprl-runtime/share/aprl/runtime-env.sh
+mpirun aprl config/production.yaml
 ```
 
 The startup timing is a short local microbenchmark, not a scheduler guarantee:

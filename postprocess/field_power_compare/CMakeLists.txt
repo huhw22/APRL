@@ -6,6 +6,17 @@ find_package(MPI REQUIRED COMPONENTS CXX)
 set(HDF5_PREFER_PARALLEL TRUE)
 find_package(HDF5 1.10 REQUIRED COMPONENTS C)
 find_package(yaml-cpp 0.6 REQUIRED)
+
+if(NOT APRL_YAML_CPP_TARGET)
+  if(TARGET yaml-cpp::yaml-cpp)
+    set(APRL_YAML_CPP_TARGET yaml-cpp::yaml-cpp)
+  elseif(TARGET yaml-cpp)
+    set(APRL_YAML_CPP_TARGET yaml-cpp)
+  else()
+    message(FATAL_ERROR
+      "yaml-cpp was found but exported no supported CMake target")
+  endif()
+endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(FFTW3 REQUIRED fftw3)
 
@@ -21,7 +32,7 @@ target_include_directories(field_power_compare PRIVATE
 target_link_libraries(field_power_compare PRIVATE
   MPI::MPI_CXX
   ${HDF5_LIBRARIES}
-  yaml-cpp
+  ${APRL_YAML_CPP_TARGET}
   ${FFTW3_LIBRARIES}
 )
 target_compile_definitions(field_power_compare PRIVATE

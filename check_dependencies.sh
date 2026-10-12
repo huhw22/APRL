@@ -245,7 +245,13 @@ elif $skip_mpi_run; then
   echo "SKIPPED by request. Run this checker inside an allocation before production use."
 else
   echo "=== two-rank collective MPI/HDF5 runtime probe ==="
-  if ! "$mpi_launcher" -n 2 "$probe_executable" "$probe_dir/two-rank.h5"; then
+  mpi_probe_command=(
+    "$mpi_launcher" -n 2 "$probe_executable" "$probe_dir/two-rank.h5"
+  )
+  if command -v timeout >/dev/null 2>&1; then
+    mpi_probe_command=(timeout --signal=TERM 120s "${mpi_probe_command[@]}")
+  fi
+  if ! "${mpi_probe_command[@]}"; then
     echo "RESULT=FAIL: MPI launch or collective parallel-HDF5 I/O failed."
     echo "If the login node forbids MPI launch, rerun with --skip-mpi-run and then run the checker inside a scheduler allocation."
     exit 1

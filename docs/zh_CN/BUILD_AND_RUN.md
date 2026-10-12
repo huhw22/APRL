@@ -2,7 +2,7 @@
 
 ## 依赖
 
-- CMake 3.16 或更新；
+- APRL 本体需要 CMake 3.16 或更新；联网依赖引导构建 HDF5 1.14.6 时使用 3.18，版本不足会自动准备私有新版；
 - 支持 C++11 的编译器；
 - MPI；
 - HDF5 C 1.10 或更新；多 rank 粒子输入必须使用 parallel HDF5；
@@ -14,14 +14,17 @@
 
 ## 构建
 
-新机器上优先使用普通用户本地依赖引导；它复用当前 MPI，并把 parallel HDF5、yaml-cpp 和 APRL 放入同一个前缀：
+新机器上优先使用普通用户本地依赖引导；它复用当前 MPI，并把启用 zlib 压缩的 parallel HDF5、yaml-cpp 和 APRL 放入同一个前缀：
 
 ```bash
-./install.sh --bootstrap-deps --profile core \
-  --prefix "$PWD/aprl-runtime" --jobs 8
+./install_online.sh --profile core
 ```
 
-超算上应先加载平台编译器/MPI module，再执行该命令。登录节点禁止启动 MPI 时增加 `--skip-mpi-run`，并在计算节点分配中补做双 rank 依赖检查。没有平台 MPI 的单节点机器可以增加 `--bundle-mpi`；多节点正式计算仍推荐站点 MPI。完整缓存、离线和运行库说明见[安装、卸载与依赖维护](../INSTALLATION.md)。
+联网安装器会在托管集群上拒绝 Conda MPI，可以通过 `--mpi-module`
+选择站点 MPI，并默认不在登录节点启动双 rank 检查。正式计算前仍应在
+计算节点分配中补做 MPI 预检。底层安装命令和单节点 `--bundle-mpi`
+兜底仍然保留；多节点正式计算应使用站点 MPI。完整缓存、离线和运行库说明见
+[安装、卸载与依赖维护](../INSTALLATION.md)。
 
 若所有系统依赖已经存在，也可以直接配置构建：
 
@@ -195,10 +198,17 @@ cmake --build build-energy-closure -j
 
 ## 运行
 
+对推荐的项目内安装：
+
 ```bash
-./build/aprl config/example.yaml
-mpirun -n 4 ./build/aprl config/example.yaml
+module load <与安装时相同的站点MPI模块>
+source ./aprl-runtime/share/aprl/runtime-env.sh
+aprl config/example.yaml
+mpirun -n 4 aprl config/example.yaml
 ```
+
+只有刻意保留 CMake 直接构建目录的开发者，才将上述 `aprl` 替换为
+`./build/aprl`。
 
 `config/generated_gaussian.yaml` 是无需粒子文件的测试输入。小服务器调试选择全局 `runtime.mode: interactive`；不间断批处理选择 `throughput`。这是全局策略，所以即使关闭轨迹、只开启探测面，交互模式信号停止仍然有效。
 
@@ -207,7 +217,9 @@ mpirun -n 4 ./build/aprl config/example.yaml
 ```bash
 sbatch --output=run-%j.log run.sh
 # run.sh 最终例如执行：
-srun ./build/aprl config/production.yaml
+module load <与安装时相同的站点MPI模块>
+source /shared/path/APRL/aprl-runtime/share/aprl/runtime-env.sh
+mpirun aprl config/production.yaml
 ```
 
 启动计时只是本地短微基准，不保证调度时间；并行文件系统竞争、后续粒子迁移和提前物理停止均不在预测内。申请大型资源前，应在目标机器和 MPI 分解上校准内存/时间安全系数。
