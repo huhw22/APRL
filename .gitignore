@@ -1,43 +1,133 @@
-# Out-of-source builds and generated binaries
-build/
-build-*/
-cmake-build-*/
-CMakeFiles/
-CMakeCache.txt
-compile_commands.json
-aprl
+# ---------------------------------------------------------------------------
+# APRL build trees and accidental in-source CMake/Ninja products
+# ---------------------------------------------------------------------------
+/build/
+/build-*/
+/cmake-build-*/
+/_build/
+/out/
+/CMakeFiles/
+/CMakeCache.txt
+/CTestTestfile.cmake
+/DartConfiguration.tcl
+/Testing/
+/Makefile
+/cmake_install.cmake
+/install_manifest.txt
+/build.ninja
+/rules.ninja
+/.ninja_deps
+/.ninja_log
+/compile_commands.json
+
+# Compilers and linkers
 *.o
+*.obj
 *.a
 *.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.d
+*.gcda
+*.gcno
+*.profraw
+*.profdata
 
-# Simulation output and scheduler logs
-output/
-results/
+# Executables left by an accidental in-source build
+/aprl
+/simulator
+/particle_text_to_hdf5
+/sase_bunch_generator
+/elegant_sdds_to_hdf5
+/undulator_resonance
+/energy_ledger_report
+/lab_frame_energy_estimate
+
+# ---------------------------------------------------------------------------
+# Private dependency builds, install prefixes, caches and transfer packages
+# ---------------------------------------------------------------------------
+/.deps/
+/.cache/
+/aprl-runtime*/
+/aprl-dependency-cache/
+/dependency-cache/
+/staging-runtime/
+/staging-build/
+/_install/
+/local-install/
+/dist/
+/*.tar
+/*.tar.gz
+/*.tgz
+/*.zip
+
+# ---------------------------------------------------------------------------
+# Simulation output, analysis output and scheduler/runtime debris
+# ---------------------------------------------------------------------------
+/output/
+/results/
+/work/
+/logs/
 *.h5
 *.hdf5
 !examples/particles/*.h5
 *.log
 slurm-*.out
+slurm-*.err
+/*.out
+/*.err
+/core
+/core.*
 
-# Local dependency/cache directories
-.deps/
-.cache/
-aprl-runtime/
-.vscode/
-.idea/
-
-# Development-only tests, probes, and helper tools are intentionally local
-tests/
-test/
-tools/
-scripts/
-benchmarks/
-scratch/
+# Generated installer/dependency reports
 dependency-report-*.log
 dependency-install-*.log
 build-install.dependency-report.log
 
+# ---------------------------------------------------------------------------
+# Python environments and tool caches
+# ---------------------------------------------------------------------------
+/.venv/
+/venv/
+__pycache__/
+*.py[cod]
+/.pytest_cache/
+/.mypy_cache/
+/.ruff_cache/
+/.coverage
+/.coverage.*
+/htmlcov/
+
+# Local agent, credential-provider and IDE state. These are never source.
+/.agents/
+/.codex/
+/.aws/
+/.vscode/
+/.idea/
+/.clangd/
+/.env
+/.env.*
+!/.env.example
+
+# ---------------------------------------------------------------------------
+# Development-only experiments intentionally kept outside the product tree.
+# Formal tests belong in verification/; shipped tools belong in utilities/
+# or postprocess/. Do not force-add these directories wholesale.
+# ---------------------------------------------------------------------------
+/tests/
+/test/
+/tools/
+/scripts/
+/benchmarks/
+/scratch/
+
 # Editor and operating-system files
 *~
 *.swp
+*.swo
+*.orig
+*.rej
 .DS_Store
+Thumbs.db
