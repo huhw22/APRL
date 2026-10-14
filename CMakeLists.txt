@@ -103,6 +103,7 @@ set(DIRECT_EB_SOURCES
   src/eb_sources.cpp
   src/energy_ledger.cpp
   src/lab_detectors.cpp
+  src/longitudinal_mesh.cpp
   src/particle_file.cpp
   src/particle_initializer.cpp
   src/particle_boundary.cpp

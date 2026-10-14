@@ -12,6 +12,25 @@
 
 namespace aprl
 {
+  enum class LongitudinalMeshMode
+  {
+    Explicit,
+    ObservationBounded
+  };
+
+  struct LongitudinalMeshConfig
+  {
+    LongitudinalMeshMode mode;
+    std::size_t lowerGuardCells;
+    std::size_t upperGuardCells;
+    Double selfFieldPaddingRms;
+    Double ballisticTimeSafetyFactor;
+    std::size_t alignmentCells;
+
+    LongitudinalMeshConfig();
+    bool automatic() const;
+  };
+
   struct UnitSystem
   {
     Double length;
@@ -32,6 +51,7 @@ namespace aprl
     unsigned int maximumParticleSubsteps;
     EBMaxwellSolver fieldSolver;
     EBCurrentFilter currentFilter;
+    LongitudinalMeshConfig longitudinal;
 
     MeshConfig();
   };

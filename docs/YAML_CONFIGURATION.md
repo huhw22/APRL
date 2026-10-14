@@ -100,10 +100,11 @@ the compensated three-point PIC filter described in the
 it is distinct from Cowan's controlled-dispersion Maxwell stencil.
 
 `cells`, `cell_size`, and `center` describe the boosted computational box.
-`cells` contains the authoritative integer counts and each direction needs at
-least three cells; z additionally needs at least two cells per MPI rank.
-`cell_size` is converted to SI once. The full physical extent is then derived
-only by multiplication:
+Normally, `cells` contains the authoritative integer counts and each direction
+needs at least three cells; z additionally needs at least two cells per MPI
+rank. The only exception is the observation-bounded automatic z layout
+described below. `cell_size` is converted to SI once. For every explicitly
+specified direction the full extent is derived only by multiplication:
 
 ```text
 extent_i = cells_i * cell_size_i.
@@ -114,6 +115,112 @@ with the new contract. MPI z slabs are formed from the integer z count using
 integer quotient/remainder offsets; ranks may own counts differing by one, but
 no floating-point division determines a slab boundary. Startup prints the
 counts, cell sizes, derived extents and per-rank z-count range.
+
+### Observation-bounded automatic z layout
+
+The longitudinal count can be derived after the particle file has been read
+and transformed:
+
+```yaml
+mesh:
+  field_solver: cowan-z
+  cells: [104, 104, auto]
+  cell_size: [5.0, 5.0, 1.25]
+  center: [0.0, 0.0, 0.0]
+  duration: 500.0
+  boost_gamma: 929.0
+  particle_steps_per_undulator_period: 80
+  maximum_particle_substeps: 4096
+  longitudinal:
+    mode: observation-bounded
+    lower_guard_cells: 4
+    upper_guard_cells: 8
+    self_field_padding_rms: 4.0
+    ballistic_time_safety_factor: 1.1
+    alignment_cells: 256
+```
+
+`auto` is accepted only as the third entry of `mesh.cells`, and then
+`mesh.longitudinal.mode: observation-bounded` is required. The resolved z
+count and extent are written to startup output and the run manifest. An
+ordinary integer z count retains the previous explicit-box behaviour; in that
+case `mesh.longitudinal` must be omitted.
+
+This mode derives one boosted-frame physical interval from the actual input
+particles and the selected stop condition. It takes the union of:
+
+- the sampled initial particle support;
+- every particle's start-to-end ballistic z envelope through the planned stop
+  time, using its own transformed longitudinal velocity; and
+- the intersection of the earliest forward light ray emitted by the initial
+  bunch head with the final stop/observation plane.
+
+For `after-last-element`, that plane is the final enabled beamline element's
+interaction exit; for `reference-center-z`, it is the configured reference z.
+If their laboratory separation is `Delta Z`, the forward-ray advance retained
+in the boosted box is
+
+```text
+Delta z' = Delta Z / (boost_gamma + sqrt(boost_gamma^2 - 1)).
+```
+
+Thus the initial bunch is shifted near the -z side of the physical interval,
+while the +z side retains the particle world tube and the forward causal path
+only as far as the final observation event. The calculation uses the actual
+particle velocities and rejects a target that they cannot reach; it does not
+assume that every high-gamma input moves in a guessed direction in the boosted
+frame.
+
+The longitudinal options are:
+
+- `lower_guard_cells` and `upper_guard_cells` add physical, non-CPML cells
+  beyond the derived content on the two sides. They default to 4 and 8 and
+  must each be at least 2.
+- `self_field_padding_rms` adds the represented-charge-weighted initial
+  mean `+/- N sigma_z` interval when `initial_self_field` is enabled. It
+  defaults to 4.0, must be nonnegative, and must be at least 4.0 when that
+  Poisson solve is enabled. This interval is unioned with the sampled support;
+  it is not an additional `N sigma_z` beyond the outermost sampled particle.
+  It is ignored when the initial self-field is off.
+- `ballistic_time_safety_factor` multiplies the estimated stopping time before
+  constructing the particle envelope. It defaults to 1.1 and must be at least
+  1.0. Increase it, or the guards, when prescribed fields make the evolved
+  orbit depart appreciably from its initial ballistic extrapolation.
+- `alignment_cells` rounds the total z count (physical cells plus both CPML
+  layers) upward to a positive multiple. It defaults to 1. Alignment slack is
+  placed on the +z side and is independent of the MPI rank count.
+
+CPML thickness is not part of either guard: the configured z CPML layers are
+added outside the derived physical interval. Automatic sizing therefore
+requires z CPML with at least two cells per face. If any active particle enters
+either z CPML during the run, or a retirement-current carrier first reaches
+one, APRL stops with a hard error rather than silently claiming that an
+underestimated layout completed physically.
+
+The word *observation-bounded* is important. Once the earliest retained
+forward ray has crossed the final observation plane it may enter the +z CPML;
+the mode does **not** preserve the complete three-dimensional radiation field
+everywhere at the final time. Use a larger explicit box when that final-volume
+field, later downstream propagation, or substantial backward radiation is an
+observable. Likewise, the finite-boundary initial Poisson field and backward
+radiation are not made converged by this causal construction: scan
+`self_field_padding_rms`/the guard cells (or compare an explicit box) for those
+effects. Nonempty `sources.incident_waves` are not yet supported in automatic
+mode because an incoming wave has an independent causal extent.
+
+The forward-ray bound is a physical-causality bound, not a claim of bitwise
+equivalence to an infinite grid. A finite-difference stencil such as Cowan-z
+has a wider algebraic dependency footprint than a single continuous light
+ray. Detector fields therefore still require convergence scans of
+`upper_guard_cells`/`alignment_cells`, or comparison with a larger explicit
+box, before a boundary-independent waveform is claimed.
+
+The particle world tube is a containment condition, not a near-field
+convergence proof. In particular, `upper_guard_cells` and the ballistic safety
+factor determine how far an evolved leading particle and its near field remain
+from the +z CPML near the end of the run. Scan those values when particle
+energy or local self-field observables are used; a run that avoids the CPML
+can still have insufficient near-field clearance.
 
 `duration` is boosted-frame time and remains a hard upper guard, not a requested
 physical propagation distance. After particles are transformed, startup logs a

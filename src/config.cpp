@@ -113,11 +113,21 @@ namespace aprl
 
       const YAML::Node mesh = root["mesh"];
       if (mesh)
-        validateMapKeys(mesh, "mesh", {
-          "field_solver", "current_filter", "cells", "cell_size", "center",
-          "duration", "boost_gamma", "particle_steps_per_undulator_period",
-          "maximum_particle_substeps", "lengths", "resolution"
-        });
+        {
+          validateMapKeys(mesh, "mesh", {
+            "field_solver", "current_filter", "cells", "cell_size", "center",
+            "duration", "boost_gamma", "particle_steps_per_undulator_period",
+            "maximum_particle_substeps", "longitudinal", "lengths",
+            "resolution"
+          });
+          const YAML::Node longitudinal = mesh["longitudinal"];
+          if (longitudinal)
+            validateMapKeys(longitudinal, "mesh.longitudinal", {
+              "mode", "lower_guard_cells", "upper_guard_cells",
+              "self_field_padding_rms", "ballistic_time_safety_factor",
+              "alignment_cells"
+            });
+        }
 
       const YAML::Node radiation = root["radiation_resolution"];
       if (radiation)
@@ -349,13 +359,24 @@ namespace aprl
         }
     }
 
-    void meshCells(const YAML::Node& node, std::size_t result[3])
+    bool meshCells(const YAML::Node& node, std::size_t result[3])
     {
       if (!node.IsSequence() || node.size() != 3)
         throw configError(node,
-          "mesh cells must contain exactly three positive integers");
+          "mesh cells must contain exactly three entries");
       for (unsigned int axis = 0; axis < 3; ++axis)
         {
+          if (axis == 2)
+            {
+              std::string token;
+              try { token = lower(node[axis].as<std::string>()); }
+              catch (const YAML::Exception&) {}
+              if (token == "auto")
+                {
+                  result[axis] = 0;
+                  return true;
+                }
+            }
           result[axis] = positiveSize(node[axis], "mesh cells");
           if (result[axis] < 3)
             throw configError(node[axis],
@@ -366,6 +387,7 @@ namespace aprl
               "mesh cell count exceeds the exactly representable double "
               "index range");
         }
+      return false;
     }
 
     template<typename T>
@@ -578,6 +600,17 @@ namespace aprl
 
   UnitSystem::UnitSystem() : length(1.0), time(1.0) {}
 
+  LongitudinalMeshConfig::LongitudinalMeshConfig()
+    : mode(LongitudinalMeshMode::Explicit), lowerGuardCells(4),
+      upperGuardCells(8), selfFieldPaddingRms(4.0),
+      ballisticTimeSafetyFactor(1.1), alignmentCells(1)
+  {}
+
+  bool LongitudinalMeshConfig::automatic() const
+  {
+    return mode != LongitudinalMeshMode::Explicit;
+  }
+
   MeshConfig::MeshConfig()
     : cellSize(0.0), extent(0.0), center(0.0), duration(0.0),
       boostGamma(1.0), particleStepsPerUndulatorPeriod(1024),
@@ -780,7 +813,55 @@ namespace aprl
       throw configError(mesh,
         "mesh.lengths and mesh.resolution are obsolete; specify integer "
         "mesh.cells and physical mesh.cell_size instead");
-    meshCells(required(mesh, "cells"), result.mesh.cells);
+    const bool automaticLongitudinal =
+      meshCells(required(mesh, "cells"), result.mesh.cells);
+    const YAML::Node longitudinal = mesh["longitudinal"];
+    if (automaticLongitudinal)
+      {
+        if (!longitudinal)
+          throw configError(mesh["cells"][2],
+            "mesh.cells z is auto, so mesh.longitudinal is required");
+        const std::string mode = lower(
+          required(longitudinal, "mode").as<std::string>());
+        if (mode != "observation-bounded")
+          throw configError(longitudinal["mode"],
+            "automatic longitudinal mode must be observation-bounded");
+        result.mesh.longitudinal.mode =
+          LongitudinalMeshMode::ObservationBounded;
+        if (longitudinal["lower_guard_cells"])
+          result.mesh.longitudinal.lowerGuardCells = positiveSize(
+            longitudinal["lower_guard_cells"],
+            "mesh.longitudinal lower_guard_cells");
+        if (longitudinal["upper_guard_cells"])
+          result.mesh.longitudinal.upperGuardCells = positiveSize(
+            longitudinal["upper_guard_cells"],
+            "mesh.longitudinal upper_guard_cells");
+        if (longitudinal["self_field_padding_rms"])
+          result.mesh.longitudinal.selfFieldPaddingRms = finiteDouble(
+            longitudinal["self_field_padding_rms"],
+            "mesh.longitudinal self_field_padding_rms");
+        if (longitudinal["ballistic_time_safety_factor"])
+          result.mesh.longitudinal.ballisticTimeSafetyFactor = finiteDouble(
+            longitudinal["ballistic_time_safety_factor"],
+            "mesh.longitudinal ballistic_time_safety_factor");
+        if (longitudinal["alignment_cells"])
+          result.mesh.longitudinal.alignmentCells = positiveSize(
+            longitudinal["alignment_cells"],
+            "mesh.longitudinal alignment_cells");
+        if (result.mesh.longitudinal.lowerGuardCells < 2 ||
+            result.mesh.longitudinal.upperGuardCells < 2)
+          throw configError(longitudinal,
+            "automatic longitudinal guards must each be at least two cells");
+        if (!(result.mesh.longitudinal.selfFieldPaddingRms >= 0.0))
+          throw configError(longitudinal["self_field_padding_rms"],
+            "self_field_padding_rms must be nonnegative");
+        if (!(result.mesh.longitudinal.ballisticTimeSafetyFactor >= 1.0))
+          throw configError(longitudinal["ballistic_time_safety_factor"],
+            "ballistic_time_safety_factor must be at least one");
+      }
+    else if (longitudinal)
+      throw configError(longitudinal,
+        "mesh.longitudinal is only valid when mesh.cells z is auto");
     result.mesh.cellSize = finiteVector3(required(mesh, "cell_size"),
       "mesh cell_size", result.inputUnits.length);
     for (unsigned int axis = 0; axis < 3; ++axis)
@@ -788,6 +869,11 @@ namespace aprl
         if (!(result.mesh.cellSize[axis] > 0.0))
           throw configError(mesh["cell_size"][axis],
             "mesh cell_size values must be positive");
+        if (axis == 2 && automaticLongitudinal)
+          {
+            result.mesh.extent[axis] = 0.0;
+            continue;
+          }
         const long double length =
           static_cast<long double>(result.mesh.cells[axis]) *
           static_cast<long double>(result.mesh.cellSize[axis]);
@@ -1422,6 +1508,20 @@ namespace aprl
         "boost_gamma must be at least one");
     if (!(result.mesh.duration > 0.0))
       throw configError(mesh["duration"], "duration must be positive");
+    if (result.mesh.longitudinal.automatic())
+      {
+        if (result.boundary.type != EBBoundaryType::Cpml ||
+            result.boundary.cpml.cells[2] < 2)
+          throw configError(mesh["longitudinal"],
+            "observation-bounded longitudinal sizing requires z CPML");
+        if (!result.waves.empty())
+          throw configError(mesh["longitudinal"],
+            "observation-bounded longitudinal sizing does not yet support incident waves");
+        if (result.initialSelfField.enabled &&
+            result.mesh.longitudinal.selfFieldPaddingRms < 4.0)
+          throw configError(mesh["longitudinal"]["self_field_padding_rms"],
+            "enabled initial self field requires at least four RMS of automatic static-boundary padding");
+      }
     if (result.stop.mode == StopMode::AfterLastElement &&
         result.beamlineElements.empty())
       throw configError(stop["mode"],

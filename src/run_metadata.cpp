@@ -111,7 +111,9 @@ namespace aprl
   {}
 
   RunMetadata initializeRunMetadata(const SimulationConfig& config,
-                                    MPI_Comm communicator)
+                                    MPI_Comm communicator,
+                                    const LongitudinalLayoutReport*
+                                      longitudinalLayout)
   {
     RunMetadata metadata;
     int rank = 0;
@@ -169,7 +171,62 @@ namespace aprl
                    << quoteYaml(metadata.configurationDigest) << "\n"
                    << "particle_input: "
                    << quoteYaml(metadata.inputParticleIdentity) << "\n"
-                   << "configuration_yaml: |\n";
+                   << std::setprecision(17)
+                   << "resolved_mesh:\n"
+                   << "  cells: [" << config.mesh.cells[0] << ", "
+                   << config.mesh.cells[1] << ", "
+                   << config.mesh.cells[2] << "]\n"
+                   << "  cell_size_m: [" << config.mesh.cellSize[0]
+                   << ", " << config.mesh.cellSize[1] << ", "
+                   << config.mesh.cellSize[2] << "]\n"
+                   << "  extent_m: [" << config.mesh.extent[0] << ", "
+                   << config.mesh.extent[1] << ", "
+                   << config.mesh.extent[2] << "]\n"
+                   << "  center_m: [" << config.mesh.center[0] << ", "
+                   << config.mesh.center[1] << ", "
+                   << config.mesh.center[2] << "]\n";
+            if (longitudinalLayout)
+              {
+                const LongitudinalLayout& layout =
+                  longitudinalLayout->layout;
+                stream
+                  << "  longitudinal:\n"
+                  << "    mode: observation-bounded\n"
+                  << "    target_lab_z_m: "
+                  << longitudinalLayout->observationTargetLab << "\n"
+                  << "    initial_head_lab_z_m: "
+                  << longitudinalLayout->initialHeadLab << "\n"
+                  << "    ballistic_stop_time_s: "
+                  << longitudinalLayout->ballisticStopTime << "\n"
+                  << "    planned_ballistic_time_s: "
+                  << longitudinalLayout->plannedBallisticTime << "\n"
+                  << "    radiation_advance_m: "
+                  << longitudinalLayout->radiationAdvance << "\n"
+                  << "    origin_m: " << layout.origin << "\n"
+                  << "    outer_bounds_m: [" << layout.outerLower
+                  << ", " << layout.outerUpper << "]\n"
+                  << "    physical_bounds_m: [" << layout.physicalLower
+                  << ", " << layout.physicalUpper << "]\n"
+                  << "    translation_m: " << layout.translation << "\n"
+                  << "    initial_bounds_m: [" << layout.initialMinimum
+                  << ", " << layout.initialMaximum << "]\n"
+                  << "    ballistic_bounds_m: ["
+                  << layout.ballisticMinimum << ", "
+                  << layout.ballisticMaximum << "]\n"
+                  << "    radiation_upper_m: " << layout.radiationUpper
+                  << "\n"
+                  << "    self_field_bounds_m: [" << layout.selfFieldLower
+                  << ", " << layout.selfFieldUpper << "]\n"
+                  << "    required_bounds_m: [" << layout.requiredLower
+                  << ", " << layout.requiredUpper << "]\n"
+                  << "    minimum_physical_cells: "
+                  << layout.minimumPhysicalCells << "\n"
+                  << "    alignment_extra_cells: "
+                  << layout.alignmentExtraCells << "\n"
+                  << "    right_rounding_padding_m: "
+                  << layout.rightRoundingPadding << "\n";
+              }
+            stream << "configuration_yaml: |\n";
             std::istringstream card(config.configurationText);
             std::string line;
             while (std::getline(card, line)) stream << "  " << line << "\n";

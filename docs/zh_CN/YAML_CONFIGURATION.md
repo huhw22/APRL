@@ -64,13 +64,68 @@ J_i^f = (-J_{i-2} + 4 J_{i-1} + 10 J_i + 4 J_{i+1} - J_{i+2}) / 16。
 [WarpX 滤波理论](https://warpx.readthedocs.io/en/24.08/theory/pic.html#filtering)
 所述的补偿三点 PIC 滤波，与 Cowan 可控色散 Maxwell 模板是两个不同操作。
 
-`cells`、`cell_size`、`center` 定义计算系盒子。`cells` 是权威整数数目，每轴至少 3 格；z 还要求每 MPI rank 至少 2 格。总尺寸只由
+`cells`、`cell_size`、`center` 定义计算系盒子。通常 `cells` 是权威整数数目，每轴至少 3 格；z 还要求每 MPI rank 至少 2 格。下述“观测有界”自动 z 布局是唯一例外。对所有显式给定的方向，总尺寸只由
 
 ```text
 extent_i = cells_i * cell_size_i
 ```
 
 得到。旧 `lengths`、`resolution` 被直接拒绝。MPI z 薄层由整数商和余数构造，rank 计数最多相差 1，不用浮点除法确定边界。启动打印网格数、尺寸、推导范围和每 rank z 计数范围。
+
+### 观测有界的自动 z 布局
+
+纵向格数可以在读入并变换真实粒子后自动推导：
+
+```yaml
+mesh:
+  field_solver: cowan-z
+  cells: [104, 104, auto]
+  cell_size: [5.0, 5.0, 1.25]
+  center: [0.0, 0.0, 0.0]
+  duration: 500.0
+  boost_gamma: 929.0
+  particle_steps_per_undulator_period: 80
+  maximum_particle_substeps: 4096
+  longitudinal:
+    mode: observation-bounded
+    lower_guard_cells: 4
+    upper_guard_cells: 8
+    self_field_padding_rms: 4.0
+    ballistic_time_safety_factor: 1.1
+    alignment_cells: 256
+```
+
+`auto` 只允许作为 `mesh.cells` 的第三项，此时必须给出
+`mesh.longitudinal.mode: observation-bounded`。解析得到的 z 格数和长度会写入启动日志与运行 manifest。若 z 仍为普通整数，旧的显式盒子行为完全不变，并且必须省略 `mesh.longitudinal`。
+
+该模式根据真实输入粒子和所选停止条件，在计算系中取以下区间的并集：
+
+- 实际采样到的初始粒子支撑；
+- 每个粒子按自身变换后纵向速度，在计划停止时间内从起点到终点的完整弹道 z 包络；
+- 初始束头最早发出的前向光线与最终停止/观测平面的交点。
+
+对 `after-last-element`，目标平面是最后一个已启用束线元件的作用区出口；对 `reference-center-z`，目标平面是配置的参考 z。若它与初始束头的实验室系距离为 `Delta Z`，需要保留的前向光线在计算系中的推进量为
+
+```text
+Delta z' = Delta Z / (boost_gamma + sqrt(boost_gamma^2 - 1))。
+```
+
+因此初始束团会移到物理区 -z 一侧附近，+z 一侧只保留粒子世界管以及到最终观测事件为止的前向因果路径。计算使用每个真实粒子的速度，并拒绝粒子运动学无法到达的目标；它不会仅凭高 gamma 假定所有粒子在计算系中的运动方向。
+
+纵向选项含义如下：
+
+- `lower_guard_cells`、`upper_guard_cells` 分别在推导内容两端增加物理区内、非 CPML 的保护格，默认 4 和 8，均不得小于 2。
+- `self_field_padding_rms` 在启用 `initial_self_field` 时，把按代表电荷加权的初始 `mean +/- N sigma_z` 与实际采样支撑取并集；默认 4.0，必须非负，启用 Poisson 初场时不得小于 4.0。它不是从最外侧样本再向外增加 `N sigma_z`。关闭初始自场时该项不参与尺寸推导。
+- `ballistic_time_safety_factor` 在构造粒子包络前乘到估算停止时间上，默认 1.1，不得小于 1.0。规定外场使真实轨道明显偏离初始弹道外推时，应增大它或保护格。
+- `alignment_cells` 把纵向总格数（物理格加两侧 CPML）向上取整为该正整数的倍数，默认 1。对齐产生的额外格全部放在 +z 侧，与 MPI rank 数无关。
+
+CPML 厚度不属于上述保护格：配置的两层 z CPML 单独加在推导出的物理区之外。因此自动模式要求 z 向启用 CPML，且每侧至少 2 格。运行中若任何活动粒子进入任一 z CPML，或任何退役电流载体首次到达 z CPML，APRL 会硬错误停止，不会把低估盒长的结果静默标为物理完成。
+
+“观测有界”这一名称限定了保证范围：最早的保留前向光线穿过最终观测面后，可以进入 +z CPML；该模式**不保证**在最终时刻保存全域完整三维辐射场。若需要最终体场、观测面后的继续传播或显著后向辐射，应使用更大的显式盒子。有限边界上的初始 Poisson 自场和后向辐射也不会因这套前向因果构造自动收敛；正式结果仍应扫描 `self_field_padding_rms`/保护格，或与显式大盒对照。自动模式暂不支持非空 `sources.incident_waves`，因为外来波具有独立的因果范围。
+
+前向光线给出的是物理因果边界，不代表与无限网格逐位等价。Cowan-z 等有限差分模板的代数依赖范围可以宽于一条连续光线；因此在宣称探测波形与边界无关之前，仍须扫描 `upper_guard_cells`/`alignment_cells`，或与更大的显式盒对照。
+
+粒子世界管只是“不越界”的包含条件，不是近场收敛证明。尤其在运行末期，领先粒子及其近场到 +z CPML 的距离由 `upper_guard_cells` 和弹道安全因子共同决定。若要分析粒子能量或局部自场，应扫描这两个量；即使没有粒子进入 CPML，也仍可能存在近场余量不足。
 
 `duration` 是计算系最大时间保护，不是请求传播距离。变换粒子后打印 `[duration-estimate]`：`reference-center-z` 使用与停止谓词相同的惯性参考世界线精确估计；`after-last-element` 把每个初始粒子弹道外推到最后作用区出口并取最慢者，因此磁力可使其失准。若按步取整的估计超过配置值，只警告并给出 YAML 时间单位建议，不自动加长。
 

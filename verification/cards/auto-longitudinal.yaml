@@ -1,0 +1,50 @@
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output: {overwrite: true, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  current_filter: compensated-bilinear
+  cells: [12, 12, auto]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 6.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 1
+  longitudinal:
+    mode: observation-bounded
+    lower_guard_cells: 4
+    upper_guard_cells: 8
+    ballistic_time_safety_factor: 1.1
+    alignment_cells: 8
+boundary:
+  type: cpml
+  cells: [2, 2, 4]
+  polynomial_order: 3.0
+  target_reflection: 1.0e-8
+  kappa_max: 8.0
+  alpha_fraction: 0.0
+initial_self_field:
+  enabled: true
+  model: relativistic-poisson
+  relative_tolerance: 1.0e-6
+  maximum_iterations: 2000
+beam:
+  reference: {initial_center_z: -0.5}
+  input:
+    type: generated-gaussian
+    electrons: 8.0
+    macroparticles: 8
+    gamma: 4.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.0]
+    sigma_position: [0.02, 0.02, 0.03]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 19
+sources: {incident_waves: [], magnetic_elements: []}
+detectors:
+  enabled: true
+  directory: detectors
+  particle_planes:
+    - {name: particles, z: 0.5, buffer_records: 16, compression: 0}
+stop: {mode: after-last-element}
+trajectory: {enabled: false}

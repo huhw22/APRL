@@ -17,7 +17,8 @@ set(APRL_VERIFY_WORK "${CMAKE_CURRENT_BINARY_DIR}/work")
 set(APRL_VERIFY_CARDS "${CMAKE_CURRENT_SOURCE_DIR}/cards")
 foreach(directory
     smoke detector mpi-one mpi-two ledger invalid-key invalid-stop
-    physics-k0 physics-signal hdf5 sase)
+    physics-k0 physics-signal hdf5 sase auto-z-one auto-z-two
+    auto-z-reference)
   file(MAKE_DIRECTORY "${APRL_VERIFY_WORK}/${directory}")
 endforeach()
 file(MAKE_DIRECTORY
@@ -76,6 +77,9 @@ aprl_required_mpi_test(required.lorentz-elegant
 
 aprl_required_test(required.boris-phase
   $<TARGET_FILE:aprl_core_checks> boris-phase)
+
+aprl_required_test(required.longitudinal-layout
+  $<TARGET_FILE:aprl_core_checks> longitudinal-layout)
 
 aprl_required_test(required.charge-continuity
   $<TARGET_FILE:aprl_core_checks> charge-continuity)
@@ -206,6 +210,36 @@ aprl_required_mpi_test(required.mpi.compare
   "${APRL_VERIFY_WORK}/mpi-two/detectors/particles.h5" 8)
 set_tests_properties(required.mpi.compare PROPERTIES
   DEPENDS "required.mpi.one-rank;required.mpi.two-rank")
+
+aprl_required_mpi_test(required.auto-z.one-rank
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/auto-longitudinal.yaml" ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.auto-z.one-rank PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/auto-z-one")
+
+aprl_required_mpi_test(required.auto-z.two-rank
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/auto-longitudinal.yaml" ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.auto-z.two-rank PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/auto-z-two")
+
+aprl_required_test(required.auto-z.rank-independent
+  ${CMAKE_COMMAND}
+  -DONE_MANIFEST=${APRL_VERIFY_WORK}/auto-z-one/run-manifest.yaml
+  -DTWO_MANIFEST=${APRL_VERIFY_WORK}/auto-z-two/run-manifest.yaml
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/check_auto_longitudinal.cmake")
+set_tests_properties(required.auto-z.rank-independent PROPERTIES
+  DEPENDS "required.auto-z.one-rank;required.auto-z.two-rank")
+
+aprl_required_mpi_test(required.auto-z.reference-center
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/auto-longitudinal-reference.yaml"
+  ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.auto-z.reference-center PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/auto-z-reference")
 
 aprl_required_test(required.energy-ledger-k0.run
   $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/energy-ledger-k0.yaml")

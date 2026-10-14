@@ -19,6 +19,7 @@
 #include "eb_sources.h"
 #include "energy_ledger.h"
 #include "lab_detectors.h"
+#include "longitudinal_mesh.h"
 #include "particle_boundary.h"
 #include "run_metadata.h"
 #include "trajectory_writer.h"
@@ -81,13 +82,15 @@ namespace aprl
     Double lastBeamlineInteractionExitLab() const;
     void validateParticlesInsideGlobalBox() const;
 
-    const SimulationConfig& config_;
+    SimulationConfig config_;
     DetectorConfig detectorConfig_;
     std::vector<BeamlineElementExtent> beamlineElements_;
     MPI_Comm communicator_;
     int rank_;
     int size_;
     RunMetadata runMetadata_;
+    LongitudinalLayoutReport longitudinalLayoutReport_;
+    bool hasLongitudinalLayoutReport_;
 
     EBGridGeometry globalGeometry_;
     EBGridGeometry localGeometry_;

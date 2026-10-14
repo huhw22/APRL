@@ -6,6 +6,7 @@
 #include <mpi.h>
 
 #include "config.h"
+#include "longitudinal_mesh.h"
 
 namespace aprl
 {
@@ -27,7 +28,9 @@ namespace aprl
   /* Creates one identity on rank zero, broadcasts it, and writes the exact
    * input card plus build/input provenance to the root-only manifest. */
   RunMetadata initializeRunMetadata(const SimulationConfig& config,
-                                    MPI_Comm communicator);
+                                    MPI_Comm communicator,
+                                    const LongitudinalLayoutReport*
+                                      longitudinalLayout = 0);
 }
 
 #endif

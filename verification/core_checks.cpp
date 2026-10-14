@@ -21,6 +21,7 @@
 #include "eb_field.h"
 #include "eb_mpi.h"
 #include "eb_particles.h"
+#include "longitudinal_mesh.h"
 #include "particle_file.h"
 
 namespace
@@ -36,6 +37,178 @@ namespace
   {
     return std::abs(value - reference) /
       std::max(1.0, std::max(std::abs(value), std::abs(reference)));
+  }
+
+  void checkLongitudinalLayout(int rank)
+  {
+    const double gamma = 929.13054928585427;
+    const double gammaBeta =
+      std::sqrt(gamma - 1.0) * std::sqrt(gamma + 1.0);
+    const double deltaLab = 6.07998533158;
+    const double expectedAdvance = deltaLab / (gamma + gammaBeta);
+    const double advance =
+      aprl::forwardLightIntersectionAdvance(deltaLab, gamma);
+    require(std::abs(advance - expectedAdvance) < 2.0e-18,
+      "Stable forward-light intersection advance changed");
+    require(aprl::forwardLightIntersectionAdvance(2.5, 1.0) == 2.5,
+      "Gamma-one forward-light intersection is not the lab distance");
+    const double extremeAdvance =
+      aprl::forwardLightIntersectionAdvance(1.0, 1.0e308);
+    require(extremeAdvance > 0.0 && extremeAdvance < 1.0e-307,
+      "Forward-light intersection overflowed at extreme finite gamma");
+
+    aprl::LongitudinalLayoutInput input;
+    input.initialMinimum = -2.0;
+    input.initialMaximum = 2.0;
+    input.initialMean = 0.0;
+    input.initialRms = 0.5;
+    input.ballisticMinimum = -3.0;
+    input.ballisticMaximum = 5.0;
+    input.radiationUpper = 6.0;
+    input.dz = 0.25;
+    input.cpmlCells = 4;
+    input.leftGuardCells = 2;
+    input.rightGuardCells = 3;
+    input.selfFieldPaddingRms = 8.0;
+    input.alignmentCells = 16;
+    input.meshCenter = 10.0;
+    const aprl::LongitudinalLayout layout =
+      aprl::deriveLongitudinalLayout(input);
+
+    require(layout.minimumPhysicalCells == 45,
+      "Longitudinal required physical cell count changed");
+    require(layout.totalCells == 64 && layout.physicalCells == 56,
+      "Longitudinal aligned mesh cell count changed");
+    require(layout.alignmentExtraCells == 11,
+      "Longitudinal alignment slack changed");
+    require(std::abs(layout.extent - 16.0) < 1.0e-14 &&
+            std::abs(layout.origin - 2.0) < 1.0e-14,
+      "Longitudinal outer mesh placement changed");
+    require(std::abs(layout.physicalLower - 3.0) < 1.0e-14 &&
+            std::abs(layout.physicalUpper - 17.0) < 1.0e-14,
+      "Longitudinal CPML inner boundaries changed");
+    require(std::abs(layout.translation - 7.5) < 1.0e-14,
+      "Longitudinal bunch translation changed");
+    require(std::abs(layout.requiredLower - layout.physicalLower) < 1.0e-14,
+      "Longitudinal alignment slack leaked onto the left");
+    require(std::abs(layout.requiredUpper - 14.25) < 1.0e-14 &&
+            std::abs(layout.rightRoundingPadding - 2.75) < 1.0e-14,
+      "Longitudinal right-only alignment padding changed");
+    require(std::abs(layout.selfFieldLower - 3.5) < 1.0e-14 &&
+            std::abs(layout.selfFieldUpper - 11.5) < 1.0e-14,
+      "Longitudinal self-field RMS padding changed");
+    require(std::abs(layout.ballisticMinimum - 4.5) < 1.0e-14 &&
+            std::abs(layout.ballisticMaximum - 12.5) < 1.0e-14 &&
+            std::abs(layout.radiationUpper - 13.5) < 1.0e-14,
+      "Translated longitudinal causal boundaries changed");
+
+    /* Automatic placement is a passive translation of the computational
+     * z coordinate.  The box origin must move by the same amount: box time
+     * then remains unchanged, box z gains exactly the translation, and the
+     * represented laboratory event/worldline is invariant.  Exercise a
+     * high-gamma case close to the production FEL cards so a future origin
+     * sign error cannot hide behind the generic Lorentz round-trip test. */
+    aprl::BoostFrameTransform originalFrame;
+    originalFrame.setOriginsFromGamma(
+      gamma, aprl::SI::c, 0.0, -0.05, 0.0);
+    aprl::BoostFrameTransform translatedFrame;
+    translatedFrame.setOriginsFromGamma(
+      gamma, aprl::SI::c, 0.0, -0.05, layout.translation);
+    const double labTimes[] = {-1.7e-10, 0.0, 2.4e-10};
+    const double labPositions[] = {-0.04, 1.25, 3.978};
+    double maximumTranslationEventError = 0.0;
+    for (std::size_t i = 0; i < 3; ++i)
+      {
+        double originalTime = 0.0;
+        double originalZ = 0.0;
+        double translatedTime = 0.0;
+        double translatedZ = 0.0;
+        originalFrame.labToBox(
+          labTimes[i], labPositions[i], originalTime, originalZ);
+        translatedFrame.labToBox(
+          labTimes[i], labPositions[i], translatedTime, translatedZ);
+        maximumTranslationEventError = std::max(
+          maximumTranslationEventError,
+          std::abs(translatedTime - originalTime));
+        maximumTranslationEventError = std::max(
+          maximumTranslationEventError,
+          std::abs((translatedZ - layout.translation) - originalZ));
+
+        double originalRecoveredTime = 0.0;
+        double originalRecoveredZ = 0.0;
+        double translatedRecoveredTime = 0.0;
+        double translatedRecoveredZ = 0.0;
+        originalFrame.boxToLab(
+          originalTime, originalZ,
+          originalRecoveredTime, originalRecoveredZ);
+        translatedFrame.boxToLab(
+          translatedTime, translatedZ,
+          translatedRecoveredTime, translatedRecoveredZ);
+        maximumTranslationEventError = std::max(
+          maximumTranslationEventError,
+          std::abs(translatedRecoveredTime - originalRecoveredTime));
+        maximumTranslationEventError = std::max(
+          maximumTranslationEventError,
+          std::abs(translatedRecoveredZ - originalRecoveredZ));
+      }
+    const double sampleBoxTime = 3.0e-11;
+    const double sampleBoxZ = -0.0125;
+    double originalLabTime = 0.0;
+    double originalLabZ = 0.0;
+    double translatedLabTime = 0.0;
+    double translatedLabZ = 0.0;
+    originalFrame.boxToLab(
+      sampleBoxTime, sampleBoxZ, originalLabTime, originalLabZ);
+    translatedFrame.boxToLab(
+      sampleBoxTime, sampleBoxZ + layout.translation,
+      translatedLabTime, translatedLabZ);
+    maximumTranslationEventError = std::max(
+      maximumTranslationEventError,
+      std::abs(translatedLabTime - originalLabTime));
+    maximumTranslationEventError = std::max(
+      maximumTranslationEventError,
+      std::abs(translatedLabZ - originalLabZ));
+    require(maximumTranslationEventError < 2.0e-12,
+      "Automatic longitudinal translation changed a laboratory event");
+
+    aprl::LongitudinalLayoutInput shifted(input);
+    shifted.initialMinimum += 100.0;
+    shifted.initialMaximum += 100.0;
+    shifted.initialMean += 100.0;
+    shifted.ballisticMinimum += 100.0;
+    shifted.ballisticMaximum += 100.0;
+    shifted.radiationUpper += 100.0;
+    const aprl::LongitudinalLayout shiftedLayout =
+      aprl::deriveLongitudinalLayout(shifted);
+    require(shiftedLayout.totalCells == layout.totalCells &&
+            std::abs(shiftedLayout.translation -
+              (layout.translation - 100.0)) < 1.0e-13 &&
+            std::abs(shiftedLayout.requiredUpper -
+              layout.requiredUpper) < 1.0e-13,
+      "Longitudinal layout is not invariant under input-coordinate shifts");
+
+    bool rejected = false;
+    try
+      {
+        shifted.alignmentCells = 0;
+        aprl::deriveLongitudinalLayout(shifted);
+      }
+    catch (const std::invalid_argument&)
+      {
+        rejected = true;
+      }
+    require(rejected, "Longitudinal layout accepted zero-cell alignment");
+
+    if (rank == 0)
+      std::cout << std::setprecision(12)
+                << "forward_light_advance_m=" << advance
+                << " longitudinal_nz=" << layout.totalCells
+                << " longitudinal_extent=" << layout.extent
+                << " longitudinal_translation=" << layout.translation
+                << " translation_event_error="
+                << maximumTranslationEventError
+                << " longitudinal_right_padding="
+                << layout.rightRoundingPadding << std::endl;
   }
 
   void checkLorentzAndElegant(MPI_Comm communicator, int rank, int size)
@@ -799,11 +972,14 @@ int main(int argc, char** argv)
       if (argc < 2)
         throw std::invalid_argument(
           "Usage: aprl_core_checks <lorentz-elegant|boris-phase|"
-          "charge-continuity|cowan-dispersion|current-filter|cpml-reflection|"
+          "longitudinal-layout|charge-continuity|cowan-dispersion|"
+          "current-filter|cpml-reflection|"
           "hdf5-versions|sase-generator-file> [path]");
       const std::string check(argv[1]);
       if (check == "lorentz-elegant")
         checkLorentzAndElegant(MPI_COMM_WORLD, rank, size);
+      else if (check == "longitudinal-layout")
+        checkLongitudinalLayout(rank);
       else if (check == "boris-phase")
         checkBorisPhase(rank);
       else if (check == "charge-continuity")

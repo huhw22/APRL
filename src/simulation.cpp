@@ -167,7 +167,8 @@ namespace aprl
     : config_(config), detectorConfig_(config.detectors),
       beamlineElements_(config.beamlineElements),
       communicator_(communicator), rank_(0), size_(1),
-      runMetadata_(),
+      runMetadata_(), longitudinalLayoutReport_(),
+      hasLongitudinalLayoutReport_(false),
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0),
       referenceCenterBoxZ_(0.0), frame_(), sources_(),
@@ -291,9 +292,6 @@ namespace aprl
         "Direct E/B solver requires boost_gamma >= 1");
 
     preflightOutputPaths();
-    runMetadata_ = initializeRunMetadata(config_, communicator_);
-    initializeGeometry();
-    validateAndReportRadiationResolution();
     initializeSources();
 
     if (sources_.maxwellIncidentWaveCount() > 0 &&
@@ -305,11 +303,10 @@ namespace aprl
       throw std::runtime_error(
         "Cowan-z field advance is active, but the present TF/SF incident-wave correction is still Yee-specific. Select mesh.field_solver: yee for this run until the generalized Cowan TF/SF stencil is connected; refusing to inject a numerically inconsistent seed field.");
 
-    particleCPML_.reset(new ParticleCPMLRegion(
-      globalGeometry_, globalOriginBox_,
-      config_.boundary.type == EBBoundaryType::Cpml ?
-        config_.boundary.cpml : EBCPMLParameters()));
     initializeParticles();
+    runMetadata_ = initializeRunMetadata(config_, communicator_,
+      hasLongitudinalLayoutReport_ ? &longitudinalLayoutReport_ : NULL);
+    validateAndReportRadiationResolution();
     reportDurationEstimate();
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
@@ -1198,8 +1195,10 @@ namespace aprl
               message << " Set mesh.cell_size y to at least " << dz
                       << " m (" << dz / config_.inputUnits.length
                       << " in the configured length unit).";
-            message << " Keep mesh.cells as explicit integers; the physical "
-                       "extent will be recomputed by multiplication.";
+            message << " The resolved physical extent is always computed "
+                       "from mesh.cells times mesh.cell_size; z may be an "
+                       "explicit count or the resolved observation-bounded "
+                       "automatic count.";
             throw std::invalid_argument(message.str());
           }
       }
@@ -1369,7 +1368,7 @@ namespace aprl
     /* A box-frame z cell spans gamma*dz at fixed box time in the lab.  Keep
      * that as the minimum recommended clearance beyond the relative head. */
     placement.recommendationMarginLab =
-      config_.mesh.boostGamma * globalGeometry_.dz;
+      config_.mesh.boostGamma * config_.mesh.cellSize[2];
 
     const SIBunchPlacementReport placementReport =
       SIBunchPreprocessor::placeRelativeLabSnapshot(
@@ -1494,8 +1493,233 @@ namespace aprl
                   MPI_DOUBLE, MPI_MIN, communicator_);
     MPI_Allreduce(&localBoostedMaximum, &boostedMaximum, 1,
                   MPI_DOUBLE, MPI_MAX, communicator_);
-    const Double boxTranslation = config_.mesh.center[2] -
+
+    Double boxTranslation = config_.mesh.center[2] -
       0.5 * (boostedMinimum + boostedMaximum);
+    if (config_.mesh.longitudinal.automatic())
+      {
+        if (globalCount == 0)
+          throw std::runtime_error(
+            "Automatic longitudinal sizing requires at least one particle");
+
+        /* Use represented charge, rather than record count or the optional
+         * diagnostic input weight, for the self-field padding statistics. */
+        long double localChargeWeight = 0.0L;
+        long double localWeightedZ = 0.0L;
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            const long double weight = std::abs(
+              static_cast<long double>(particles_[index].charge));
+            localChargeWeight += weight;
+            localWeightedZ += weight *
+              static_cast<long double>(particles_[index].position[2]);
+          }
+        long double globalChargeWeight = 0.0L;
+        long double globalWeightedZ = 0.0L;
+        MPI_Allreduce(&localChargeWeight, &globalChargeWeight, 1,
+                      MPI_LONG_DOUBLE, MPI_SUM, communicator_);
+        MPI_Allreduce(&localWeightedZ, &globalWeightedZ, 1,
+                      MPI_LONG_DOUBLE, MPI_SUM, communicator_);
+        if (!(globalChargeWeight > 0.0L))
+          throw std::runtime_error(
+            "Automatic longitudinal sizing found no represented charge");
+        const long double meanWide =
+          globalWeightedZ / globalChargeWeight;
+        long double localVarianceNumerator = 0.0L;
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            const long double weight = std::abs(
+              static_cast<long double>(particles_[index].charge));
+            const long double offset =
+              static_cast<long double>(particles_[index].position[2]) -
+              meanWide;
+            localVarianceNumerator += weight * offset * offset;
+          }
+        long double globalVarianceNumerator = 0.0L;
+        MPI_Allreduce(&localVarianceNumerator,
+                      &globalVarianceNumerator, 1, MPI_LONG_DOUBLE,
+                      MPI_SUM, communicator_);
+        const Double boostedMean = static_cast<Double>(meanWide);
+        const Double boostedRms = std::sqrt(std::max(0.0,
+          static_cast<Double>(globalVarianceNumerator /
+                              globalChargeWeight)));
+
+        const Double observationTargetLab =
+          config_.stop.mode == StopMode::ReferenceCenterZ ?
+            config_.stop.referenceZ : lastBeamlineInteractionExitLab();
+        /* The lab snapshot was synchronized onto t_box=0.  Its rightmost
+         * record is therefore the causal emission event for the tight
+         * forward-light bound, even if it occurs at a slightly different
+         * lab time/position than the original lab-snapshot head anchor. */
+        const Double initialRadiatingHeadLab = frame_.labZFromBoxZT(
+          boostedMaximum, 0.0);
+        const Double targetDistanceLab =
+          observationTargetLab - initialRadiatingHeadLab;
+        if (!(targetDistanceLab > 0.0) ||
+            !std::isfinite(targetDistanceLab))
+          {
+            std::ostringstream message;
+            message << std::setprecision(10)
+                    << "Automatic longitudinal sizing requires its final "
+                       "observation/stop plane to be downstream of the "
+                       "initial bunch head: head_z="
+                    << initialRadiatingHeadLab
+                    << " m, target_z=" << observationTargetLab << " m.";
+            throw std::runtime_error(message.str());
+          }
+
+        Double ballisticStopTime = 0.0;
+        int localUnreachable = 0;
+        if (config_.stop.mode == StopMode::ReferenceCenterZ)
+          {
+            const Double rawReferenceBoxZ = frame_.boxZFromLabZT(
+              config_.reference.initialCenterZ, 0.0);
+            const Double currentReferenceLab = frame_.labZFromBoxZT(
+              rawReferenceBoxZ, 0.0);
+            const Double remaining = observationTargetLab -
+              currentReferenceLab;
+            const Double labAdvancePerBoxSecond =
+              frame_.gammaBeta() * SI::c;
+            if (!(remaining > 0.0) ||
+                !(labAdvancePerBoxSecond > 0.0) ||
+                !std::isfinite(labAdvancePerBoxSecond))
+              localUnreachable = 1;
+            else
+              ballisticStopTime = remaining / labAdvancePerBoxSecond;
+          }
+        else
+          {
+            Double localMaximumTime = 0.0;
+            for (std::size_t index = 0; index < particles_.size(); ++index)
+              {
+                Double eventTimeLab = 0.0;
+                Double eventZLab = 0.0;
+                frame_.boxToLab(0.0, particles_[index].position[2],
+                                eventTimeLab, eventZLab);
+                const Double remaining = observationTargetLab - eventZLab;
+                if (remaining <= 0.0) continue;
+                const Double gammaBox =
+                  BoostFrameTransform::gammaFromProperVelocity(
+                    particles_[index].properVelocity);
+                const Double betaBoxZ =
+                  particles_[index].properVelocity[2] / gammaBox;
+                const Double labAdvancePerBoxSecond =
+                  frame_.gamma() * SI::c *
+                  (frame_.beta() + betaBoxZ);
+                if (!(labAdvancePerBoxSecond > 0.0) ||
+                    !std::isfinite(labAdvancePerBoxSecond))
+                  localUnreachable = 1;
+                else
+                  localMaximumTime = std::max(localMaximumTime,
+                    remaining / labAdvancePerBoxSecond);
+              }
+            MPI_Allreduce(&localMaximumTime, &ballisticStopTime, 1,
+                          MPI_DOUBLE, MPI_MAX, communicator_);
+          }
+        int globalUnreachable = 0;
+        MPI_Allreduce(&localUnreachable, &globalUnreachable, 1, MPI_INT,
+                      MPI_MAX, communicator_);
+        if (globalUnreachable || !(ballisticStopTime > 0.0) ||
+            !std::isfinite(ballisticStopTime))
+          throw std::runtime_error(
+            "Automatic longitudinal sizing cannot reach the configured stop plane from the initial boosted-frame particle kinematics");
+        const Double plannedBallisticTime = ballisticStopTime *
+          config_.mesh.longitudinal.ballisticTimeSafetyFactor;
+        if (!(plannedBallisticTime > 0.0) ||
+            !std::isfinite(plannedBallisticTime))
+          throw std::runtime_error(
+            "Automatic longitudinal ballistic safety time is not finite");
+
+        Double localBallisticMinimum =
+          std::numeric_limits<Double>::infinity();
+        Double localBallisticMaximum =
+          -std::numeric_limits<Double>::infinity();
+        int localBallisticOverflow = 0;
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            const Double start = particles_[index].position[2];
+            const Double gammaBox =
+              BoostFrameTransform::gammaFromProperVelocity(
+                particles_[index].properVelocity);
+            const Double betaBoxZ =
+              particles_[index].properVelocity[2] / gammaBox;
+            const Double finish = std::fma(
+              betaBoxZ * SI::c, plannedBallisticTime, start);
+            if (!std::isfinite(finish))
+              {
+                localBallisticOverflow = 1;
+                continue;
+              }
+            localBallisticMinimum = std::min(localBallisticMinimum,
+              std::min(start, finish));
+            localBallisticMaximum = std::max(localBallisticMaximum,
+              std::max(start, finish));
+          }
+        int globalBallisticOverflow = 0;
+        MPI_Allreduce(&localBallisticOverflow,
+                      &globalBallisticOverflow, 1, MPI_INT, MPI_MAX,
+                      communicator_);
+        if (globalBallisticOverflow)
+          throw std::runtime_error(
+            "Automatic longitudinal ballistic particle envelope overflowed");
+        Double ballisticMinimum = 0.0;
+        Double ballisticMaximum = 0.0;
+        MPI_Allreduce(&localBallisticMinimum, &ballisticMinimum, 1,
+                      MPI_DOUBLE, MPI_MIN, communicator_);
+        MPI_Allreduce(&localBallisticMaximum, &ballisticMaximum, 1,
+                      MPI_DOUBLE, MPI_MAX, communicator_);
+
+        const Double radiationAdvance = forwardLightIntersectionAdvance(
+          targetDistanceLab, config_.mesh.boostGamma);
+        const Double radiationUpper = boostedMaximum + radiationAdvance;
+        if (!std::isfinite(radiationUpper))
+          throw std::runtime_error(
+            "Automatic longitudinal forward-radiation envelope overflowed");
+
+        LongitudinalLayoutInput layoutInput;
+        layoutInput.initialMinimum = boostedMinimum;
+        layoutInput.initialMaximum = boostedMaximum;
+        layoutInput.initialMean = boostedMean;
+        layoutInput.initialRms = boostedRms;
+        layoutInput.ballisticMinimum = ballisticMinimum;
+        layoutInput.ballisticMaximum = ballisticMaximum;
+        layoutInput.radiationUpper = radiationUpper;
+        layoutInput.dz = config_.mesh.cellSize[2];
+        layoutInput.cpmlCells = config_.boundary.cpml.cells[2];
+        layoutInput.leftGuardCells =
+          config_.mesh.longitudinal.lowerGuardCells;
+        layoutInput.rightGuardCells =
+          config_.mesh.longitudinal.upperGuardCells;
+        layoutInput.selfFieldPaddingRms =
+          config_.initialSelfField.enabled ?
+            config_.mesh.longitudinal.selfFieldPaddingRms : 0.0;
+        layoutInput.alignmentCells =
+          config_.mesh.longitudinal.alignmentCells;
+        layoutInput.meshCenter = config_.mesh.center[2];
+
+        longitudinalLayoutReport_.layout =
+          deriveLongitudinalLayout(layoutInput);
+        longitudinalLayoutReport_.observationTargetLab =
+          observationTargetLab;
+        longitudinalLayoutReport_.initialHeadLab =
+          initialRadiatingHeadLab;
+        longitudinalLayoutReport_.ballisticStopTime = ballisticStopTime;
+        longitudinalLayoutReport_.plannedBallisticTime =
+          plannedBallisticTime;
+        longitudinalLayoutReport_.radiationAdvance = radiationAdvance;
+        hasLongitudinalLayoutReport_ = true;
+        config_.mesh.cells[2] =
+          longitudinalLayoutReport_.layout.totalCells;
+        config_.mesh.extent[2] =
+          longitudinalLayoutReport_.layout.extent;
+        boxTranslation = longitudinalLayoutReport_.layout.translation;
+      }
+
+    initializeGeometry();
+    particleCPML_.reset(new ParticleCPMLRegion(
+      globalGeometry_, globalOriginBox_,
+      config_.boundary.type == EBBoundaryType::Cpml ?
+        config_.boundary.cpml : EBCPMLParameters()));
     for (std::size_t index = 0; index < particles_.size(); ++index)
       particles_[index].position[2] += boxTranslation;
     boostedMinimum += boxTranslation;
@@ -1504,6 +1728,39 @@ namespace aprl
       placementReport.headAfterLab, boxTranslation);
     referenceCenterBoxZ_ = frame_.boxZFromLabZT(
       config_.reference.initialCenterZ, 0.0);
+
+    if (hasLongitudinalLayoutReport_ && rank_ == 0)
+      {
+        const LongitudinalLayout& layout =
+          longitudinalLayoutReport_.layout;
+        std::ostringstream message;
+        message << std::setprecision(10)
+                << "Automatic longitudinal mesh: mode=observation-bounded"
+                << ", target_lab_z="
+                << longitudinalLayoutReport_.observationTargetLab
+                << " m, earliest-head-light advance="
+                << longitudinalLayoutReport_.radiationAdvance
+                << " m, ballistic_stop_s="
+                << longitudinalLayoutReport_.ballisticStopTime
+                << ", planned_ballistic_s="
+                << longitudinalLayoutReport_.plannedBallisticTime
+                << ", resolved_cells=" << layout.totalCells
+                << ", extent=" << layout.extent
+                << " m, translation=" << layout.translation
+                << " m, physical_z=[" << layout.physicalLower << ", "
+                << layout.physicalUpper << "] m, initial_z=["
+                << layout.initialMinimum << ", "
+                << layout.initialMaximum << "] m, ballistic_z=["
+                << layout.ballisticMinimum << ", "
+                << layout.ballisticMaximum << "] m, radiation_z_max="
+                << layout.radiationUpper
+                << " m, right_rounding_padding="
+                << layout.rightRoundingPadding
+                << " m. CPML lies outside the reported physical interval; "
+                   "this layout preserves radiation only through the final "
+                   "observation event, not the complete final 3-D field.";
+        logRoot(communicator_, message.str());
+      }
 
     Double localMaximumAdvance = 0.0;
     for (std::size_t index = 0; index < particles_.size(); ++index)
@@ -1706,7 +1963,10 @@ namespace aprl
              "span=" << boostReport.maximumAbsoluteDriftTime << " s ("
           << SI::c * boostReport.maximumAbsoluteDriftTime
           << " light-metres; diagnostic only, not a required physical drift), "
-             "centred boosted z range [m]=[" << boostedMinimum << ", "
+          << (config_.mesh.longitudinal.automatic() ?
+                "automatically placed boosted z range [m]=[" :
+                "centred boosted z range [m]=[")
+          << boostedMinimum << ", "
           << boostedMaximum << "]"
           << "; lab gamma range=[" << boostReport.minimumLabGamma
           << ", " << boostReport.maximumLabGamma
@@ -1924,7 +2184,7 @@ namespace aprl
             plane.retirementCausalEntranceZ =
               plane.z - plane.retirementCausalDistance;
             const Double marginLab =
-              config_.mesh.boostGamma * globalGeometry_.dz;
+              config_.mesh.boostGamma * config_.mesh.cellSize[2];
             const Double lengthTolerance = 128.0 *
               std::numeric_limits<Double>::epsilon() *
               std::max(1.0, plane.retirementRequiredLength);
@@ -2050,7 +2310,8 @@ namespace aprl
 
   void Simulation::validateBeamlineExclusionRules() const
   {
-    const Double marginLab = config_.mesh.boostGamma * globalGeometry_.dz;
+    const Double marginLab =
+      config_.mesh.boostGamma * config_.mesh.cellSize[2];
     const auto overlaps = [](Double firstEntrance, Double firstExit,
                              Double secondEntrance, Double secondExit)
       {
@@ -2801,6 +3062,7 @@ namespace aprl
     const Double carrierCutoff = 64.0 *
       std::numeric_limits<Double>::epsilon();
     unsigned long long localLost = 0;
+    int localAutomaticLongitudinalExit = 0;
 
     const auto interfaceCrossing = [&](const FieldVector<Double>& start,
                                        const FieldVector<Double>& end,
@@ -3084,6 +3346,10 @@ namespace aprl
       carrier.currentWeight = endWeight;
       if (endAction == EnterCpmlFromRetirement)
         {
+          const std::size_t face =
+            static_cast<std::size_t>(selectedHit.face);
+          if (config_.mesh.longitudinal.automatic() && face >= 4)
+            localAutomaticLongitudinalExit = 1;
           processCarrierSegment(carrier, selectedHit.position,
                                 globalEndFraction, allowTransfer);
         }
@@ -3206,6 +3472,8 @@ namespace aprl
           ++cpmlEntryCount_[face];
           cpmlEntryCharge_[face] += particle.charge;
           ++localLost;
+          if (config_.mesh.longitudinal.automatic() && face >= 4)
+            localAutomaticLongitudinalExit = 1;
 
           ParticleCPMLCarrier carrier;
           carrier.position = particle.position;
@@ -3446,6 +3714,13 @@ namespace aprl
     MPI_Allreduce(&localLost, &globalLost, 1, MPI_UNSIGNED_LONG_LONG,
                   MPI_SUM, communicator_);
     lostParticles_ += globalLost;
+    int globalAutomaticLongitudinalExit = 0;
+    MPI_Allreduce(&localAutomaticLongitudinalExit,
+                  &globalAutomaticLongitudinalExit, 1, MPI_INT, MPI_MAX,
+                  communicator_);
+    if (globalAutomaticLongitudinalExit)
+      throw std::runtime_error(
+        "An active particle or retirement-current carrier entered a longitudinal CPML in automatic observation-bounded mode. The ballistic envelope underestimated the evolved orbit; increase mesh.longitudinal.ballistic_time_safety_factor or the longitudinal guard cells. This run is not physically complete.");
     if (detectors_) detectors_->collectParticleCrossings();
   }
 
