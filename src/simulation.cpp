@@ -1328,6 +1328,25 @@ namespace aprl
                 << globalMinimumInputWeight << ", "
                 << globalMaximumInputWeight << "].";
         logRoot(communicator_, message.str());
+        if (config_.mesh.longitudinal.automatic() &&
+            config_.initialSelfField.enabled &&
+            config_.mesh.longitudinal.selfFieldPaddingRms < 4.0)
+          {
+            std::ostringstream warning;
+            warning << std::setprecision(8)
+              << "WARNING: automatic longitudinal initial self-field uses "
+                 "self_field_padding_rms="
+              << config_.mesh.longitudinal.selfFieldPaddingRms
+              << ". The configured Poisson solve still initializes the "
+                 "complete resolved physical interval and enforces the "
+                 "discrete Gauss constraint, but its zero-potential surface "
+                 "is the current inner CPML boundary rather than a guaranteed "
+                 "four-RMS boundary. Treat this as a box-clipped finite-domain "
+                 "initial field and scan lower_guard_cells/upper_guard_cells "
+                 "or compare a larger explicit box before interpreting "
+                 "absolute self-field energy.";
+            logRoot(communicator_, warning.str());
+          }
       }
 
     SILabPlaneProjectionReport planeProjection;

@@ -64,6 +64,14 @@ foreach(text IN ITEMS "${one_text}" "${two_text}")
     message(FATAL_ERROR
       "Automatic longitudinal manifest lacks observation-bounded provenance")
   endif()
+  if(NOT text MATCHES "initial_self_field_enabled: true")
+    message(FATAL_ERROR
+      "Automatic longitudinal manifest lost initial-self-field provenance")
+  endif()
+  if(NOT text MATCHES "self_field_padding_rms: 0")
+    message(FATAL_ERROR
+      "Automatic longitudinal manifest lost box-clipped self-field padding")
+  endif()
 endforeach()
 
 message(STATUS "Automatic longitudinal Nz is rank-independent: ${one_nz}")

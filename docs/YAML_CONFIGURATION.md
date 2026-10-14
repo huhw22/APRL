@@ -178,10 +178,14 @@ The longitudinal options are:
   must each be at least 2.
 - `self_field_padding_rms` adds the represented-charge-weighted initial
   mean `+/- N sigma_z` interval when `initial_self_field` is enabled. It
-  defaults to 4.0, must be nonnegative, and must be at least 4.0 when that
-  Poisson solve is enabled. This interval is unioned with the sampled support;
-  it is not an additional `N sigma_z` beyond the outermost sampled particle.
-  It is ignored when the initial self-field is off.
+  defaults to 4.0 and must be nonnegative. This interval is unioned with the
+  sampled support; it is not an additional `N sigma_z` beyond the outermost
+  sampled particle. Set it to `0.0` to keep the observation-bounded box size:
+  the complete sampled charge and configured guard cells are still retained,
+  and the Poisson solve initializes the entire resolved physical interval,
+  but the inner CPML surface becomes a deliberately box-clipped finite-domain
+  zero-potential boundary. The startup report warns when the actual centroid
+  padding is below four RMS. It is ignored when the initial self-field is off.
 - `ballistic_time_safety_factor` multiplies the estimated stopping time before
   constructing the particle envelope. It defaults to 1.1 and must be at least
   1.0. Increase it, or the guards, when prescribed fields make the evolved
@@ -203,10 +207,12 @@ the mode does **not** preserve the complete three-dimensional radiation field
 everywhere at the final time. Use a larger explicit box when that final-volume
 field, later downstream propagation, or substantial backward radiation is an
 observable. Likewise, the finite-boundary initial Poisson field and backward
-radiation are not made converged by this causal construction: scan
-`self_field_padding_rms`/the guard cells (or compare an explicit box) for those
-effects. Nonempty `sources.incident_waves` are not yet supported in automatic
-mode because an incoming wave has an independent causal extent.
+radiation are not made converged by this causal construction. A value of
+`self_field_padding_rms: 0.0` restores the discrete Gauss constraint without
+claiming an infinite-domain Coulomb tail; scan `self_field_padding_rms`/the
+guard cells (or compare an explicit box) for those effects. Nonempty
+`sources.incident_waves` are not yet supported in automatic mode because an
+incoming wave has an independent causal extent.
 
 The forward-ray bound is a physical-causality bound, not a claim of bitwise
 equivalence to an infinite grid. A finite-difference stencil such as Cowan-z
@@ -376,6 +382,17 @@ into the physical box. Radiation still sees the normal CPML update. The run
 stops if any CIC charge weight reaches this static boundary. Move every
 particle at least one complete cell inside the CPML entrance or enlarge the
 physical mesh padding rather than silently dropping boundary charge.
+
+For an automatic observation-bounded z mesh,
+`mesh.longitudinal.self_field_padding_rms: 0.0` is the explicit
+"initialize only the resolved box" policy. It does **not** disable the solve:
+all represented charge is deposited, the relativistic-Poisson field fills the
+complete non-CPML interval, and the same post-solve Gauss check remains a hard
+requirement. What is truncated is only the field domain outside the selected
+box. Consequently the initial energy is internally discrete-Gauss consistent,
+but its absolute value can depend on the zero-potential boundary; converge it
+with longitudinal guards or a nonzero RMS padding when that value is an
+observable.
 
 The scalar potential and four distributed CG work slabs exist only during
 initialization and are included in the peak-memory estimate. They are released

@@ -192,6 +192,11 @@ namespace aprl
                 stream
                   << "  longitudinal:\n"
                   << "    mode: observation-bounded\n"
+                  << "    initial_self_field_enabled: "
+                  << (config.initialSelfField.enabled ? "true" : "false")
+                  << "\n"
+                  << "    self_field_padding_rms: "
+                  << config.mesh.longitudinal.selfFieldPaddingRms << "\n"
                   << "    target_lab_z_m: "
                   << longitudinalLayout->observationTargetLab << "\n"
                   << "    initial_head_lab_z_m: "

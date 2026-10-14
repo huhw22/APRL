@@ -86,6 +86,16 @@ transverse and longitudinal distance from the bunch to the CPML entrance. A
 small Gauss residual proves the discrete constraint; it does not prove that
 the box or the sampled distribution is physically adequate.
 
+With `mesh.cells: [..., auto]`, setting
+`mesh.longitudinal.self_field_padding_rms: 0.0` deliberately solves only on
+the observation-bounded physical interval. This retains every sampled CIC
+charge cloud and keeps the full convergence/post-check machinery; it does not
+replace the field with zero. The resulting initial state is therefore
+discrete-Gauss consistent inside the box while its omitted exterior Coulomb
+tail remains a finite-boundary approximation. The manifest records both the
+enabled state and requested RMS padding so clipped and padded runs cannot be
+confused.
+
 ## Entrance-drift validation
 
 A finite-length K=0 test used `gamma=boost_gamma=1174`, Gaussian peak current

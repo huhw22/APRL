@@ -14,6 +14,9 @@ mesh:
     mode: observation-bounded
     lower_guard_cells: 4
     upper_guard_cells: 8
+    # Regression for a Gauss-constrained field initialized only on the
+    # observation-bounded physical interval, without forcing +/-4 RMS.
+    self_field_padding_rms: 0.0
     ballistic_time_safety_factor: 1.1
     alignment_cells: 8
 boundary:

@@ -102,6 +102,28 @@ namespace
             std::abs(layout.radiationUpper - 13.5) < 1.0e-14,
       "Translated longitudinal causal boundaries changed");
 
+    aprl::LongitudinalLayoutInput clippedInput(input);
+    clippedInput.selfFieldPaddingRms = 0.0;
+    const aprl::LongitudinalLayout clippedLayout =
+      aprl::deriveLongitudinalLayout(clippedInput);
+    require(std::abs(clippedLayout.selfFieldLower -
+                     clippedLayout.initialMean) < 1.0e-14 &&
+            std::abs(clippedLayout.selfFieldUpper -
+                     clippedLayout.initialMean) < 1.0e-14,
+      "Zero self-field padding did not collapse the optional RMS envelope");
+    require(clippedLayout.minimumPhysicalCells <
+              layout.minimumPhysicalCells,
+      "Zero self-field padding still enlarges the automatic physical box");
+    require(clippedLayout.initialMinimum >=
+              clippedLayout.physicalLower &&
+            clippedLayout.initialMaximum <=
+              clippedLayout.physicalUpper &&
+            clippedLayout.ballisticMinimum >=
+              clippedLayout.physicalLower &&
+            clippedLayout.radiationUpper <=
+              clippedLayout.physicalUpper,
+      "Box-clipped self-field layout lost sampled or causal content");
+
     /* Automatic placement is a passive translation of the computational
      * z coordinate.  The box origin must move by the same amount: box time
      * then remains unchanged, box z gains exactly the translation, and the

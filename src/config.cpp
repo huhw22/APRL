@@ -1517,10 +1517,6 @@ namespace aprl
         if (!result.waves.empty())
           throw configError(mesh["longitudinal"],
             "observation-bounded longitudinal sizing does not yet support incident waves");
-        if (result.initialSelfField.enabled &&
-            result.mesh.longitudinal.selfFieldPaddingRms < 4.0)
-          throw configError(mesh["longitudinal"]["self_field_padding_rms"],
-            "enabled initial self field requires at least four RMS of automatic static-boundary padding");
       }
     if (result.stop.mode == StopMode::AfterLastElement &&
         result.beamlineElements.empty())
