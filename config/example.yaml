@@ -7,6 +7,10 @@ units:
 # Supercomputer path: no signal polling and no periodic durability flushes.
 runtime:
   mode: throughput
+  # Teardown-only protection; it never times the physical loop or HDF5 close.
+  shutdown_watchdog:
+    enabled: true
+    timeout_seconds: 600
   resource_monitor:
     enabled: true
     progress_interval_steps: 1000

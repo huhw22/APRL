@@ -13,6 +13,8 @@
 #include "particle_initializer.h"
 #include "runtime_control.h"
 #include "runtime_util.h"
+#include "shutdown_watchdog.h"
+#include "teardown_trace.h"
 
 namespace aprl
 {
@@ -264,15 +266,39 @@ namespace aprl
           }
       }
 
+    logTeardownTrace("final-stop-sync-enter");
+    armShutdownWatchdog("final-stop-sync");
     if (!interrupted_) synchronizedStopRequested();
+    disarmShutdownWatchdog();
+    logTeardownTrace("final-stop-sync-complete");
     const bool completed = !interrupted_ && configuredStopReached_;
-    if (config_.energyLedger.enabled)
-      sampleEnergyLedger(true);
+    logTeardownTrace("final-energy-sample-enter");
+    if (config_.energyLedger.enabled) sampleEnergyLedger(true, true);
+    logTeardownTrace("final-energy-sample-complete");
+
+    logTeardownTrace("trajectory-close-enter");
     finalizeTrajectoryOutput(completed);
+    logTeardownTrace("trajectory-close-complete");
+
+    logTeardownTrace("detector-close-enter");
     if (detectors_) detectors_->close(completed);
+    logTeardownTrace("detector-close-complete");
+
+    logTeardownTrace("ledger-close-enter");
     finalizeEnergyLedger(completed);
+    logTeardownTrace("ledger-close-complete");
+
+    logTeardownTrace("particle-boundary-report-enter");
+    armShutdownWatchdog("particle-boundary-report");
     reportParticleBoundaryLosses();
+    disarmShutdownWatchdog();
+    logTeardownTrace("particle-boundary-report-complete");
+
+    logTeardownTrace("final-resource-report-enter");
+    armShutdownWatchdog("final-resource-report");
     reportResourceProgress("final");
+    disarmShutdownWatchdog();
+    logTeardownTrace("final-resource-report-complete");
     if (configuredStopReached_ && rank_ == 0)
       logRoot(communicator_, "Configured stop reached: " + stopReason_);
     if (interrupted_ && rank_ == 0)
@@ -282,6 +308,7 @@ namespace aprl
         timeBoxSI_ >= totalTimeBoxSI_)
       throw std::runtime_error(
         "mesh.duration was exhausted before the configured physical stop; trajectory and detector outputs are readable but marked incomplete");
+    logTeardownTrace("solve-complete");
   }
 
   void Simulation::initialize()
@@ -2633,7 +2660,8 @@ namespace aprl
       }
   }
 
-  void Simulation::sampleEnergyLedger(bool force)
+  void Simulation::sampleEnergyLedger(bool force,
+                                      bool guardFinalCollectives)
   {
     if (!config_.energyLedger.enabled) return;
     if (energyLedgerHasReference_ && step_ == energyLedgerLastSampleStep_)
@@ -2683,6 +2711,8 @@ namespace aprl
     for (unsigned int face = 0; face < 6; ++face)
       local[10 + face] = energyLedgerOutwardEnergy_[face];
 
+    if (guardFinalCollectives)
+      armShutdownWatchdog("final-energy-reductions");
     long double global[16] = {};
     MPI_Allreduce(local, global, 16, MPI_LONG_DOUBLE, MPI_SUM,
                   communicator_);
@@ -2699,6 +2729,7 @@ namespace aprl
                   MPI_DOUBLE, MPI_MIN, communicator_);
     MPI_Allreduce(&localMaximumGamma, &globalMaximumGamma, 1,
                   MPI_DOUBLE, MPI_MAX, communicator_);
+    if (guardFinalCollectives) disarmShutdownWatchdog();
 
     const long double weight = global[2];
     const long double meanGammaLab = weight > 0.0L ?
@@ -2737,8 +2768,11 @@ namespace aprl
           localCentred[3] += represented * deltaZ * deltaGamma;
         }
     long double globalCentred[4] = {};
+    if (guardFinalCollectives)
+      armShutdownWatchdog("final-energy-centred-reduction");
     MPI_Allreduce(localCentred, globalCentred, 4, MPI_LONG_DOUBLE,
                   MPI_SUM, communicator_);
+    if (guardFinalCollectives) disarmShutdownWatchdog();
 
     if (!energyLedgerHasReference_)
       {

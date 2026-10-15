@@ -1,0 +1,65 @@
+if(NOT DEFINED APRL_EXECUTABLE OR NOT DEFINED TRACE_CARD OR
+   NOT DEFINED TRACE_WORK)
+  message(FATAL_ERROR "teardown trace check is missing a required path")
+endif()
+
+file(MAKE_DIRECTORY "${TRACE_WORK}")
+set(mpi_preflags "@MPIEXEC_PREFLAGS@")
+set(mpi_postflags "@MPIEXEC_POSTFLAGS@")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env APRL_TEARDOWN_TRACE=all
+          "@MPIEXEC_EXECUTABLE@" "@MPIEXEC_NUMPROC_FLAG@" 2
+          ${mpi_preflags} "${APRL_EXECUTABLE}" "${TRACE_CARD}"
+          ${mpi_postflags}
+  WORKING_DIRECTORY "${TRACE_WORK}"
+  RESULT_VARIABLE trace_result
+  OUTPUT_VARIABLE trace_stdout
+  ERROR_VARIABLE trace_stderr
+  TIMEOUT 60)
+
+set(trace_output "${trace_stdout}\n${trace_stderr}")
+if(NOT trace_result EQUAL 0)
+  message(FATAL_ERROR
+    "two-rank teardown trace failed with ${trace_result}:\n${trace_output}")
+endif()
+
+file(READ "${TRACE_WORK}/run-manifest.yaml" trace_manifest)
+if(NOT trace_manifest MATCHES
+    "resolved_runtime:[\r\n]+  shutdown_watchdog:[\r\n]+    enabled: true[\r\n]+    timeout_seconds: 5")
+  message(FATAL_ERROR
+    "resolved shutdown watchdog settings are missing from the run manifest:\n"
+    "${trace_manifest}")
+endif()
+
+set(teardown_phases
+  final-stop-sync-enter
+  final-stop-sync-complete
+  final-energy-sample-enter
+  final-energy-sample-complete
+  trajectory-close-enter
+  trajectory-close-complete
+  detector-close-enter
+  detector-close-complete
+  ledger-close-enter
+  ledger-close-complete
+  particle-boundary-report-enter
+  particle-boundary-report-complete
+  final-resource-report-enter
+  final-resource-report-complete
+  solve-complete
+  simulation-destructor-enter
+  simulation-destructor-complete
+  mpi-finalize-enter
+  mpi-finalize-complete)
+foreach(rank RANGE 0 1)
+  foreach(phase IN LISTS teardown_phases)
+    set(marker
+      "\\[teardown\\] rank=${rank} host=[^ ]+ pid=[0-9]+ elapsed_s=[0-9]+\\.[0-9]+ phase=${phase}")
+    if(NOT trace_output MATCHES "${marker}")
+      message(FATAL_ERROR
+        "missing teardown marker '${marker}':\n${trace_output}")
+    endif()
+  endforeach()
+endforeach()
+
+message(STATUS "verified all solve-tail and teardown phases on MPI ranks 0 and 1")

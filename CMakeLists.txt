@@ -110,7 +110,9 @@ set(DIRECT_EB_SOURCES
   src/runtime_control.cpp
   src/run_metadata.cpp
   src/runtime_util.cpp
+  src/shutdown_watchdog.cpp
   src/simulation.cpp
+  src/teardown_trace.cpp
   src/trajectory_writer.cpp
 )
 
@@ -125,6 +127,7 @@ target_link_libraries(direct_eb_core
     MPI::MPI_CXX
     ${HDF5_LIBRARIES}
     ${APRL_YAML_CPP_TARGET}
+  PRIVATE Threads::Threads
 )
 target_compile_definitions(direct_eb_core
   PUBLIC OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX
@@ -215,6 +218,7 @@ if(SDDS_INCLUDE_DIR AND SDDS_LIBRARY AND SDDS_RPN_LIBRARY AND
   )
   target_compile_definitions(elegant_sdds_to_hdf5 PRIVATE zLib)
   target_link_libraries(elegant_sdds_to_hdf5 PRIVATE
+    MPI::MPI_CXX
     ${HDF5_LIBRARIES}
     ${SDDS_LIBRARY}
     ${SDDS_RPN_LIBRARY}

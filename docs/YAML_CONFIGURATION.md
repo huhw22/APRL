@@ -576,6 +576,9 @@ For scheduled supercomputer production use:
 ```yaml
 runtime:
   mode: throughput
+  shutdown_watchdog:
+    enabled: true
+    timeout_seconds: 600
   resource_monitor:
     enabled: true
     progress_interval_steps: 1000
@@ -589,6 +592,22 @@ stop-signal MPI polling, and disables periodic trajectory durability flushes;
 normal physical-stop shutdown still closes every output. This avoids the
 testing path's synchronization and filesystem costs. `local-test` and `hpc`
 are accepted aliases for `interactive` and `throughput`, respectively.
+
+`shutdown_watchdog` is enabled by default with a 600-second timeout. It is a
+process-local last resort for the final MPI reductions, `Simulation`
+destruction, `MPI_Finalize`, and `MPI_Abort`. It is not armed during physical
+time stepping or during the normal explicit close of trajectory, detector, and
+energy-ledger HDF5 files, so it neither changes the numerical path nor mistakes
+a slow parallel filesystem for an MPI deadlock. Exceptional stack unwinding is
+guarded as a whole, including any destructor fallback cleanup. APRL requests
+`MPI_THREAD_FUNNELED`; every rank owns one sleeping local watchdog thread,
+which never calls MPI or participates in the numerical work.
+If a guarded phase exceeds the limit, that rank exits immediately with status
+124. With `APRL_TEARDOWN_TRACE=all`, each rank's last flushed `[teardown]`
+enter marker identifies its phase. This
+deliberately marks the job failed even when scientific files were already committed. Set
+`enabled: false` only when an external scheduler watchdog provides the same
+protection. `timeout_seconds` must be a positive integer.
 
 
 `resource_monitor` is independent of the stop policy. When enabled, startup

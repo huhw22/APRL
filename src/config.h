@@ -192,6 +192,8 @@ namespace aprl
     unsigned int resourceCalibrationSteps;
     Double memorySafetyFactor;
     Double timeSafetyFactor;
+    bool shutdownWatchdogEnabled;
+    unsigned int shutdownWatchdogTimeoutSeconds;
 
     RuntimeConfig();
     bool interactive() const;

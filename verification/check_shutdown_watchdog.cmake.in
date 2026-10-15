@@ -1,0 +1,74 @@
+if(NOT DEFINED WATCHDOG_PROBE)
+  message(FATAL_ERROR "shutdown watchdog check is missing WATCHDOG_PROBE")
+endif()
+
+execute_process(
+  COMMAND "${WATCHDOG_PROBE}" timeout
+  RESULT_VARIABLE timeout_result
+  OUTPUT_VARIABLE timeout_stdout
+  ERROR_VARIABLE timeout_stderr
+  TIMEOUT 5)
+if(NOT timeout_result EQUAL 124)
+  message(FATAL_ERROR
+    "watchdog timeout returned '${timeout_result}', expected 124:\n"
+    "${timeout_stdout}\n${timeout_stderr}")
+endif()
+
+foreach(mode disarm disabled)
+  execute_process(
+    COMMAND "${WATCHDOG_PROBE}" "${mode}"
+    RESULT_VARIABLE clean_result
+    OUTPUT_VARIABLE clean_stdout
+    ERROR_VARIABLE clean_stderr
+    TIMEOUT 5)
+  if(NOT clean_result EQUAL 0)
+    message(FATAL_ERROR
+      "watchdog ${mode} probe failed with '${clean_result}':\n"
+      "${clean_stdout}\n${clean_stderr}")
+  endif()
+endforeach()
+
+set(mpi_preflags "@MPIEXEC_PREFLAGS@")
+set(mpi_postflags "@MPIEXEC_POSTFLAGS@")
+execute_process(
+  COMMAND "@MPIEXEC_EXECUTABLE@" "@MPIEXEC_NUMPROC_FLAG@" 2
+          ${mpi_preflags} "${WATCHDOG_PROBE}" mpi-collective
+          ${mpi_postflags}
+  RESULT_VARIABLE mpi_result
+  OUTPUT_VARIABLE mpi_stdout
+  ERROR_VARIABLE mpi_stderr
+  TIMEOUT 10)
+set(mpi_output "${mpi_stdout}\n${mpi_stderr}")
+if(mpi_result EQUAL 0 OR
+   "${mpi_result}" MATCHES "[Tt]imeout|[Tt]imed out")
+  message(FATAL_ERROR
+    "MPI collective fault did not end through the per-rank watchdog "
+    "(result='${mpi_result}'):\n${mpi_output}")
+endif()
+foreach(rank RANGE 0 1)
+  if(NOT mpi_output MATCHES "WATCHDOG_PROBE_READY rank=${rank}")
+    message(FATAL_ERROR
+      "MPI watchdog fault probe never reached rank ${rank}; launcher failure "
+      "must not masquerade as a watchdog pass:\n${mpi_output}")
+  endif()
+endforeach()
+# A launcher may kill the other rank as soon as the first rank exits 124, so
+# do not require one handler diagnostic per rank; the exact single-process 124
+# check above proves the watchdog action itself.
+
+execute_process(
+  COMMAND "@MPIEXEC_EXECUTABLE@" "@MPIEXEC_NUMPROC_FLAG@" 2
+          ${mpi_preflags} "${WATCHDOG_PROBE}" mpi-finalize
+          ${mpi_postflags}
+  RESULT_VARIABLE finalize_result
+  OUTPUT_VARIABLE finalize_stdout
+  ERROR_VARIABLE finalize_stderr
+  TIMEOUT 10)
+if(NOT finalize_result EQUAL 0)
+  message(FATAL_ERROR
+    "normal MPI_Finalize tripped the watchdog (${finalize_result}):\n"
+    "${finalize_stdout}\n${finalize_stderr}")
+endif()
+
+message(STATUS
+  "verified timeout=124, disarm/disable, bounded stalled MPI collective, and normal MPI_Finalize")

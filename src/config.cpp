@@ -101,13 +101,19 @@ namespace aprl
       if (runtime)
         {
           validateMapKeys(runtime, "runtime", {
-            "mode", "stop_check_interval_steps", "resource_monitor"
+            "mode", "stop_check_interval_steps", "resource_monitor",
+            "shutdown_watchdog"
           });
           const YAML::Node resources = runtime["resource_monitor"];
           if (resources)
             validateMapKeys(resources, "runtime.resource_monitor", {
               "enabled", "progress_interval_steps", "calibration_steps",
               "memory_safety_factor", "time_safety_factor"
+            });
+          const YAML::Node watchdog = runtime["shutdown_watchdog"];
+          if (watchdog)
+            validateMapKeys(watchdog, "runtime.shutdown_watchdog", {
+              "enabled", "timeout_seconds"
             });
         }
 
@@ -663,7 +669,8 @@ namespace aprl
     : mode(RuntimeMode::Throughput), stopCheckIntervalSteps(16),
       resourceReport(true), resourceProgressIntervalSteps(1000),
       resourceCalibrationSteps(1), memorySafetyFactor(1.25),
-      timeSafetyFactor(1.25)
+      timeSafetyFactor(1.25), shutdownWatchdogEnabled(true),
+      shutdownWatchdogTimeoutSeconds(600)
   {}
 
   OutputPolicyConfig::OutputPolicyConfig()
@@ -805,6 +812,28 @@ namespace aprl
                 !(result.runtime.timeSafetyFactor >= 1.0))
               throw configError(resources,
                 "resource-monitor safety factors must be at least one");
+          }
+        const YAML::Node watchdog = runtime["shutdown_watchdog"];
+        if (watchdog)
+          {
+            if (!watchdog.IsMap())
+              throw configError(watchdog,
+                "runtime.shutdown_watchdog must be a map");
+            if (watchdog["enabled"])
+              result.runtime.shutdownWatchdogEnabled =
+                watchdog["enabled"].as<bool>();
+            if (watchdog["timeout_seconds"])
+              {
+                const std::size_t timeout = positiveSize(
+                  watchdog["timeout_seconds"],
+                  "runtime shutdown_watchdog timeout_seconds");
+                if (timeout > std::numeric_limits<unsigned int>::max())
+                  throw configError(watchdog["timeout_seconds"],
+                    "runtime shutdown_watchdog timeout_seconds exceeds "
+                    "the supported unsigned-integer range");
+                result.runtime.shutdownWatchdogTimeoutSeconds =
+                  static_cast<unsigned int>(timeout);
+              }
           }
       }
 

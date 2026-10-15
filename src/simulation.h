@@ -58,7 +58,8 @@ namespace aprl
     void initializeDetectorOutput();
     void initializeEnergyLedger();
     void advanceEnergyLedgerStep();
-    void sampleEnergyLedger(bool force = false);
+    void sampleEnergyLedger(bool force = false,
+                            bool guardFinalCollectives = false);
     void finalizeEnergyLedger(bool completed);
     long double localInteriorFieldEnergy() const;
     void localInteriorBoundaryPower(long double power[6]) const;

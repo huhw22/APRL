@@ -224,6 +224,20 @@ mpirun aprl config/production.yaml
 
 启动计时只是本地短微基准，不保证调度时间；并行文件系统竞争、后续粒子迁移和提前物理停止均不在预测内。申请大型资源前，应在目标机器和 MPI 分解上校准内存/时间安全系数。
 
+正常退出时会立即刷新一组 `[teardown]` 标记，分别包围最终停止同步与能量采样、轨迹/探测器/能量账本关闭、粒子边界与资源汇总、
+`Simulation` 析构及 `MPI_Finalize`。每行包含缓存的 MPI rank、主机名、进程号、单调递增的经过时间和阶段名。默认只由 rank 0 打印；诊断性重跑时可设置
+`APRL_TEARDOWN_TRACE=all`，使每个 rank 都打印同样的标记。该变量只改变日志，不增加 barrier 或其他 MPI 同步。`MPI_Finalize` 之后的标记只使用缓存的进程信息和本地单调时钟，不再调用 MPI。
+
+与跟踪日志相互独立，默认收尾 watchdog 会给每个 rank 的最终 MPI 汇总、`Simulation` 析构以及 `MPI_Finalize`/`MPI_Abort` 各留 600 秒。APRL 会请求 `MPI_THREAD_FUNNELED`；每个 rank 的一个休眠 watchdog 线程既不调用 MPI，也不参与数值计算。它在物理推进和正常路径显式关闭 HDF5 输出时不启用；异常栈展开则把析构整体纳入保护，其中可能包含析构器的兜底关闭。超时会立即以状态码 124 非零退出；设置 `APRL_TEARDOWN_TRACE=all` 时，每个 rank 最后一条已经刷新的 `[teardown]` 进入标记可指出受保护阶段，从而避免批处理脚本把收尾失败误判为成功。可在 `runtime.shutdown_watchdog` 下配置，解析后的设置也会写入运行清单。
+
+启用全 rank 跟踪后，可按每个 rank 的最后一条标记定位：各组
+`*-enter`/`*-complete` 可直接指出未返回的最终求解操作；看到
+`solve-complete` 才表示 `Simulation::solve()` 已走到正常返回路径。停在
+`simulation-destructor-enter` 表示析构未完成；已有
+`simulation-destructor-complete` 和 `mpi-finalize-enter`、但没有
+`mpi-finalize-complete` 表示卡在 MPI 收尾；若所有 rank 均已打印
+`mpi-finalize-complete`，则问题已经位于 MPI 之后。此时若 APRL 进程已经全部消失而调度步骤仍未退出，就是启动器或调度器清理卡住；若 APRL 进程仍存在，则还需检查很短的 finalize 后 C/C++ 进程退出路径。
+
 紧凑 I/O 示例开启一个实验室场面和一个粒子面，但因小盒子没有足够自由漂移，显式关闭弹道参考。文件位于 `output/example/detectors/`，只有 rank 0 写入。无需探测器的运行可删除 `detectors` 或设 `detectors.enabled: false`，此时不构造缓冲和通信。格式见[探测器 HDF5 输出](DETECTOR_OUTPUT_HDF5.md)。
 
 只有需要直线粒子本底重构的正式场面才应显式开启 `particle_background`。启动时由横向网格对角线和最大输入粒子实验室 gamma 计算左参考边界，若与磁作用区重叠则拒绝并建议修正场面位置，见[弹道参考区](FIELD_DETECTOR_REFERENCE.md)。小规模验证可再启用 `particle_background.validation.enabled`；它只记录比较真实轨道和虚拟直线所需的两次过面，不要求完整轨迹，并由强制粒子数上限防止误用于生产束团。

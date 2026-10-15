@@ -13,10 +13,17 @@ target_compile_options(aprl_output_checks PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>
 )
 
+add_executable(aprl_shutdown_watchdog_probe shutdown_watchdog_probe.cpp)
+target_link_libraries(aprl_shutdown_watchdog_probe PRIVATE direct_eb_core)
+target_compile_options(aprl_shutdown_watchdog_probe PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>
+)
+
 set(APRL_VERIFY_WORK "${CMAKE_CURRENT_BINARY_DIR}/work")
 set(APRL_VERIFY_CARDS "${CMAKE_CURRENT_SOURCE_DIR}/cards")
 foreach(directory
-    smoke detector mpi-one mpi-two ledger invalid-key invalid-stop
+    smoke teardown detector mpi-one mpi-two ledger invalid-key invalid-stop
+    invalid-watchdog
     physics-k0 physics-signal hdf5 sase auto-z-one auto-z-two
     auto-z-reference)
   file(MAKE_DIRECTORY "${APRL_VERIFY_WORK}/${directory}")
@@ -44,6 +51,14 @@ configure_file(
   "${APRL_VERIFY_CARDS}/postprocess-ballistic-analysis.yaml.in"
   "${CMAKE_CURRENT_BINARY_DIR}/postprocess-ballistic-analysis.yaml"
   @ONLY)
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/check_teardown_trace.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/check_teardown_trace.cmake"
+  @ONLY)
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/check_shutdown_watchdog.cmake.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/check_shutdown_watchdog.cmake"
+  @ONLY)
 
 function(aprl_required_test name)
   add_test(NAME ${name} COMMAND ${ARGN})
@@ -67,6 +82,26 @@ add_test(NAME required.runtime.smoke
 set_tests_properties(required.runtime.smoke PROPERTIES
   LABELS "required;smoke"
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/smoke"
+  TIMEOUT 60
+)
+
+add_test(NAME required.runtime.teardown-trace
+  COMMAND ${CMAKE_COMMAND}
+          "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl>"
+          "-DTRACE_CARD=${APRL_VERIFY_CARDS}/runtime-smoke.yaml"
+          "-DTRACE_WORK=${APRL_VERIFY_WORK}/teardown"
+          -P "${CMAKE_CURRENT_BINARY_DIR}/check_teardown_trace.cmake")
+set_tests_properties(required.runtime.teardown-trace PROPERTIES
+  LABELS "required;smoke;mpi"
+  TIMEOUT 60
+)
+
+add_test(NAME required.runtime.shutdown-watchdog
+  COMMAND ${CMAKE_COMMAND}
+          "-DWATCHDOG_PROBE=$<TARGET_FILE:aprl_shutdown_watchdog_probe>"
+          -P "${CMAKE_CURRENT_BINARY_DIR}/check_shutdown_watchdog.cmake")
+set_tests_properties(required.runtime.shutdown-watchdog PROPERTIES
+  LABELS "required;smoke;mpi"
   TIMEOUT 60
 )
 
@@ -173,6 +208,14 @@ set_tests_properties(required.yaml.unknown-key PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/invalid-key"
   WILL_FAIL TRUE)
 
+aprl_required_test(required.runtime.shutdown-watchdog-invalid-timeout
+  $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/invalid-shutdown-watchdog.yaml")
+set_tests_properties(
+  required.runtime.shutdown-watchdog-invalid-timeout PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/invalid-watchdog"
+  WILL_FAIL TRUE)
+
 aprl_required_test(required.output-safety.cleanup
   ${CMAKE_COMMAND} -E rm -f
   "${APRL_VERIFY_WORK}/output-safety/protected-manifest.yaml")
@@ -225,7 +268,10 @@ aprl_required_mpi_test(required.auto-z.two-rank
 set_tests_properties(required.auto-z.two-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/auto-z-two")
 
-aprl_required_test(required.auto-z.rank-independent
+# This comparison consumes manifests produced by the one- and two-rank MPI
+# runs above.  Mark it as MPI-coupled as well so --skip-mpi-run does not run
+# the comparator after deliberately excluding both producers in a clean build.
+aprl_required_mpi_test(required.auto-z.rank-independent
   ${CMAKE_COMMAND}
   -DONE_MANIFEST=${APRL_VERIFY_WORK}/auto-z-one/run-manifest.yaml
   -DTWO_MANIFEST=${APRL_VERIFY_WORK}/auto-z-two/run-manifest.yaml
@@ -379,7 +425,8 @@ endif()
 
 add_custom_target(verify_required
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -L required
-  DEPENDS aprl aprl_core_checks aprl_output_checks energy_ledger_report
+  DEPENDS aprl aprl_core_checks aprl_output_checks
+    aprl_shutdown_watchdog_probe energy_ledger_report
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
   USES_TERMINAL
 )

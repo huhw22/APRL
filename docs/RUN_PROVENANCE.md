@@ -4,7 +4,9 @@ Every APRL invocation creates one root-only YAML manifest before field
 allocation and gives the run a unique `run_id`. The manifest records the exact
 input card, its FNV-1a configuration digest, the source revision (including a
 `-dirty` suffix when configured from a modified tree), compiler/build/HDF5
-description, MPI implementation and rank count, and particle-input identity.
+description, MPI implementation and rank count, particle-input identity, and
+the resolved shutdown-watchdog state and timeout (including defaults omitted
+from the input card).
 For a large HDF5 particle file the identity uses path, byte size and mtime; it
 does not reread and hash the entire file at startup.
 

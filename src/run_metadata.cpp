@@ -171,6 +171,13 @@ namespace aprl
                    << quoteYaml(metadata.configurationDigest) << "\n"
                    << "particle_input: "
                    << quoteYaml(metadata.inputParticleIdentity) << "\n"
+                   << "resolved_runtime:\n"
+                   << "  shutdown_watchdog:\n"
+                   << "    enabled: "
+                   << (config.runtime.shutdownWatchdogEnabled ?
+                       "true" : "false") << "\n"
+                   << "    timeout_seconds: "
+                   << config.runtime.shutdownWatchdogTimeoutSeconds << "\n"
                    << std::setprecision(17)
                    << "resolved_mesh:\n"
                    << "  cells: [" << config.mesh.cells[0] << ", "

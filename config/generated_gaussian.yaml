@@ -8,6 +8,9 @@ units:
 runtime:
   mode: interactive
   stop_check_interval_steps: 16
+  shutdown_watchdog:
+    enabled: true
+    timeout_seconds: 600
   resource_monitor:
     enabled: true
     progress_interval_steps: 16
