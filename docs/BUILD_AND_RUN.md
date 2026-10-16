@@ -301,19 +301,27 @@ intended machine and MPI decomposition before requesting a large allocation.
 
 A successful process shutdown prints flushed `[teardown]` markers around the
 final stop synchronization and energy sample, trajectory/detector/ledger
-close, particle-boundary and resource reports, `Simulation` destruction, and
-`MPI_Finalize`. Each line
+close, particle-boundary and resource reports, `Simulation` destruction,
+finalize readiness, and `MPI_Finalize`. Each line
 contains the cached MPI rank, host name and process ID, a monotonic elapsed
 time, and the phase. Rank zero prints them by default; for a diagnostic rerun,
 export
 `APRL_TEARDOWN_TRACE=all` to print the same markers from every rank. The
-variable changes logging only: in particular, tracing adds no barrier or other
-MPI synchronization. The marker after `MPI_Finalize` uses only cached process
+variable changes logging only: tracing itself adds no barrier or other MPI
+synchronization. The program's finalize-readiness barrier is present whether
+or not tracing is enabled. The marker after `MPI_Finalize` uses only cached process
 identity and the local monotonic clock; it makes no MPI call.
 
 Independently of tracing, the default shutdown watchdog gives each rank 600
 seconds for the final MPI reductions, `Simulation` destruction, and
-`MPI_Finalize`/`MPI_Abort`. It is deliberately inactive during physical
+`MPI_Abort`, but uses a separate 60-second limit for `MPI_Finalize`. The
+shorter finalization limit is safe because the normal explicit HDF5 closes and
+the `Simulation` destructor precede it. All ranks then pass a
+`finalize-readiness-sync` barrier under the general 600-second watchdog before
+any rank arms the shorter timer; a fast rank therefore cannot terminate a peer
+that is still closing output. The shorter timer bounds MPI/PMIx runtime cleanup
+without shortening either scientific output or general teardown. It is
+deliberately inactive during physical
 stepping and the normal explicit HDF5 close phase. Exceptional stack unwinding
 is guarded as a whole, including any destructor fallback cleanup. APRL requests
 `MPI_THREAD_FUNNELED`; the one sleeping
@@ -322,7 +330,10 @@ exits nonzero with status 124. With `APRL_TEARDOWN_TRACE=all`, each rank's
 last flushed `[teardown]` enter marker identifies the guarded phase, and a
 batch script cannot mistake a cleanup failure for success. Configure it under
 `runtime.shutdown_watchdog`; the resolved setting is also stored in the run
-manifest.
+manifest. `timeout_seconds` and `finalize_timeout_seconds` default to 600 and
+60 respectively. Both must be positive. A finalization timeout still exits
+with status 124; only output-aware campaign logic should decide whether the
+already-closed scientific files are complete enough to retain.
 
 For an all-rank trace, interpret each rank's last phase as follows:
 
@@ -330,7 +341,10 @@ For an all-rank trace, interpret each rank's last phase as follows:
   which did not return; `solve-complete` proves that `Simulation::solve()`
   reached its normal return path;
 - `simulation-destructor-enter` means that rank did not finish destruction;
-- `simulation-destructor-complete` followed by `mpi-finalize-enter`, but not
+- `simulation-destructor-complete` followed by
+  `finalize-readiness-sync-enter`, but not its completion, identifies a
+  readiness-collective failure before any short finalize timer is armed;
+- `finalize-readiness-sync-complete` followed by `mpi-finalize-enter`, but not
   `mpi-finalize-complete`, identifies a rank stuck in MPI finalization;
 - `mpi-finalize-complete` from every rank places the stall after MPI. If no
   APRL processes remain while the scheduler step is still active, the launcher

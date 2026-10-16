@@ -178,6 +178,9 @@ namespace aprl
                        "true" : "false") << "\n"
                    << "    timeout_seconds: "
                    << config.runtime.shutdownWatchdogTimeoutSeconds << "\n"
+                   << "    finalize_timeout_seconds: "
+                   << config.runtime.shutdownWatchdogFinalizeTimeoutSeconds
+                   << "\n"
                    << std::setprecision(17)
                    << "resolved_mesh:\n"
                    << "  cells: [" << config.mesh.cells[0] << ", "

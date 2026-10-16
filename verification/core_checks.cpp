@@ -15,6 +15,7 @@
 #include <mpi.h>
 
 #include "boostframe.h"
+#include "config.h"
 #include "eb_bunch.h"
 #include "eb_cpml.h"
 #include "eb_deposition.h"
@@ -37,6 +38,20 @@ namespace
   {
     return std::abs(value - reference) /
       std::max(1.0, std::max(std::abs(value), std::abs(reference)));
+  }
+
+  void checkRuntimeDefaults(int rank)
+  {
+    const aprl::RuntimeConfig runtime;
+    require(runtime.shutdownWatchdogEnabled,
+      "Shutdown watchdog default unexpectedly disabled");
+    require(runtime.shutdownWatchdogTimeoutSeconds == 600,
+      "General shutdown watchdog default changed");
+    require(runtime.shutdownWatchdogFinalizeTimeoutSeconds == 60,
+      "MPI_Finalize watchdog default changed");
+    if (rank == 0)
+      std::cout << "shutdown_watchdog_timeout_s=600 "
+                   "finalize_timeout_s=60" << std::endl;
   }
 
   void checkLongitudinalLayout(int rank)
@@ -995,7 +1010,7 @@ int main(int argc, char** argv)
         throw std::invalid_argument(
           "Usage: aprl_core_checks <lorentz-elegant|boris-phase|"
           "longitudinal-layout|charge-continuity|cowan-dispersion|"
-          "current-filter|cpml-reflection|"
+          "current-filter|cpml-reflection|runtime-defaults|"
           "hdf5-versions|sase-generator-file> [path]");
       const std::string check(argv[1]);
       if (check == "lorentz-elegant")
@@ -1012,6 +1027,8 @@ int main(int argc, char** argv)
         checkCurrentFilter(MPI_COMM_WORLD, rank, size);
       else if (check == "cpml-reflection")
         checkCpmlReflection(rank);
+      else if (check == "runtime-defaults")
+        checkRuntimeDefaults(rank);
       else if (check == "hdf5-versions")
         {
           if (argc != 3)

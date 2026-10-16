@@ -113,7 +113,7 @@ namespace aprl
           const YAML::Node watchdog = runtime["shutdown_watchdog"];
           if (watchdog)
             validateMapKeys(watchdog, "runtime.shutdown_watchdog", {
-              "enabled", "timeout_seconds"
+              "enabled", "timeout_seconds", "finalize_timeout_seconds"
             });
         }
 
@@ -670,7 +670,8 @@ namespace aprl
       resourceReport(true), resourceProgressIntervalSteps(1000),
       resourceCalibrationSteps(1), memorySafetyFactor(1.25),
       timeSafetyFactor(1.25), shutdownWatchdogEnabled(true),
-      shutdownWatchdogTimeoutSeconds(600)
+      shutdownWatchdogTimeoutSeconds(600),
+      shutdownWatchdogFinalizeTimeoutSeconds(60)
   {}
 
   OutputPolicyConfig::OutputPolicyConfig()
@@ -832,6 +833,18 @@ namespace aprl
                     "runtime shutdown_watchdog timeout_seconds exceeds "
                     "the supported unsigned-integer range");
                 result.runtime.shutdownWatchdogTimeoutSeconds =
+                  static_cast<unsigned int>(timeout);
+              }
+            if (watchdog["finalize_timeout_seconds"])
+              {
+                const std::size_t timeout = positiveSize(
+                  watchdog["finalize_timeout_seconds"],
+                  "runtime shutdown_watchdog finalize_timeout_seconds");
+                if (timeout > std::numeric_limits<unsigned int>::max())
+                  throw configError(watchdog["finalize_timeout_seconds"],
+                    "runtime shutdown_watchdog finalize_timeout_seconds "
+                    "exceeds the supported unsigned-integer range");
+                result.runtime.shutdownWatchdogFinalizeTimeoutSeconds =
                   static_cast<unsigned int>(timeout);
               }
           }

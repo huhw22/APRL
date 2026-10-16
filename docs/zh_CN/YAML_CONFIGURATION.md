@@ -312,6 +312,7 @@ runtime:
   shutdown_watchdog:
     enabled: true
     timeout_seconds: 600
+    finalize_timeout_seconds: 60
   resource_monitor:
     enabled: true
     progress_interval_steps: 1000
@@ -322,7 +323,7 @@ runtime:
 
 `throughput` 为默认，不装信号处理器、不做停止 MPI 轮询、关闭周期轨迹耐久刷新；正常物理停止仍关闭输出，从而避免测试路径同步和文件系统成本。`local-test`、`hpc` 分别是 `interactive`、`throughput` 别名。
 
-`shutdown_watchdog` 默认开启，超时为 600 秒。APRL 会请求 `MPI_THREAD_FUNNELED`，每个 rank 使用一个不调用 MPI、也不参与数值计算的休眠本地 watchdog 线程。它只保护最终 MPI 汇总、`Simulation` 析构、`MPI_Finalize` 和 `MPI_Abort`，不会在物理推进或正常路径显式关闭轨迹、探测器、能量账本 HDF5 文件时计时，因此不改变数值路径，也不会把并行文件系统写盘慢误判为 MPI 死锁；异常栈展开则把析构整体纳入保护，其中可能包含析构器的兜底关闭。受保护阶段超时后，该 rank 会立即以 124 非零状态退出；设置 `APRL_TEARDOWN_TRACE=all` 时，每个 rank 最后一条已经刷新的 `[teardown]` 进入标记用于指出其阶段。即使科学输出已经提交，也不会把异常收尾伪装成成功。只有外部调度器已提供等价保护时才建议设 `enabled: false`；`timeout_seconds` 必须为正整数。
+`shutdown_watchdog` 默认开启。`timeout_seconds` 默认为 600 秒，保护最终 MPI 汇总、`Simulation` 析构和 `MPI_Abort`；独立的 `finalize_timeout_seconds` 默认为 60 秒，只保护 `MPI_Finalize`。这样 APRL 已完成求解并关闭科学输出后，若 MPI/PMIx 运行时在收尾阶段挂起，可以让卡住的 rank 更快退出；启动器和调度器能否及时回收资源仍由批处理 wrapper 负责。启用较短计时前，全部 rank 必须通过一个由通用 600 秒 watchdog 保护的 finalize-readiness barrier；因此较快的 rank 不会在较慢的同伴仍关闭输出或析构 `Simulation` 时提前触发启动器清理。APRL 会请求 `MPI_THREAD_FUNNELED`，每个 rank 使用一个不调用 MPI、也不参与数值计算的休眠本地 watchdog 线程。watchdog 不会在物理推进或正常路径显式关闭轨迹、探测器、能量账本 HDF5 文件时计时，因此不改变数值路径，也不会把并行文件系统写盘慢误判为 MPI 死锁；异常栈展开则把析构整体纳入保护，其中可能包含析构器的兜底关闭。受保护阶段超时后，该 rank 会立即以 124 非零状态退出；设置 `APRL_TEARDOWN_TRACE=all` 时，每个 rank 最后一条已经刷新的 `[teardown]` 进入标记用于指出其阶段。即使科学输出已经提交，也不会把异常收尾伪装成成功；批处理脚本只能在验证输出完成元数据后接纳这种运行的科学文件。只有外部调度器已提供等价保护时才建议设 `enabled: false`；两个超时值都必须为正整数。
 
 `resource_monitor` 独立于停止政策。启用时模型估算场、CPML、粒子、探测器、轨迹和 MPI halo 内存；无入射波时还基准测试 `calibration_steps` 个不改变状态的零场 Maxwell 更新及有界粒子推进/沉积样本。安全系数至少为 1。`progress_interval_steps: 0` 关闭周期报告但保留启动和最终测量；其他值使 rank 0 定期写立即刷新的 `[resource]` 单行，适合 `sbatch` 捕获。时间估算不含文件系统竞争、迁移负载变化和提前停止，正式申请应在目标机器校准。
 

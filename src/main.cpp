@@ -27,7 +27,7 @@ int main(int argc, char** argv)
       if (rank == 0)
         std::cerr << "Usage: aprl <configuration.yaml>" << std::endl;
       aprl::logTeardownTrace("mpi-finalize-enter");
-      aprl::armShutdownWatchdog("mpi-finalize");
+      aprl::armShutdownWatchdogForFinalize("mpi-finalize");
       MPI_Finalize();
       aprl::disarmShutdownWatchdog();
       aprl::shutdownShutdownWatchdog();
@@ -44,7 +44,8 @@ int main(int argc, char** argv)
         aprl::YamlConfigLoader::loadFile(argv[1]);
       aprl::configureShutdownWatchdog(
         config.runtime.shutdownWatchdogEnabled,
-        config.runtime.shutdownWatchdogTimeoutSeconds);
+        config.runtime.shutdownWatchdogTimeoutSeconds,
+        config.runtime.shutdownWatchdogFinalizeTimeoutSeconds);
       config.runtime.shutdownWatchdogEnabled =
         aprl::shutdownWatchdogOperational();
       if (config.runtime.interactive())
@@ -57,6 +58,9 @@ int main(int argc, char** argv)
         (config.runtime.shutdownWatchdogEnabled ? "true" : "false") +
         ", timeout=" +
         std::to_string(config.runtime.shutdownWatchdogTimeoutSeconds) +
+        " s, finalize_timeout_seconds=" +
+        std::to_string(
+          config.runtime.shutdownWatchdogFinalizeTimeoutSeconds) +
         " s; guards final MPI/runtime teardown only, not physical stepping "
         "or the normal explicit HDF5 output-close phase.");
       {
@@ -97,8 +101,18 @@ int main(int argc, char** argv)
       return 1;
     }
 
+  /* Do not let a rank start the short MPI_Finalize timeout while a slower
+   * peer is still closing output or destroying Simulation.  This readiness
+   * collective runs only after every local scientific close has completed
+   * and retains the longer general teardown timeout. */
+  aprl::logTeardownTrace("finalize-readiness-sync-enter");
+  aprl::armShutdownWatchdog("finalize-readiness-sync");
+  MPI_Barrier(MPI_COMM_WORLD);
+  aprl::disarmShutdownWatchdog();
+  aprl::logTeardownTrace("finalize-readiness-sync-complete");
+
   aprl::logTeardownTrace("mpi-finalize-enter");
-  aprl::armShutdownWatchdog("mpi-finalize");
+  aprl::armShutdownWatchdogForFinalize("mpi-finalize");
   MPI_Finalize();
   aprl::disarmShutdownWatchdog();
   aprl::shutdownShutdownWatchdog();

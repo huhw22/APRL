@@ -25,7 +25,7 @@ endif()
 
 file(READ "${TRACE_WORK}/run-manifest.yaml" trace_manifest)
 if(NOT trace_manifest MATCHES
-    "resolved_runtime:[\r\n]+  shutdown_watchdog:[\r\n]+    enabled: true[\r\n]+    timeout_seconds: 5")
+    "resolved_runtime:[\r\n]+  shutdown_watchdog:[\r\n]+    enabled: true[\r\n]+    timeout_seconds: 5[\r\n]+    finalize_timeout_seconds: 3")
   message(FATAL_ERROR
     "resolved shutdown watchdog settings are missing from the run manifest:\n"
     "${trace_manifest}")
@@ -49,6 +49,8 @@ set(teardown_phases
   solve-complete
   simulation-destructor-enter
   simulation-destructor-complete
+  finalize-readiness-sync-enter
+  finalize-readiness-sync-complete
   mpi-finalize-enter
   mpi-finalize-complete)
 foreach(rank RANGE 0 1)

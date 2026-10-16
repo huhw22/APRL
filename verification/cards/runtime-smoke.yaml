@@ -1,7 +1,7 @@
 units: {length: micrometer, time: femtosecond}
 runtime:
   mode: throughput
-  shutdown_watchdog: {enabled: true, timeout_seconds: 5}
+  shutdown_watchdog: {enabled: true, timeout_seconds: 5, finalize_timeout_seconds: 3}
   resource_monitor: {enabled: false}
 output: {overwrite: true, manifest: run-manifest.yaml}
 mesh:

@@ -19,7 +19,8 @@ int main(int argc, char** argv)
   if (argc != 2)
     {
       std::cerr << "usage: shutdown_watchdog_probe "
-                   "<timeout|disarm|disabled|mpi-collective|mpi-finalize>\n";
+                   "<timeout|finalize-timeout|disarm|disabled|"
+                   "mpi-collective|mpi-finalize>\n";
       return 2;
     }
 
@@ -27,14 +28,21 @@ int main(int argc, char** argv)
   if (std::strcmp(mode, "timeout") == 0)
     {
       aprl::initializeShutdownWatchdog(7, true);
-      aprl::configureShutdownWatchdog(true, 1);
+      aprl::configureShutdownWatchdog(true, 1, 3);
       aprl::armShutdownWatchdog("probe-timeout");
+      waitForever();
+    }
+  if (std::strcmp(mode, "finalize-timeout") == 0)
+    {
+      aprl::initializeShutdownWatchdog(7, true);
+      aprl::configureShutdownWatchdog(true, 3, 1);
+      aprl::armShutdownWatchdogForFinalize("probe-finalize-timeout");
       waitForever();
     }
   if (std::strcmp(mode, "disarm") == 0)
     {
       aprl::initializeShutdownWatchdog(7, true);
-      aprl::configureShutdownWatchdog(true, 1);
+      aprl::configureShutdownWatchdog(true, 1, 1);
       aprl::armShutdownWatchdog("probe-disarm");
       aprl::disarmShutdownWatchdog();
       ::sleep(2);
@@ -44,7 +52,7 @@ int main(int argc, char** argv)
   if (std::strcmp(mode, "disabled") == 0)
     {
       aprl::initializeShutdownWatchdog(7, true);
-      aprl::configureShutdownWatchdog(false, 1);
+      aprl::configureShutdownWatchdog(false, 1, 1);
       aprl::armShutdownWatchdog("probe-disabled");
       ::sleep(2);
       aprl::shutdownShutdownWatchdog();
@@ -57,7 +65,7 @@ int main(int argc, char** argv)
   MPI_Comm_rank(MPI_COMM_WORLD, &rank);
   aprl::initializeShutdownWatchdog(
     rank, providedThreadLevel >= MPI_THREAD_FUNNELED);
-  aprl::configureShutdownWatchdog(true, 1);
+  aprl::configureShutdownWatchdog(true, 1, 1);
 
   if (std::strcmp(mode, "mpi-collective") == 0)
     {
@@ -72,7 +80,7 @@ int main(int argc, char** argv)
     }
   if (std::strcmp(mode, "mpi-finalize") == 0)
     {
-      aprl::armShutdownWatchdog("probe-mpi-finalize");
+      aprl::armShutdownWatchdogForFinalize("probe-mpi-finalize");
       MPI_Finalize();
       aprl::disarmShutdownWatchdog();
       aprl::shutdownShutdownWatchdog();

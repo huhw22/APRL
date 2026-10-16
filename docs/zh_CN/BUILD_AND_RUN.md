@@ -225,16 +225,16 @@ mpirun aprl config/production.yaml
 启动计时只是本地短微基准，不保证调度时间；并行文件系统竞争、后续粒子迁移和提前物理停止均不在预测内。申请大型资源前，应在目标机器和 MPI 分解上校准内存/时间安全系数。
 
 正常退出时会立即刷新一组 `[teardown]` 标记，分别包围最终停止同步与能量采样、轨迹/探测器/能量账本关闭、粒子边界与资源汇总、
-`Simulation` 析构及 `MPI_Finalize`。每行包含缓存的 MPI rank、主机名、进程号、单调递增的经过时间和阶段名。默认只由 rank 0 打印；诊断性重跑时可设置
-`APRL_TEARDOWN_TRACE=all`，使每个 rank 都打印同样的标记。该变量只改变日志，不增加 barrier 或其他 MPI 同步。`MPI_Finalize` 之后的标记只使用缓存的进程信息和本地单调时钟，不再调用 MPI。
+`Simulation` 析构、finalize-readiness 同步及 `MPI_Finalize`。每行包含缓存的 MPI rank、主机名、进程号、单调递增的经过时间和阶段名。默认只由 rank 0 打印；诊断性重跑时可设置
+`APRL_TEARDOWN_TRACE=all`，使每个 rank 都打印同样的标记。该变量只改变日志，本身不增加 barrier 或其他 MPI 同步；程序的 finalize-readiness barrier 无论是否启用跟踪都会执行。`MPI_Finalize` 之后的标记只使用缓存的进程信息和本地单调时钟，不再调用 MPI。
 
-与跟踪日志相互独立，默认收尾 watchdog 会给每个 rank 的最终 MPI 汇总、`Simulation` 析构以及 `MPI_Finalize`/`MPI_Abort` 各留 600 秒。APRL 会请求 `MPI_THREAD_FUNNELED`；每个 rank 的一个休眠 watchdog 线程既不调用 MPI，也不参与数值计算。它在物理推进和正常路径显式关闭 HDF5 输出时不启用；异常栈展开则把析构整体纳入保护，其中可能包含析构器的兜底关闭。超时会立即以状态码 124 非零退出；设置 `APRL_TEARDOWN_TRACE=all` 时，每个 rank 最后一条已经刷新的 `[teardown]` 进入标记可指出受保护阶段，从而避免批处理脚本把收尾失败误判为成功。可在 `runtime.shutdown_watchdog` 下配置，解析后的设置也会写入运行清单。
+与跟踪日志相互独立，默认收尾 watchdog 会给每个 rank 的最终 MPI 汇总、`Simulation` 析构和 `MPI_Abort` 各留 600 秒，但对 `MPI_Finalize` 使用独立的 60 秒上限。正常路径显式关闭 HDF5 输出和 `Simulation` 析构都发生在 `MPI_Finalize` 之前；随后所有 rank 先在通用 600 秒 watchdog 保护下通过 `finalize-readiness-sync` barrier，才允许任何 rank 开启较短计时，因此较快的 rank 不会终止仍在关闭输出的同伴。较短的 finalize 上限只约束 MPI/PMIx 运行时清理，不缩短科学输出或一般收尾时间。APRL 会请求 `MPI_THREAD_FUNNELED`；每个 rank 的一个休眠 watchdog 线程既不调用 MPI，也不参与数值计算。它在物理推进和正常路径显式关闭 HDF5 输出时不启用；异常栈展开则把析构整体纳入保护，其中可能包含析构器的兜底关闭。超时会立即以状态码 124 非零退出；设置 `APRL_TEARDOWN_TRACE=all` 时，每个 rank 最后一条已经刷新的 `[teardown]` 进入标记可指出受保护阶段，从而避免批处理脚本把收尾失败误判为成功。可在 `runtime.shutdown_watchdog` 下分别用 `timeout_seconds` 和 `finalize_timeout_seconds` 配置，默认分别为 600 秒和 60 秒，且都必须为正数；解析后的设置也会写入运行清单。finalize 超时仍是失败状态，只有验证过输出完成元数据的 campaign 才应保留已经关闭的科学文件。
 
 启用全 rank 跟踪后，可按每个 rank 的最后一条标记定位：各组
 `*-enter`/`*-complete` 可直接指出未返回的最终求解操作；看到
 `solve-complete` 才表示 `Simulation::solve()` 已走到正常返回路径。停在
 `simulation-destructor-enter` 表示析构未完成；已有
-`simulation-destructor-complete` 和 `mpi-finalize-enter`、但没有
+`simulation-destructor-complete` 后进入 `finalize-readiness-sync` 但没有完成，表示短 finalize 计时尚未开启、卡在就绪同步；全部 rank 都有 `finalize-readiness-sync-complete` 和 `mpi-finalize-enter`、但没有
 `mpi-finalize-complete` 表示卡在 MPI 收尾；若所有 rank 均已打印
 `mpi-finalize-complete`，则问题已经位于 MPI 之后。此时若 APRL 进程已经全部消失而调度步骤仍未退出，就是启动器或调度器清理卡住；若 APRL 进程仍存在，则还需检查很短的 finalize 后 C/C++ 进程退出路径。
 

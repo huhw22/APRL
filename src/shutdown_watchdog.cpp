@@ -27,17 +27,33 @@ namespace aprl
       bool armed;
       int rank;
       unsigned int timeoutSeconds;
+      unsigned int finalizeTimeoutSeconds;
       unsigned long long generation;
       WatchdogClock::time_point deadline;
 
       ShutdownWatchdogState()
         : mutex(), changed(), worker(), initialized(false), available(false),
           enabled(true), stop(false), armed(false), rank(0),
-          timeoutSeconds(600), generation(0), deadline()
+          timeoutSeconds(600), finalizeTimeoutSeconds(60), generation(0),
+          deadline()
       {}
     };
 
     ShutdownWatchdogState watchdogState;
+
+    void armWithTimeout(bool finalize)
+    {
+      ShutdownWatchdogState& state = watchdogState;
+      std::lock_guard<std::mutex> lock(state.mutex);
+      if (!state.initialized || !state.available || !state.enabled) return;
+      const unsigned int timeoutSeconds = finalize ?
+        state.finalizeTimeoutSeconds : state.timeoutSeconds;
+      state.armed = true;
+      state.deadline = WatchdogClock::now() +
+        std::chrono::seconds(timeoutSeconds);
+      ++state.generation;
+      state.changed.notify_all();
+    }
 
     void watchdogLoop()
     {
@@ -102,13 +118,16 @@ namespace aprl
   }
 
   void configureShutdownWatchdog(bool enabled,
-                                 unsigned int timeoutSeconds)
+                                 unsigned int timeoutSeconds,
+                                 unsigned int finalizeTimeoutSeconds)
   {
     ShutdownWatchdogState& state = watchdogState;
     std::lock_guard<std::mutex> lock(state.mutex);
     state.armed = false;
-    state.enabled = enabled && state.available && timeoutSeconds > 0;
+    state.enabled = enabled && state.available && timeoutSeconds > 0 &&
+      finalizeTimeoutSeconds > 0;
     state.timeoutSeconds = timeoutSeconds;
+    state.finalizeTimeoutSeconds = finalizeTimeoutSeconds;
     ++state.generation;
     state.changed.notify_all();
   }
@@ -116,14 +135,13 @@ namespace aprl
   void armShutdownWatchdog(const char* phase)
   {
     (void)phase;
-    ShutdownWatchdogState& state = watchdogState;
-    std::lock_guard<std::mutex> lock(state.mutex);
-    if (!state.initialized || !state.available || !state.enabled) return;
-    state.armed = true;
-    state.deadline = WatchdogClock::now() +
-      std::chrono::seconds(state.timeoutSeconds);
-    ++state.generation;
-    state.changed.notify_all();
+    armWithTimeout(false);
+  }
+
+  void armShutdownWatchdogForFinalize(const char* phase)
+  {
+    (void)phase;
+    armWithTimeout(true);
   }
 
   void disarmShutdownWatchdog()

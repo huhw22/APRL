@@ -116,6 +116,9 @@ aprl_required_test(required.boris-phase
 aprl_required_test(required.longitudinal-layout
   $<TARGET_FILE:aprl_core_checks> longitudinal-layout)
 
+aprl_required_test(required.runtime.defaults
+  $<TARGET_FILE:aprl_core_checks> runtime-defaults)
+
 aprl_required_test(required.charge-continuity
   $<TARGET_FILE:aprl_core_checks> charge-continuity)
 
@@ -213,6 +216,14 @@ aprl_required_test(required.runtime.shutdown-watchdog-invalid-timeout
   "${APRL_VERIFY_CARDS}/invalid-shutdown-watchdog.yaml")
 set_tests_properties(
   required.runtime.shutdown-watchdog-invalid-timeout PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/invalid-watchdog"
+  WILL_FAIL TRUE)
+
+aprl_required_test(required.runtime.shutdown-watchdog-invalid-finalize-timeout
+  $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/invalid-shutdown-watchdog-finalize.yaml")
+set_tests_properties(
+  required.runtime.shutdown-watchdog-invalid-finalize-timeout PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/invalid-watchdog"
   WILL_FAIL TRUE)
 

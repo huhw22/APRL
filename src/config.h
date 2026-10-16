@@ -194,6 +194,7 @@ namespace aprl
     Double timeSafetyFactor;
     bool shutdownWatchdogEnabled;
     unsigned int shutdownWatchdogTimeoutSeconds;
+    unsigned int shutdownWatchdogFinalizeTimeoutSeconds;
 
     RuntimeConfig();
     bool interactive() const;

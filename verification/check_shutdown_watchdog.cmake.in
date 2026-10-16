@@ -14,6 +14,18 @@ if(NOT timeout_result EQUAL 124)
     "${timeout_stdout}\n${timeout_stderr}")
 endif()
 
+execute_process(
+  COMMAND "${WATCHDOG_PROBE}" finalize-timeout
+  RESULT_VARIABLE finalize_timeout_result
+  OUTPUT_VARIABLE finalize_timeout_stdout
+  ERROR_VARIABLE finalize_timeout_stderr
+  TIMEOUT 5)
+if(NOT finalize_timeout_result EQUAL 124)
+  message(FATAL_ERROR
+    "finalize watchdog timeout returned '${finalize_timeout_result}', "
+    "expected 124:\n${finalize_timeout_stdout}\n${finalize_timeout_stderr}")
+endif()
+
 foreach(mode disarm disabled)
   execute_process(
     COMMAND "${WATCHDOG_PROBE}" "${mode}"
@@ -71,4 +83,4 @@ if(NOT finalize_result EQUAL 0)
 endif()
 
 message(STATUS
-  "verified timeout=124, disarm/disable, bounded stalled MPI collective, and normal MPI_Finalize")
+  "verified general/finalize timeout=124, disarm/disable, bounded stalled MPI collective, and normal MPI_Finalize")

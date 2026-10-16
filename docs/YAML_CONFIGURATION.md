@@ -579,6 +579,7 @@ runtime:
   shutdown_watchdog:
     enabled: true
     timeout_seconds: 600
+    finalize_timeout_seconds: 60
   resource_monitor:
     enabled: true
     progress_interval_steps: 1000
@@ -593,9 +594,16 @@ normal physical-stop shutdown still closes every output. This avoids the
 testing path's synchronization and filesystem costs. `local-test` and `hpc`
 are accepted aliases for `interactive` and `throughput`, respectively.
 
-`shutdown_watchdog` is enabled by default with a 600-second timeout. It is a
-process-local last resort for the final MPI reductions, `Simulation`
-destruction, `MPI_Finalize`, and `MPI_Abort`. It is not armed during physical
+`shutdown_watchdog` is enabled by default. `timeout_seconds` defaults to 600
+seconds for final MPI reductions, `Simulation` destruction, and `MPI_Abort`;
+`finalize_timeout_seconds` defaults to 60 seconds and applies only to
+`MPI_Finalize`. The shorter independent finalization limit makes a stuck rank
+exit promptly when an MPI/PMIx runtime hangs after APRL has completed the solve
+and closed its scientific outputs; launcher and scheduler cleanup remain the
+batch wrapper's responsibility. Before arming that shorter limit,
+all ranks enter a readiness barrier guarded by the general 600-second timeout;
+therefore one fast rank cannot trigger launcher cleanup while a slower peer is
+still closing output or destroying `Simulation`. It is not armed during physical
 time stepping or during the normal explicit close of trajectory, detector, and
 energy-ledger HDF5 files, so it neither changes the numerical path nor mistakes
 a slow parallel filesystem for an MPI deadlock. Exceptional stack unwinding is
@@ -607,7 +615,9 @@ If a guarded phase exceeds the limit, that rank exits immediately with status
 enter marker identifies its phase. This
 deliberately marks the job failed even when scientific files were already committed. Set
 `enabled: false` only when an external scheduler watchdog provides the same
-protection. `timeout_seconds` must be a positive integer.
+protection. Both timeout values must be positive integers. A timeout still
+exits with nonzero status 124; batch automation must verify completed output
+metadata before accepting scientific files from such a run.
 
 
 `resource_monitor` is independent of the stop policy. When enabled, startup

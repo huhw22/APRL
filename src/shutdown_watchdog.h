@@ -15,8 +15,12 @@ namespace aprl
    * whole because its destructors must not occupy a batch allocation forever. */
   void initializeShutdownWatchdog(int rank, bool threadSupportAvailable);
   void configureShutdownWatchdog(bool enabled,
-                                 unsigned int timeoutSeconds);
+                                 unsigned int timeoutSeconds,
+                                 unsigned int finalizeTimeoutSeconds);
+  /* General teardown keeps the first limit; MPI_Finalize uses the shorter,
+   * independent limit because all normal scientific file closes precede it. */
   void armShutdownWatchdog(const char* phase);
+  void armShutdownWatchdogForFinalize(const char* phase);
   void disarmShutdownWatchdog();
   bool shutdownWatchdogOperational();
   void shutdownShutdownWatchdog();
