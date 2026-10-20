@@ -212,6 +212,7 @@ namespace aprl
       trajectorySamplesSinceFlush_(0), particleSubsteps_(1),
       energyLedgerPrescribedWork_(0.0L),
       energyLedgerBoundarySourceWork_(0.0L),
+      energyLedgerBoundarySourceAbsWork_(0.0L),
       energyLedgerRemovedKinetic_(0.0L),
       energyLedgerRemovedTotal_(0.0L),
       energyLedgerInitialKinetic_(0.0L),
@@ -2837,8 +2838,10 @@ namespace aprl
             newElectric[1] +
           static_cast<long double>(sample.chargeDisplacement[2]) *
             newElectric[2];
-        energyLedgerBoundarySourceWork_ -= 0.5L *
+        const long double entryWork = -0.5L *
           (static_cast<long double>(sample.oldElectricDot) + newDot);
+        energyLedgerBoundarySourceWork_ += entryWork;
+        energyLedgerBoundarySourceAbsWork_ += std::abs(entryWork);
       }
     boundaryInjectionWorkSamples_.clear();
   }
@@ -2853,7 +2856,7 @@ namespace aprl
         step_ % config_.energyLedger.sampleIntervalSteps != 0)
       return;
 
-    long double local[17] = {};
+    long double local[18] = {};
     Double localMinimumGamma = std::numeric_limits<Double>::infinity();
     Double localMaximumGamma =
       -std::numeric_limits<Double>::infinity();
@@ -2897,8 +2900,9 @@ namespace aprl
 
     if (guardFinalCollectives)
       armShutdownWatchdog("final-energy-reductions");
-    long double global[17] = {};
-    MPI_Allreduce(local, global, 17, MPI_LONG_DOUBLE, MPI_SUM,
+    local[17] = energyLedgerBoundarySourceAbsWork_;
+    long double global[18] = {};
+    MPI_Allreduce(local, global, 18, MPI_LONG_DOUBLE, MPI_SUM,
                   communicator_);
     unsigned long long localCounts[4] = {
       static_cast<unsigned long long>(particles_.size()),
@@ -3027,6 +3031,7 @@ namespace aprl
     record.outwardFieldEnergy = static_cast<Double>(outward);
     record.prescribedWork = static_cast<Double>(global[9]);
     record.boundarySourceWork = static_cast<Double>(global[16]);
+    record.boundarySourceAbsWork = static_cast<Double>(global[17]);
     record.balanceResidualRaw = static_cast<Double>(rawResidual);
     record.balanceResidual = static_cast<Double>(residual);
     record.relativeBalanceExchange = exchangeScale > 0.0L ?
@@ -3079,6 +3084,15 @@ namespace aprl
           << lastEnergyLedgerRecord_.prescribedWork
           << " boundary_source_work_J="
           << lastEnergyLedgerRecord_.boundarySourceWork
+          << " boundary_source_abs_work_J="
+          << lastEnergyLedgerRecord_.boundarySourceAbsWork
+          << " boundary_source_abs_work_over_field_energy=";
+        if (lastEnergyLedgerRecord_.fieldEnergyInterior > 0.0)
+          message << lastEnergyLedgerRecord_.boundarySourceAbsWork /
+            lastEnergyLedgerRecord_.fieldEnergyInterior;
+        else
+          message << "undefined_zero_field_energy";
+        message
           << " balance_residual_raw_J="
           << lastEnergyLedgerRecord_.balanceResidualRaw
           << " residual_J="

@@ -33,6 +33,7 @@ namespace aprl
     double outwardFieldEnergy;
     double prescribedWork;
     double boundarySourceWork;
+    double boundarySourceAbsWork;
     double balanceResidualRaw;
     double balanceResidual;
     double relativeBalanceExchange;

@@ -74,7 +74,8 @@ namespace
     return record;
   }
 
-  void printRecord(const char* label, const aprl::EnergyLedgerRecord& record)
+  void printRecord(const char* label, const aprl::EnergyLedgerRecord& record,
+                   bool hasAbsoluteBoundaryWork)
   {
     std::cout << label << ": step=" << record.step
       << " time_box_s=" << record.timeBox
@@ -105,6 +106,18 @@ namespace
       << record.uncorrelatedSigmaGammaLab
       << " linear_chirp_gamma_per_m="
       << record.linearChirpGammaPerM << "\n";
+    if (hasAbsoluteBoundaryWork)
+      {
+        std::cout << "  boundary_source_abs_work_J="
+                  << record.boundarySourceAbsWork
+                  << " boundary_source_abs_work_over_field_energy=";
+        if (record.fieldEnergyInterior > 0.0)
+          std::cout << record.boundarySourceAbsWork /
+            record.fieldEnergyInterior;
+        else
+          std::cout << "undefined_zero_field_energy";
+        std::cout << "\n";
+      }
   }
 }
 
@@ -126,7 +139,7 @@ int main(int argc, char** argv)
       group = H5Gopen2(file, "/energy_ledger", H5P_DEFAULT);
       requireHandle(group, "Cannot open /energy_ledger");
       const int formatVersion = readIntAttribute(group, "format_version");
-      if (formatVersion != 1 && formatVersion != 2)
+      if (formatVersion != 1 && formatVersion != 2 && formatVersion != 3)
         throw std::runtime_error("Unsupported energy-ledger format version");
       const std::uint64_t committed = readUnsigned(
         group, "committed_records");
@@ -166,10 +179,10 @@ int main(int argc, char** argv)
         << "format_version=" << formatVersion
         << " committed_records=" << committed
         << " complete=" << static_cast<unsigned int>(complete) << "\n";
-      printRecord("initial", initial);
+      printRecord("initial", initial, formatVersion >= 3);
       if (hasSelected)
         {
-          printRecord("selected", selected);
+          printRecord("selected", selected, formatVersion >= 3);
           std::cout
             << "initial_to_selected: particle_kinetic_accounted_J="
             << (selected.particleKineticActive +
@@ -188,7 +201,11 @@ int main(int argc, char** argv)
             << " sigma_gamma_lab="
             << (selected.sigmaGammaLab - initial.sigmaGammaLab) << "\n";
         }
-      printRecord("final", final);
+      printRecord("final", final, formatVersion >= 3);
+      if (formatVersion >= 3 && final.boundaryInjectionEntries > 0)
+        std::cout << "note: boundary-source work / stored field energy is "
+          "a source-activity scale, not the fraction of missing external "
+          "near field or a bounded percentage.\n";
       std::cout
         << "change: particle_kinetic_accounted_J="
         << (final.particleKineticActive + final.particleKineticRemoved -

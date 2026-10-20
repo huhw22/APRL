@@ -40,6 +40,13 @@ The mode is useful only when omitted external particles are intended to become
 physical particles upon re-entry; it cannot recover their prior collective
 fields or electromagnetic history.
 
+Energy-ledger format version 3 additionally reports the cumulative absolute
+work of the modeled entry current and its ratio to stored physical-region
+field energy. This is a source-activity diagnostic, **not** the fraction of
+omitted external self-field. A small ratio alone cannot establish that the
+omitted field is negligible; aperture and initial-field convergence remain
+necessary.
+
 ## Purpose
 
 The inner CPML surface is the end of the physical particle domain. A particle

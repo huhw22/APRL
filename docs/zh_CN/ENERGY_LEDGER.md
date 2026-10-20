@@ -54,6 +54,14 @@ energy_ledger:
 
 ## HDF5 契约与报告工具
 
+在 `mesh.ballistic_outside_transverse: true` 的近似模式下，格式版本 3 另存
+`boundary_source_abs_work_J = Σ|W_entry|`，避免不同入界粒子的正负做功互相抵消。
+报告工具及最终 `[energy]` 日志会给出
+`boundary_source_abs_work_over_field_energy`，即上述绝对做功总和除以物理区已存储的
+E/B 场能；场能为零时该比值未定义。它只是**已建模入界电流的活动量级指标**，不是入界粒子
+携带的场在总场中的真实占比，更不是被省略的框外自场的上界。比值小也不能单独证明该近似
+可靠，应同时扫描横向场框和初始自场设置并比较下游场观测量。读取器仍兼容旧版账本。
+
 根组为 `/energy_ledger`。读取器只使用 `records[0:committed_records]`；`complete` 标记正常物理完成。每条记录包含：
 
 - 步数和计算系时间；
@@ -62,6 +70,7 @@ energy_ledger:
 - 物理区场能；
 - 累计向外场能总量及 `x-,x+,y-,y+,z-,z+` 六面分量；
 - 累计规定源做功和两种残差归一化；
+- 入界电流累计带符号做功及不计抵消的绝对做功（版本 3）；
 - 场能相对动能加场能、以及相对含静能粒子总能量的比例；
 - 加权实验室与计算系 gamma 矩；
 - 投影实验室相对 rms 能散、线性纵向 chirp 和扣除最佳加权线性 gamma-z 趋势后的 rms 展宽。

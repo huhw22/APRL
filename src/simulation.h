@@ -133,6 +133,7 @@ namespace aprl
     long double energyLedgerOutwardEnergy_[6];
     long double energyLedgerPrescribedWork_;
     long double energyLedgerBoundarySourceWork_;
+    long double energyLedgerBoundarySourceAbsWork_;
     long double energyLedgerRemovedKinetic_;
     long double energyLedgerRemovedTotal_;
     long double energyLedgerInitialKinetic_;

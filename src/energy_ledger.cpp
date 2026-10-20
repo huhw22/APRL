@@ -34,6 +34,7 @@ namespace aprl
       {"outward_field_energy_J", HOFFSET(EnergyLedgerRecord, outwardFieldEnergy)},
       {"prescribed_work_J", HOFFSET(EnergyLedgerRecord, prescribedWork)},
       {"boundary_source_work_J", HOFFSET(EnergyLedgerRecord, boundarySourceWork)},
+      {"boundary_source_abs_work_J", HOFFSET(EnergyLedgerRecord, boundarySourceAbsWork)},
       {"balance_residual_raw_J", HOFFSET(EnergyLedgerRecord, balanceResidualRaw)},
       {"balance_residual_J", HOFFSET(EnergyLedgerRecord, balanceResidual)},
       {"relative_balance_exchange", HOFFSET(EnergyLedgerRecord, relativeBalanceExchange)},
@@ -63,6 +64,7 @@ namespace aprl
       particleKineticRemoved(0.0), particleTotalRemoved(0.0),
       fieldEnergyInterior(0.0), outwardFieldEnergy(0.0),
       prescribedWork(0.0), boundarySourceWork(0.0),
+      boundarySourceAbsWork(0.0),
       balanceResidualRaw(0.0), balanceResidual(0.0),
       relativeBalanceExchange(0.0), relativeBalanceInitial(0.0),
       fieldFractionKinetic(0.0), fieldFractionIncludingRest(0.0),
@@ -250,7 +252,7 @@ namespace aprl
         writeUnsignedScalar(committedDataset_, 0);
         writeByteScalar(completeDataset_, 0);
 
-        writeIntAttribute(group_, "format_version", 2);
+        writeIntAttribute(group_, "format_version", 3);
         writeIntAttribute(group_, "mpi_size", mpiSize);
         writeStringAttribute(group_, "frame", "boosted computational frame");
         writeStringAttribute(group_, "face_order", "x-,x+,y-,y+,z-,z+");
@@ -261,6 +263,10 @@ namespace aprl
         writeStringAttribute(group_, "boundary_source_work_model",
           approximateBoundaryInjection ?
             "negative charge times in-aperture entry displacement dotted with old/new grid E midpoint average; approximate, not a Gauss-law closure" :
+            "disabled");
+        writeStringAttribute(group_, "boundary_source_abs_work_model",
+          approximateBoundaryInjection ?
+            "sum of absolute per-entry boundary-current work estimates; a source-activity proxy, not missing external field energy" :
             "disabled");
         writeStringAttribute(group_, "field_surface",
           "first interior cell-centre layer next to CPML; grid outer layer for PEC");
@@ -303,6 +309,7 @@ namespace aprl
       record.particleKineticRemoved, record.particleTotalRemoved,
       record.fieldEnergyInterior, record.outwardFieldEnergy,
       record.prescribedWork, record.boundarySourceWork,
+      record.boundarySourceAbsWork,
       record.balanceResidualRaw, record.balanceResidual,
       record.relativeBalanceExchange, record.relativeBalanceInitial,
       record.fieldFractionKinetic, record.fieldFractionIncludingRest,

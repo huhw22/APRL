@@ -519,6 +519,7 @@ namespace
       record.particleKineticRemoved, record.particleTotalRemoved,
       record.fieldEnergyInterior, record.outwardFieldEnergy,
       record.prescribedWork, record.boundarySourceWork,
+      record.boundarySourceAbsWork,
       record.balanceResidualRaw, record.balanceResidual,
       record.relativeBalanceExchange, record.relativeBalanceInitial,
       record.fieldFractionKinetic, record.fieldFractionIncludingRest,
@@ -575,6 +576,7 @@ namespace
           "K=0 ledger unexpectedly invalidated closure");
         require(records[sample].boundaryInjectionEntries == 0 &&
                 records[sample].boundarySourceWork == 0.0 &&
+                records[sample].boundarySourceAbsWork == 0.0 &&
                 records[sample].balanceResidualRaw ==
                   records[sample].balanceResidual,
           "Default energy ledger unexpectedly contains boundary source work");
@@ -646,6 +648,10 @@ namespace
       "Expected exactly one injected entry in both MPI layouts");
     require(std::abs(one.boundarySourceWork) > 1.0e-30,
       "Boundary source work was not measured");
+    require(one.boundarySourceAbsWork > 1.0e-30 &&
+            one.boundarySourceAbsWork + 1.0e-40 >=
+              std::abs(one.boundarySourceWork),
+      "Absolute boundary-source work did not capture entry activity");
     require(std::abs(one.balanceResidual) > 1.0e-30,
       "Boundary correction unexpectedly forced the residual to zero");
     require(std::abs(one.balanceResidualRaw -
@@ -654,6 +660,8 @@ namespace
       "Corrected boundary ledger does not match its separate source term");
     require(std::abs(one.boundarySourceWork - two.boundarySourceWork) <=
               1.0e-8 * scale &&
+            std::abs(one.boundarySourceAbsWork -
+                     two.boundarySourceAbsWork) <= 1.0e-8 * scale &&
             std::abs(one.balanceResidual - two.balanceResidual) <=
               1.0e-8 * scale,
       "Boundary-source energy depends on the MPI z-slab count");
