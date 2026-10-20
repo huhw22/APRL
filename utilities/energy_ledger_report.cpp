@@ -43,6 +43,17 @@ namespace
     return value;
   }
 
+  int readIntAttribute(hid_t object, const char* name)
+  {
+    hid_t attribute = H5Aopen(object, name, H5P_DEFAULT);
+    requireHandle(attribute, std::string("Cannot open ") + name);
+    int value = 0;
+    const herr_t status = H5Aread(attribute, H5T_NATIVE_INT, &value);
+    H5Aclose(attribute);
+    requireStatus(status, std::string("Cannot read ") + name);
+    return value;
+  }
+
   aprl::EnergyLedgerRecord readRecord(hid_t dataset, hid_t memoryType,
                                      std::uint64_t index)
   {
@@ -69,12 +80,16 @@ namespace
       << " time_box_s=" << record.timeBox
       << " closure_valid=" << static_cast<unsigned int>(record.closureValid)
       << " active_macroparticles=" << record.activeMacroparticles
-      << " removed_macroparticles=" << record.removedMacroparticles << "\n"
+      << " removed_macroparticles=" << record.removedMacroparticles
+      << " boundary_injection_entries="
+      << record.boundaryInjectionEntries << "\n"
       << "  particle_kinetic_active_J=" << record.particleKineticActive
       << " particle_kinetic_removed_J=" << record.particleKineticRemoved
       << " field_energy_interior_J=" << record.fieldEnergyInterior << "\n"
       << "  outward_field_energy_J=" << record.outwardFieldEnergy
       << " prescribed_work_J=" << record.prescribedWork
+      << " boundary_source_work_J=" << record.boundarySourceWork
+      << " balance_residual_raw_J=" << record.balanceResidualRaw
       << " balance_residual_J=" << record.balanceResidual << "\n"
       << "  relative_balance_exchange=" << record.relativeBalanceExchange
       << " relative_balance_initial=" << record.relativeBalanceInitial
@@ -110,6 +125,9 @@ int main(int argc, char** argv)
       requireHandle(file, "Cannot open energy-ledger file");
       group = H5Gopen2(file, "/energy_ledger", H5P_DEFAULT);
       requireHandle(group, "Cannot open /energy_ledger");
+      const int formatVersion = readIntAttribute(group, "format_version");
+      if (formatVersion != 1 && formatVersion != 2)
+        throw std::runtime_error("Unsupported energy-ledger format version");
       const std::uint64_t committed = readUnsigned(
         group, "committed_records");
       const unsigned char complete = readByte(group, "complete");
@@ -118,9 +136,9 @@ int main(int argc, char** argv)
       dataset = H5Dopen2(group, "records", H5P_DEFAULT);
       requireHandle(dataset, "Cannot open energy-ledger records");
       memoryType = aprl::EnergyLedgerWriter::createMemoryRecordType();
-      const aprl::EnergyLedgerRecord initial =
+      aprl::EnergyLedgerRecord initial =
         readRecord(dataset, memoryType, 0);
-      const aprl::EnergyLedgerRecord final =
+      aprl::EnergyLedgerRecord final =
         readRecord(dataset, memoryType, committed - 1);
       bool hasSelected = argc == 3;
       std::uint64_t selectedIndex = 0;
@@ -136,8 +154,17 @@ int main(int argc, char** argv)
           selected = readRecord(dataset, memoryType, selectedIndex);
         }
 
+      if (formatVersion == 1)
+        {
+          initial.balanceResidualRaw = initial.balanceResidual;
+          final.balanceResidualRaw = final.balanceResidual;
+          if (hasSelected)
+            selected.balanceResidualRaw = selected.balanceResidual;
+        }
+
       std::cout << std::setprecision(12)
-        << "committed_records=" << committed
+        << "format_version=" << formatVersion
+        << " committed_records=" << committed
         << " complete=" << static_cast<unsigned int>(complete) << "\n";
       printRecord("initial", initial);
       if (hasSelected)
@@ -152,6 +179,9 @@ int main(int argc, char** argv)
             << (selected.fieldEnergyInterior - initial.fieldEnergyInterior)
             << " outward_field_energy_J="
             << selected.outwardFieldEnergy
+            << " boundary_source_work_J="
+            << selected.boundarySourceWork
+            << " residual_raw_J=" << selected.balanceResidualRaw
             << " residual_J=" << selected.balanceResidual
             << " mean_gamma_lab="
             << (selected.meanGammaLab - initial.meanGammaLab)
@@ -165,6 +195,9 @@ int main(int argc, char** argv)
             initial.particleKineticActive)
         << " field_energy_J="
         << (final.fieldEnergyInterior - initial.fieldEnergyInterior)
+        << " boundary_source_work_J=" << final.boundarySourceWork
+        << " residual_raw_J=" << final.balanceResidualRaw
+        << " residual_J=" << final.balanceResidual
         << " mean_gamma_lab="
         << (final.meanGammaLab - initial.meanGammaLab)
         << " sigma_gamma_lab="

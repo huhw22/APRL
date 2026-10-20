@@ -211,6 +211,7 @@ namespace aprl
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
       trajectorySamplesSinceFlush_(0), particleSubsteps_(1),
       energyLedgerPrescribedWork_(0.0L),
+      energyLedgerBoundarySourceWork_(0.0L),
       energyLedgerRemovedKinetic_(0.0L),
       energyLedgerRemovedTotal_(0.0L),
       energyLedgerInitialKinetic_(0.0L),
@@ -222,7 +223,7 @@ namespace aprl
       configuredStopReached_(false), loopWallStart_(0.0),
       estimatedStepSeconds_(0.0), estimatedMaximumSteps_(0),
       modeledLocalPeakBytes_(0), lostParticles_(0),
-      ballisticBoundaryEntries_(0),
+      ballisticBoundaryEntries_(0), boundaryInjectionWorkSamples_(),
       retirementEntryCount_(0), retirementEntryCharge_(0.0),
       retirementExitCount_(0), retirementExitResidualCharge_(0.0),
       peakRetirementCarriers_(0), stopReason_()
@@ -276,7 +277,10 @@ namespace aprl
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
 
         if (config_.energyLedger.enabled)
-          advanceEnergyLedgerStep();
+          {
+            finalizeBoundaryInjectionWorkStep();
+            advanceEnergyLedgerStep();
+          }
 
         timeBoxSI_ += globalGeometry_.dt;
         ++step_;
@@ -1061,6 +1065,10 @@ namespace aprl
     modeled += 3.0L * static_cast<long double>(particles_.size()) *
       static_cast<long double>(std::max(
         sizeof(RelativisticParticleSI), sizeof(TransferPacket)));
+    if (config_.mesh.ballisticOutsideTransverse &&
+        config_.energyLedger.enabled)
+      modeled += static_cast<long double>(particles_.size()) *
+        sizeof(BoundaryInjectionWorkSample);
 
     const long double fieldPointBytes = 6.0L * sizeof(Double);
     const long double planePoints =
@@ -2765,7 +2773,7 @@ namespace aprl
         config_.energyLedger.bufferRecords,
         config_.energyLedger.compression,
         config_.runtime.interactive(), config_.output.overwrite,
-        &runMetadata_);
+        &runMetadata_, config_.mesh.ballisticOutsideTransverse);
     localInteriorBoundaryPower(energyLedgerPreviousPower_);
     if (rank_ == 0)
       {
@@ -2781,6 +2789,18 @@ namespace aprl
         if (sources_.maxwellIncidentWaveCount() > 0)
           logRoot(communicator_,
             "WARNING: energy-ledger closure_valid is false because incident-wave boundary work is not yet included.");
+        if (config_.mesh.ballisticOutsideTransverse)
+          logRoot(communicator_,
+            "WARNING: energy-ledger closure_valid is false in approximate "
+            "boundary-injection mode. The ledger records both raw and "
+            "boundary-source-corrected residuals; neither is an exact "
+            "whole-bunch conservation proof.");
+        if (config_.mesh.ballisticOutsideTransverse &&
+            config_.mesh.currentFilter != EBCurrentFilter::None)
+          logRoot(communicator_,
+            "WARNING: boundary-source work is estimated from unfiltered "
+            "particle displacement while Maxwell uses filtered current; "
+            "set mesh.current_filter: none for the clearest energy audit.");
       }
   }
 
@@ -2798,6 +2818,31 @@ namespace aprl
       }
   }
 
+  void Simulation::finalizeBoundaryInjectionWorkStep()
+  {
+    if (boundaryInjectionWorkSamples_.empty()) return;
+    for (std::size_t index = 0;
+         index < boundaryInjectionWorkSamples_.size(); ++index)
+      {
+        const BoundaryInjectionWorkSample& sample =
+          boundaryInjectionWorkSamples_[index];
+        FieldVector<Double> newElectric(0.0);
+        FieldVector<Double> ignoredMagnetic(0.0);
+        fields_->sampleFieldsPosition(sample.midpoint, localOriginBox_,
+          newElectric, ignoredMagnetic);
+        const long double newDot =
+          static_cast<long double>(sample.chargeDisplacement[0]) *
+            newElectric[0] +
+          static_cast<long double>(sample.chargeDisplacement[1]) *
+            newElectric[1] +
+          static_cast<long double>(sample.chargeDisplacement[2]) *
+            newElectric[2];
+        energyLedgerBoundarySourceWork_ -= 0.5L *
+          (static_cast<long double>(sample.oldElectricDot) + newDot);
+      }
+    boundaryInjectionWorkSamples_.clear();
+  }
+
   void Simulation::sampleEnergyLedger(bool force,
                                       bool guardFinalCollectives)
   {
@@ -2808,7 +2853,7 @@ namespace aprl
         step_ % config_.energyLedger.sampleIntervalSteps != 0)
       return;
 
-    long double local[16] = {};
+    long double local[17] = {};
     Double localMinimumGamma = std::numeric_limits<Double>::infinity();
     Double localMaximumGamma =
       -std::numeric_limits<Double>::infinity();
@@ -2848,18 +2893,20 @@ namespace aprl
     local[9] = energyLedgerPrescribedWork_;
     for (unsigned int face = 0; face < 6; ++face)
       local[10 + face] = energyLedgerOutwardEnergy_[face];
+    local[16] = energyLedgerBoundarySourceWork_;
 
     if (guardFinalCollectives)
       armShutdownWatchdog("final-energy-reductions");
-    long double global[16] = {};
-    MPI_Allreduce(local, global, 16, MPI_LONG_DOUBLE, MPI_SUM,
+    long double global[17] = {};
+    MPI_Allreduce(local, global, 17, MPI_LONG_DOUBLE, MPI_SUM,
                   communicator_);
-    unsigned long long localCounts[3] = {
+    unsigned long long localCounts[4] = {
       static_cast<unsigned long long>(particles_.size()),
-      energyLedgerRemovedMacroparticles_, retirementEntryCount_
+      energyLedgerRemovedMacroparticles_, retirementEntryCount_,
+      ballisticBoundaryEntries_
     };
-    unsigned long long globalCounts[3] = {};
-    MPI_Allreduce(localCounts, globalCounts, 3,
+    unsigned long long globalCounts[4] = {};
+    MPI_Allreduce(localCounts, globalCounts, 4,
       MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
     Double globalMinimumGamma = 0.0;
     Double globalMaximumGamma = 0.0;
@@ -2925,13 +2972,15 @@ namespace aprl
     long double outward = 0.0L;
     for (unsigned int face = 0; face < 6; ++face)
       outward += global[10 + face];
-    const long double residual = currentDynamic - initialDynamic +
+    const long double rawResidual = currentDynamic - initialDynamic +
       outward - global[9];
+    const long double residual = rawResidual - global[16];
     const long double deltaParticle =
       particleAccounted - energyLedgerInitialKinetic_;
     const long double deltaField = global[6] - energyLedgerInitialField_;
     const long double exchangeScale = std::abs(deltaParticle) +
-      std::abs(deltaField) + std::abs(outward) + std::abs(global[9]);
+      std::abs(deltaField) + std::abs(outward) + std::abs(global[9]) +
+      std::abs(global[16]);
     long double varianceGamma = weight > 0.0L ?
       std::max(0.0L, globalCentred[0] / weight) : 0.0L;
     long double varianceGammaBox = weight > 0.0L ?
@@ -2961,8 +3010,10 @@ namespace aprl
     record.step = static_cast<std::uint64_t>(step_);
     record.activeMacroparticles = globalCounts[0];
     record.removedMacroparticles = globalCounts[1];
+    record.boundaryInjectionEntries = globalCounts[3];
     record.closureValid =
-      sources_.maxwellIncidentWaveCount() == 0 && globalCounts[2] == 0 ? 1 : 0;
+      sources_.maxwellIncidentWaveCount() == 0 && globalCounts[2] == 0 &&
+      !config_.mesh.ballisticOutsideTransverse ? 1 : 0;
     record.timeBox = timeBoxSI_;
     record.activeRepresentedElectrons = static_cast<Double>(global[2]);
     record.particleKineticActive = static_cast<Double>(global[0]);
@@ -2975,6 +3026,8 @@ namespace aprl
         static_cast<Double>(global[10 + face]);
     record.outwardFieldEnergy = static_cast<Double>(outward);
     record.prescribedWork = static_cast<Double>(global[9]);
+    record.boundarySourceWork = static_cast<Double>(global[16]);
+    record.balanceResidualRaw = static_cast<Double>(rawResidual);
     record.balanceResidual = static_cast<Double>(residual);
     record.relativeBalanceExchange = exchangeScale > 0.0L ?
       static_cast<Double>(residual / exchangeScale) : 0.0;
@@ -3024,6 +3077,10 @@ namespace aprl
           << lastEnergyLedgerRecord_.outwardFieldEnergy
           << " prescribed_work_J="
           << lastEnergyLedgerRecord_.prescribedWork
+          << " boundary_source_work_J="
+          << lastEnergyLedgerRecord_.boundarySourceWork
+          << " balance_residual_raw_J="
+          << lastEnergyLedgerRecord_.balanceResidualRaw
           << " residual_J="
           << lastEnergyLedgerRecord_.balanceResidual
           << " relative_exchange="
@@ -3038,21 +3095,33 @@ namespace aprl
           << " chirp_gamma_per_m="
           << lastEnergyLedgerRecord_.linearChirpGammaPerM << ".";
         logRoot(communicator_, message.str());
-        if (lastEnergyLedgerRecord_.closureValid &&
-            std::abs(lastEnergyLedgerRecord_.relativeBalanceInitial) >
+        const Double warningRatio =
+          config_.mesh.ballisticOutsideTransverse ?
+            std::abs(lastEnergyLedgerRecord_.relativeBalanceExchange) :
+            std::abs(lastEnergyLedgerRecord_.relativeBalanceInitial);
+        if ((lastEnergyLedgerRecord_.closureValid ||
+             config_.mesh.ballisticOutsideTransverse) &&
+            warningRatio >
               config_.energyLedger.warningRelativeTolerance)
           {
             std::ostringstream warning;
             warning << std::setprecision(6)
               << "WARNING: energy-ledger residual is "
-              << std::abs(lastEnergyLedgerRecord_.relativeBalanceInitial)
-              << " of the initial boosted-frame kinetic-plus-field energy, "
+              << warningRatio
+              << (config_.mesh.ballisticOutsideTransverse ?
+                  " of the summed modeled energy exchange" :
+                  " of the initial boosted-frame kinetic-plus-field energy")
+              << ", "
                  "above warning_relative_tolerance="
               << config_.energyLedger.warningRelativeTolerance
               << ". Refine the field grid/time step, increase macro-particle "
                  "count, enlarge the initial-field padding, and check that "
                  "the residual converges before interpreting small radiation "
                  "or energy-spread changes.";
+            if (config_.mesh.ballisticOutsideTransverse)
+              warning << " Boundary injection is approximate; compare the "
+                         "raw residual and boundary-source work, and scan "
+                         "the transverse aperture.";
             logRoot(communicator_, warning.str());
           }
       }
@@ -3634,7 +3703,29 @@ namespace aprl
               depositor.depositSegment(entry, exit, particle.charge);
               if (first > 0.0 &&
                   !particleCPML_->containsPhysical(segmentStart))
-                ++ballisticBoundaryEntries_;
+                {
+                  ++ballisticBoundaryEntries_;
+                  if (config_.energyLedger.enabled)
+                    {
+                      BoundaryInjectionWorkSample sample;
+                      sample.midpoint = entry;
+                      for (unsigned int axis = 0; axis < 3; ++axis)
+                        {
+                          sample.midpoint[axis] =
+                            0.5 * (entry[axis] + exit[axis]);
+                          sample.chargeDisplacement[axis] =
+                            particle.charge * (exit[axis] - entry[axis]);
+                        }
+                      FieldVector<Double> oldElectric(0.0);
+                      FieldVector<Double> ignoredMagnetic(0.0);
+                      fields_->sampleFieldsPosition(
+                        sample.midpoint, localOriginBox_, oldElectric,
+                        ignoredMagnetic);
+                      sample.oldElectricDot =
+                        sample.chargeDisplacement * oldElectric;
+                      boundaryInjectionWorkSamples_.push_back(sample);
+                    }
+                }
             }
           if (crossesInterface)
             {

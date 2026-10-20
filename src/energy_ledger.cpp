@@ -33,6 +33,8 @@ namespace aprl
       {"field_energy_interior_J", HOFFSET(EnergyLedgerRecord, fieldEnergyInterior)},
       {"outward_field_energy_J", HOFFSET(EnergyLedgerRecord, outwardFieldEnergy)},
       {"prescribed_work_J", HOFFSET(EnergyLedgerRecord, prescribedWork)},
+      {"boundary_source_work_J", HOFFSET(EnergyLedgerRecord, boundarySourceWork)},
+      {"balance_residual_raw_J", HOFFSET(EnergyLedgerRecord, balanceResidualRaw)},
       {"balance_residual_J", HOFFSET(EnergyLedgerRecord, balanceResidual)},
       {"relative_balance_exchange", HOFFSET(EnergyLedgerRecord, relativeBalanceExchange)},
       {"relative_balance_initial", HOFFSET(EnergyLedgerRecord, relativeBalanceInitial)},
@@ -55,11 +57,13 @@ namespace aprl
 
   EnergyLedgerRecord::EnergyLedgerRecord()
     : step(0), activeMacroparticles(0), removedMacroparticles(0),
+      boundaryInjectionEntries(0),
       closureValid(1), timeBox(0.0), activeRepresentedElectrons(0.0),
       particleKineticActive(0.0), particleTotalActive(0.0),
       particleKineticRemoved(0.0), particleTotalRemoved(0.0),
       fieldEnergyInterior(0.0), outwardFieldEnergy(0.0),
-      prescribedWork(0.0), balanceResidual(0.0),
+      prescribedWork(0.0), boundarySourceWork(0.0),
+      balanceResidualRaw(0.0), balanceResidual(0.0),
       relativeBalanceExchange(0.0), relativeBalanceInitial(0.0),
       fieldFractionKinetic(0.0), fieldFractionIncludingRest(0.0),
       meanGammaLab(0.0), sigmaGammaLab(0.0),
@@ -100,6 +104,9 @@ namespace aprl
         requireStatus(H5Tinsert(type, "removed_macroparticles",
           HOFFSET(EnergyLedgerRecord, removedMacroparticles),
           H5T_NATIVE_UINT64), "Cannot add removed particle count");
+        requireStatus(H5Tinsert(type, "boundary_injection_entries",
+          HOFFSET(EnergyLedgerRecord, boundaryInjectionEntries),
+          H5T_NATIVE_UINT64), "Cannot add boundary-entry count");
         requireStatus(H5Tinsert(type, "closure_valid",
           HOFFSET(EnergyLedgerRecord, closureValid), H5T_NATIVE_UCHAR),
           "Cannot add energy-ledger validity flag");
@@ -129,7 +136,7 @@ namespace aprl
   {
     const std::size_t u64 = 8;
     const std::size_t f64 = 8;
-    const std::size_t fileSize = 3 * u64 + 1 +
+    const std::size_t fileSize = 4 * u64 + 1 +
       (DOUBLE_FIELD_COUNT + 6) * f64;
     hid_t type = H5Tcreate(H5T_COMPOUND, fileSize);
     requireHandle(type, "Cannot create energy-ledger file datatype");
@@ -144,6 +151,9 @@ namespace aprl
         offset += u64;
         requireStatus(H5Tinsert(type, "removed_macroparticles", offset,
           H5T_STD_U64LE), "Cannot add file removed particle count");
+        offset += u64;
+        requireStatus(H5Tinsert(type, "boundary_injection_entries", offset,
+          H5T_STD_U64LE), "Cannot add file boundary-entry count");
         offset += u64;
         requireStatus(H5Tinsert(type, "closure_valid", offset,
           H5T_STD_U8LE), "Cannot add file validity flag");
@@ -174,7 +184,8 @@ namespace aprl
 
   void EnergyLedgerWriter::open(const std::string& filename, int mpiSize,
       std::size_t bufferRecords, unsigned int compressionLevel,
-      bool durableProgress, bool overwrite, const RunMetadata* metadata)
+      bool durableProgress, bool overwrite, const RunMetadata* metadata,
+      bool approximateBoundaryInjection)
   {
     if (isOpen_) throw std::runtime_error("Energy ledger is already open");
     if (filename.empty())
@@ -239,12 +250,18 @@ namespace aprl
         writeUnsignedScalar(committedDataset_, 0);
         writeByteScalar(completeDataset_, 0);
 
-        writeIntAttribute(group_, "format_version", 1);
+        writeIntAttribute(group_, "format_version", 2);
         writeIntAttribute(group_, "mpi_size", mpiSize);
         writeStringAttribute(group_, "frame", "boosted computational frame");
         writeStringAttribute(group_, "face_order", "x-,x+,y-,y+,z-,z+");
         writeStringAttribute(group_, "balance_equation",
-          "delta(active_kinetic+removed_kinetic+interior_field)+outward_field-prescribed_work=residual");
+          approximateBoundaryInjection ?
+            "delta(all_kinetic+interior_field)+outward_field-prescribed_work-boundary_source_work=approximate_residual" :
+            "delta(active_kinetic+removed_kinetic+interior_field)+outward_field-prescribed_work=residual");
+        writeStringAttribute(group_, "boundary_source_work_model",
+          approximateBoundaryInjection ?
+            "negative charge times in-aperture entry displacement dotted with old/new grid E midpoint average; approximate, not a Gauss-law closure" :
+            "disabled");
         writeStringAttribute(group_, "field_surface",
           "first interior cell-centre layer next to CPML; grid outer layer for PEC");
         writeStringAttribute(group_, "staggering_note",
@@ -285,7 +302,8 @@ namespace aprl
       record.particleKineticActive, record.particleTotalActive,
       record.particleKineticRemoved, record.particleTotalRemoved,
       record.fieldEnergyInterior, record.outwardFieldEnergy,
-      record.prescribedWork, record.balanceResidual,
+      record.prescribedWork, record.boundarySourceWork,
+      record.balanceResidualRaw, record.balanceResidual,
       record.relativeBalanceExchange, record.relativeBalanceInitial,
       record.fieldFractionKinetic, record.fieldFractionIncludingRest,
       record.meanGammaLab, record.sigmaGammaLab,

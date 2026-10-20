@@ -31,6 +31,11 @@ charge-continuity/Gauss-law closure for the whole original bunch. This is a
 finite-window approximation, **not** a validated open-boundary PIC injection
 condition: perform transverse-aperture, CPML-distance and initial-field scans,
 and treat energy-ledger closure and absolute radiation amplitudes cautiously.
+When the energy ledger is enabled it reports the raw energy residual, an
+independent approximate work source from the in-aperture part of incoming
+particle current, and the remaining corrected residual. All particles stay in
+the kinetic-energy total. `closure_valid` remains false in this mode; see
+[runtime energy accounting](ENERGY_LEDGER.md).
 The mode is useful only when omitted external particles are intended to become
 physical particles upon re-entry; it cannot recover their prior collective
 fields or electromagnetic history.

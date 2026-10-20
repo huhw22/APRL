@@ -518,7 +518,8 @@ namespace
       record.particleKineticActive, record.particleTotalActive,
       record.particleKineticRemoved, record.particleTotalRemoved,
       record.fieldEnergyInterior, record.outwardFieldEnergy,
-      record.prescribedWork, record.balanceResidual,
+      record.prescribedWork, record.boundarySourceWork,
+      record.balanceResidualRaw, record.balanceResidual,
       record.relativeBalanceExchange, record.relativeBalanceInitial,
       record.fieldFractionKinetic, record.fieldFractionIncludingRest,
       record.meanGammaLab, record.sigmaGammaLab,
@@ -572,6 +573,11 @@ namespace
           "Energy ledger contains non-finite data");
         require(records[sample].closureValid == 1,
           "K=0 ledger unexpectedly invalidated closure");
+        require(records[sample].boundaryInjectionEntries == 0 &&
+                records[sample].boundarySourceWork == 0.0 &&
+                records[sample].balanceResidualRaw ==
+                  records[sample].balanceResidual,
+          "Default energy ledger unexpectedly contains boundary source work");
         if (sample > 0)
           require(records[sample].step > records[sample - 1].step &&
             records[sample].timeBox > records[sample - 1].timeBox,
@@ -588,6 +594,73 @@ namespace
     std::cout << "energy ledger: samples=" << committed
               << ", max |relative balance/initial|="
               << maximumRelativeInitial << '\n';
+    return EXIT_SUCCESS;
+  }
+
+  aprl::EnergyLedgerRecord readFinalLedger(const std::string& filename)
+  {
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    requireHandle(file, "Cannot open energy ledger: " + filename);
+    hid_t group = H5Gopen2(file, "/energy_ledger", H5P_DEFAULT);
+    requireHandle(group, "Cannot open energy-ledger group: " + filename);
+    require(readByteScalar(group, "complete") == 1,
+      "Boundary-injection ledger is incomplete");
+    const std::uint64_t committed =
+      readUnsignedScalar(group, "committed_records");
+    require(committed > 1, "Boundary-injection ledger lacks step records");
+    hid_t dataset = H5Dopen2(group, "records", H5P_DEFAULT);
+    requireHandle(dataset, "Cannot open energy-ledger records");
+    std::vector<aprl::EnergyLedgerRecord> records(
+      static_cast<std::size_t>(committed));
+    hid_t memoryType = aprl::EnergyLedgerWriter::createMemoryRecordType();
+    requireStatus(H5Dread(dataset, memoryType, H5S_ALL, H5S_ALL,
+      H5P_DEFAULT, records.data()),
+      "Cannot read boundary-injection energy ledger");
+    H5Tclose(memoryType);
+    H5Dclose(dataset);
+    H5Gclose(group);
+    H5Fclose(file);
+    require(records.front().boundaryInjectionEntries == 0,
+      "Boundary injection was counted before the first field step");
+    require(finiteLedger(records.back()),
+      "Boundary-injection ledger contains non-finite data");
+    return records.back();
+  }
+
+  int checkBoundaryLedger(const std::string& oneRank,
+                          const std::string& twoRank)
+  {
+    const aprl::EnergyLedgerRecord one = readFinalLedger(oneRank);
+    const aprl::EnergyLedgerRecord two = readFinalLedger(twoRank);
+    const double values[] = {
+      one.boundarySourceWork, one.balanceResidualRaw,
+      one.balanceResidual
+    };
+    double scale = 1.0e-30;
+    for (double value : values)
+      scale = std::max(scale, std::abs(value));
+    require(one.closureValid == 0 && two.closureValid == 0,
+      "Approximate boundary injection must invalidate exact closure");
+    require(one.boundaryInjectionEntries == 1 &&
+            two.boundaryInjectionEntries == 1,
+      "Expected exactly one injected entry in both MPI layouts");
+    require(std::abs(one.boundarySourceWork) > 1.0e-30,
+      "Boundary source work was not measured");
+    require(std::abs(one.balanceResidual) > 1.0e-30,
+      "Boundary correction unexpectedly forced the residual to zero");
+    require(std::abs(one.balanceResidualRaw -
+                     one.boundarySourceWork -
+                     one.balanceResidual) <= 1.0e-10 * scale,
+      "Corrected boundary ledger does not match its separate source term");
+    require(std::abs(one.boundarySourceWork - two.boundarySourceWork) <=
+              1.0e-8 * scale &&
+            std::abs(one.balanceResidual - two.balanceResidual) <=
+              1.0e-8 * scale,
+      "Boundary-source energy depends on the MPI z-slab count");
+    std::cout << "boundary ledger: source_J="
+              << one.boundarySourceWork
+              << " raw_residual_J=" << one.balanceResidualRaw
+              << " corrected_residual_J=" << one.balanceResidual << '\n';
     return EXIT_SUCCESS;
   }
 }
@@ -619,6 +692,12 @@ int main(int argc, char** argv)
         {
           require(argc == 3, "ledger needs ENERGY_LEDGER_H5");
           return checkLedger(argv[2]);
+        }
+      if (command == "boundary-ledger")
+        {
+          require(argc == 4,
+            "boundary-ledger needs ONE_RANK_H5 TWO_RANK_H5");
+          return checkBoundaryLedger(argv[2], argv[3]);
         }
       if (command == "postprocess")
         {

@@ -52,6 +52,47 @@ energy sampling and the half-step Yee B field do not form an exact algebraic
 energy-conserving discretization. The residual must converge when the mesh,
 macro-particle count, initial-field padding and device sampling are refined.
 
+## Approximate transverse boundary-injection accounting
+
+With `mesh.ballistic_outside_transverse: true`, the ledger **still includes
+every particle's boosted-frame kinetic energy**, including particles outside
+the physical field aperture. It does not add particle kinetic energy a second
+time when a particle enters. The original quantity is preserved as
+`balance_residual_raw_J`:
+
+```text
+R_raw = delta(K_all + U_interior) + E_field_out - W_prescribed.
+```
+
+For each entering trajectory, the code records only its clipped, in-aperture
+segment. After the Maxwell electric update it independently estimates the work
+done on the grid by that boundary current using the midpoint electric field
+averaged between the old and new electric time levels:
+
+```text
+W_boundary ≈ -sum_entries q * delta_x_inside · (E_old + E_new)/2.
+R_approx = R_raw - W_boundary.
+```
+
+The cumulative `W_boundary` is `boundary_source_work_J`; `R_approx` is the
+existing `balance_residual_J`. `boundary_injection_entries` is a cumulative
+crossing count, not a count of distinct particles. This independent work
+estimate is not set equal to the raw residual, so unexplained field-energy
+growth remains visible. In this mode `closure_valid=0` always: the omitted
+external near field, charge appearing at the artificial boundary, and the
+one-step free-drift approximation are not an exact Gauss- or energy-conserving
+open boundary. Compare **both** residuals and the source term against field
+energy growth, and repeat with a wider transverse aperture. A large corrected
+residual or strong aperture dependence is evidence against interpreting the
+field growth as physical radiation. The final warning threshold uses
+`abs(relative_balance_exchange)` in this mode; normalization by the entire
+initial bunch kinetic energy can hide a large error in the much smaller field
+energy exchange. When enabled, one compact temporary entry-work sample is
+stored per entering segment until that Maxwell step finishes; the resource
+estimate includes the conservative worst case of one sample per local particle.
+For the clearest audit use `mesh.current_filter: none`; filtering the deposited
+current makes this trajectory-based source-work estimate less direct.
+
 ## Configuration and cost
 
 ```yaml
@@ -77,15 +118,17 @@ work diagnostic, MPI reduction, buffer or output file exists. When enabled:
 - interactive shutdown commits and closes a readable file with `complete=0`;
 - a normal configured stop closes it with `complete=1`.
 
-The default `warning_relative_tolerance` is 0.01. Shutdown emits a warning when
-`abs(relative_balance_initial)` exceeds it, but it does not discard an
-expensive run. The warning recommends grid/time-step, macro-particle and
+The default `warning_relative_tolerance` is 0.01. Normally shutdown emits a
+warning when `abs(relative_balance_initial)` exceeds it; approximate boundary
+injection uses `abs(relative_balance_exchange)` instead. Neither warning
+discards an expensive run. The warning recommends grid/time-step, macro-particle and
 initial-field-padding convergence. `closure_valid=1` means that all source
 categories needed by this equation are represented; it does **not** mean that
 the numerical residual passed the warning threshold. Incident TF/SF waves
 make it zero because their boundary work is not yet in the ledger. It also
 becomes zero after experimental particle retirement begins, since that taper
-is not charge-continuous.
+is not charge-continuous. It is also zero for approximate transverse boundary
+injection, even though the separate boundary-current work estimate is provided.
 
 ## HDF5 contract and report tool
 
@@ -100,6 +143,8 @@ completion. Each record contains:
 - cumulative outward field energy, total and in face order
   `x-,x+,y-,y+,z-,z+`;
 - cumulative prescribed-source work and both residual normalizations;
+- cumulative approximate boundary-current source work, raw residual before
+  that correction, and cumulative boundary-entry count (format version 2);
 - field fractions relative to kinetic-plus-field energy and to particle total
   energy including rest energy;
 - weighted laboratory and boosted gamma moments;

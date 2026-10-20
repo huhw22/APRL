@@ -32,3 +32,10 @@ beam:
 sources: {incident_waves: [], magnetic_elements: []}
 stop: {mode: reference-center-z, z: 10.0}
 trajectory: {enabled: false}
+energy_ledger:
+  enabled: true
+  directory: ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 5
+  buffer_records: 16
+  compression: 0

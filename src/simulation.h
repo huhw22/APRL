@@ -41,6 +41,13 @@ namespace aprl
       std::size_t cells;
     };
 
+    struct BoundaryInjectionWorkSample
+    {
+      FieldVector<Double> midpoint;
+      FieldVector<Double> chargeDisplacement;
+      Double oldElectricDot;
+    };
+
     void initialize();
     void preflightOutputPaths() const;
     void initializeGeometry();
@@ -58,6 +65,7 @@ namespace aprl
     void initializeDetectorOutput();
     void initializeEnergyLedger();
     void advanceEnergyLedgerStep();
+    void finalizeBoundaryInjectionWorkStep();
     void sampleEnergyLedger(bool force = false,
                             bool guardFinalCollectives = false);
     void finalizeEnergyLedger(bool completed);
@@ -124,6 +132,7 @@ namespace aprl
     long double energyLedgerPreviousPower_[6];
     long double energyLedgerOutwardEnergy_[6];
     long double energyLedgerPrescribedWork_;
+    long double energyLedgerBoundarySourceWork_;
     long double energyLedgerRemovedKinetic_;
     long double energyLedgerRemovedTotal_;
     long double energyLedgerInitialKinetic_;
@@ -143,6 +152,7 @@ namespace aprl
     std::uint64_t modeledLocalPeakBytes_;
     unsigned long long lostParticles_;
     unsigned long long ballisticBoundaryEntries_;
+    std::vector<BoundaryInjectionWorkSample> boundaryInjectionWorkSamples_;
     unsigned long long cpmlEntryCount_[6];
     Double cpmlEntryCharge_[6];
     unsigned long long directOuterCount_[6];

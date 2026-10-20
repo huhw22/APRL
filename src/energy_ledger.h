@@ -19,6 +19,7 @@ namespace aprl
     std::uint64_t step;
     std::uint64_t activeMacroparticles;
     std::uint64_t removedMacroparticles;
+    std::uint64_t boundaryInjectionEntries;
     std::uint8_t closureValid;
 
     double timeBox;
@@ -31,6 +32,8 @@ namespace aprl
     double outwardFieldEnergyFace[6];
     double outwardFieldEnergy;
     double prescribedWork;
+    double boundarySourceWork;
+    double balanceResidualRaw;
     double balanceResidual;
     double relativeBalanceExchange;
     double relativeBalanceInitial;
@@ -64,7 +67,8 @@ namespace aprl
     void open(const std::string& filename, int mpiSize,
               std::size_t bufferRecords, unsigned int compressionLevel,
               bool durableProgress, bool overwrite = false,
-              const RunMetadata* metadata = NULL);
+              const RunMetadata* metadata = NULL,
+              bool approximateBoundaryInjection = false);
     void append(const EnergyLedgerRecord& record);
     void flush();
     void close(bool completed = false);
