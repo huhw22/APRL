@@ -154,7 +154,8 @@ namespace aprl
       const YAML::Node initial = root["initial_self_field"];
       if (initial)
         validateMapKeys(initial, "initial_self_field", {
-          "enabled", "model", "relative_tolerance", "maximum_iterations"
+          "enabled", "model", "relative_tolerance", "maximum_iterations",
+          "maximum_mean_transverse_beta"
         });
 
       const YAML::Node beam = root["beam"];
@@ -640,7 +641,7 @@ namespace aprl
 
   InitialSelfFieldConfig::InitialSelfFieldConfig()
     : enabled(true), model(InitialSelfFieldModel::RelativisticPoisson),
-      relativeTolerance(1.0e-10),
+      relativeTolerance(1.0e-10), maximumMeanTransverseBeta(1.0e-8),
       maximumIterations(10000)
   {}
 
@@ -1059,6 +1060,10 @@ namespace aprl
           result.initialSelfField.relativeTolerance = finiteDouble(
             initialSelfField["relative_tolerance"],
             "initial self-field relative_tolerance");
+        if (initialSelfField["maximum_mean_transverse_beta"])
+          result.initialSelfField.maximumMeanTransverseBeta = finiteDouble(
+            initialSelfField["maximum_mean_transverse_beta"],
+            "initial self-field maximum_mean_transverse_beta");
         if (initialSelfField["maximum_iterations"])
           result.initialSelfField.maximumIterations = positiveSize(
             initialSelfField["maximum_iterations"],
@@ -1067,6 +1072,10 @@ namespace aprl
             !(result.initialSelfField.relativeTolerance < 1.0))
           throw configError(initialSelfField["relative_tolerance"],
             "initial self-field relative_tolerance must lie between zero and one");
+        if (!(result.initialSelfField.maximumMeanTransverseBeta >= 0.0) ||
+            !(result.initialSelfField.maximumMeanTransverseBeta < 1.0))
+          throw configError(initialSelfField["maximum_mean_transverse_beta"],
+            "initial self-field maximum_mean_transverse_beta must lie in [0, 1)");
       }
 
     const YAML::Node beam = required(root, "beam");

@@ -48,6 +48,7 @@ namespace aprl
         const FieldVector<Double>& localOriginSI,
         const std::vector<RelativisticParticleSI>& particles,
         InitialSelfFieldModel model,
+        Double maximumMeanTransverseBeta,
         const std::size_t staticFieldGuardCells[3],
         Double relativeTolerance,
         std::size_t maximumIterations,

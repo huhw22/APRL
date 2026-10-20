@@ -182,6 +182,13 @@ namespace aprl
                    << config.runtime.shutdownWatchdogFinalizeTimeoutSeconds
                    << "\n"
                    << std::setprecision(17)
+                   << "resolved_initial_self_field:\n"
+                   << "  enabled: "
+                   << (config.initialSelfField.enabled ? "true" : "false")
+                   << "\n"
+                   << "  maximum_mean_transverse_beta: "
+                   << config.initialSelfField.maximumMeanTransverseBeta
+                   << "\n"
                    << "resolved_mesh:\n"
                    << "  cells: [" << config.mesh.cells[0] << ", "
                    << config.mesh.cells[1] << ", "

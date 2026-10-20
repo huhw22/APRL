@@ -332,6 +332,11 @@ namespace
       "Run manifest does not contain the detector run_id");
     require(manifestText.find("configuration_yaml: |") != std::string::npos,
       "Run manifest does not preserve the input YAML");
+    require(manifestText.find("resolved_initial_self_field:\n") !=
+              std::string::npos &&
+            manifestText.find("  maximum_mean_transverse_beta: 1e-08\n") !=
+              std::string::npos,
+      "Run manifest does not preserve the resolved transverse-beta limit");
     std::cout << "detector: samples=" << committed
               << ", particle crossings=" << particles.size() << '\n';
     return EXIT_SUCCESS;

@@ -35,10 +35,13 @@ initial_self_field:
   enabled: true
   model: relativistic-poisson
   relative_tolerance: 1.0e-10
+  maximum_mean_transverse_beta: 1.0e-8
   maximum_iterations: 10000
 ```
 
 该块可省略，默认即为以上值。旧对照模型使用 `model: electrostatic-poisson`。启用求解是硬预检查：不收敛或后检查失败会给出修正建议并终止。只有受控零场/回归比较才应关闭，并会打印醒目警告。
+
+`maximum_mean_transverse_beta` 控制 boost 后计算系内按代表质量加权的平均横向 `|β|` 上限，默认仍为 `1e-8`。放宽它不会旋转刚性束初场，也不会改变电荷沉积；比较不同工况时应记录并说明所用上限。
 
 ## 物理范围
 

@@ -1,0 +1,29 @@
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput}
+output: {overwrite: true, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  cells: [8, 8, 16]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 1.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 1
+boundary: {type: pec}
+initial_self_field:
+  enabled: true
+  model: relativistic-poisson
+  maximum_mean_transverse_beta: 1.0e-7
+beam:
+  reference: {initial_center_z: 0.0}
+  input:
+    type: generated-gaussian
+    electrons: 1.0
+    macroparticles: 1
+    gamma: 4.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.0]
+    sigma_position: [0.0, 0.0, 0.0]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+sources: {incident_waves: [], magnetic_elements: []}
+stop: {mode: reference-center-z, z: 0.5}

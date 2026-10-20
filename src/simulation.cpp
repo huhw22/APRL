@@ -756,6 +756,7 @@ namespace aprl
       EBGaussFieldInitializer::initialize(
         *fields_, globalGeometry_, localZOffset_, localOriginBox_, particles_,
         config_.initialSelfField.model,
+        config_.initialSelfField.maximumMeanTransverseBeta,
         staticFieldGuardCells,
         config_.initialSelfField.relativeTolerance,
         config_.initialSelfField.maximumIterations, communicator_);
@@ -776,7 +777,10 @@ namespace aprl
           << report.maximumGaussResidual << " V/m^2, total charge="
           << report.totalCharge << " C, mean beta_box_z="
           << report.meanBetaZ << ", mean beta_box_transverse="
-          << report.meanBetaTransverse << ", initial electric energy="
+          << report.meanBetaTransverse
+          << ", maximum mean beta_box_transverse="
+          << config_.initialSelfField.maximumMeanTransverseBeta
+          << ", initial electric energy="
           << report.initialElectricEnergy << " J, initial magnetic energy="
           << report.initialMagneticEnergy
           << " J, static zero-potential guard cells=("

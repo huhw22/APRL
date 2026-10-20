@@ -96,6 +96,7 @@ namespace aprl
     bool enabled;
     InitialSelfFieldModel model;
     Double relativeTolerance;
+    Double maximumMeanTransverseBeta;
     std::size_t maximumIterations;
 
     InitialSelfFieldConfig();

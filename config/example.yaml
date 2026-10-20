@@ -60,6 +60,7 @@ initial_self_field:
   enabled: true
   model: relativistic-poisson
   relative_tolerance: 1.0e-10
+  maximum_mean_transverse_beta: 1.0e-8
   maximum_iterations: 10000
 
 beam:

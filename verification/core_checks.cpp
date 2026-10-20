@@ -20,6 +20,7 @@
 #include "eb_cpml.h"
 #include "eb_deposition.h"
 #include "eb_field.h"
+#include "eb_initial_field.h"
 #include "eb_mpi.h"
 #include "eb_particles.h"
 #include "longitudinal_mesh.h"
@@ -52,6 +53,80 @@ namespace
     if (rank == 0)
       std::cout << "shutdown_watchdog_timeout_s=600 "
                    "finalize_timeout_s=60" << std::endl;
+  }
+
+  void checkInitialFieldTransverseLimit(const std::string& validCard,
+                                        const std::string& invalidCard,
+                                        MPI_Comm communicator, int rank)
+  {
+    require(aprl::InitialSelfFieldConfig().maximumMeanTransverseBeta ==
+              1.0e-8,
+      "Initial self-field transverse limit default changed");
+    const aprl::SimulationConfig config =
+      aprl::YamlConfigLoader::loadFile(validCard);
+    require(config.initialSelfField.maximumMeanTransverseBeta == 1.0e-7,
+      "Initial self-field transverse limit was not read from YAML");
+    bool invalidRejected = false;
+    try
+      {
+        aprl::YamlConfigLoader::loadFile(invalidCard);
+      }
+    catch (const std::exception& error)
+      {
+        invalidRejected = std::string(error.what()).find(
+          "maximum_mean_transverse_beta") != std::string::npos;
+      }
+    require(invalidRejected,
+      "Negative initial self-field transverse limit was not rejected");
+
+    const aprl::EBGridGeometry geometry(
+      8, 8, 8, 0.1, 0.1, 0.1, 0.05 / aprl::SI::c);
+    aprl::EBFieldGrid fields(geometry);
+    const aprl::FieldVector<double> origin(0.0);
+    const std::size_t guards[3] = {0, 0, 0};
+    std::vector<aprl::RelativisticParticleSI> particles(1);
+    aprl::RelativisticParticleSI& particle = particles[0];
+    particle.position[0] = 0.45;
+    particle.position[1] = 0.45;
+    particle.position[2] = 0.45;
+    particle.properVelocity[0] = 7.5e-8;
+    particle.properVelocity[2] = 0.2;
+    particle.charge = -aprl::SI::elementaryCharge;
+    particle.mass = aprl::SI::electronMass;
+    particle.weight = 1.0;
+
+    bool defaultRejected = false;
+    try
+      {
+        aprl::EBGaussFieldInitializer::initialize(
+          fields, geometry, 0, origin, particles,
+          aprl::InitialSelfFieldModel::RelativisticPoisson,
+          1.0e-8, guards, 1.0e-8, 1000, communicator);
+      }
+    catch (const std::runtime_error& error)
+      {
+        const std::string message(error.what());
+        defaultRejected = message.find(
+          "maximum_mean_transverse_beta=1e-08") != std::string::npos;
+      }
+    require(defaultRejected,
+      "Default transverse limit did not reject the tilted beam");
+
+    const aprl::EBGaussInitializationReport report =
+      aprl::EBGaussFieldInitializer::initialize(
+        fields, geometry, 0, origin, particles,
+        aprl::InitialSelfFieldModel::RelativisticPoisson,
+        config.initialSelfField.maximumMeanTransverseBeta,
+        guards, 1.0e-8, 1000, communicator);
+    require(report.meanBetaTransverse > 1.0e-8 &&
+            report.meanBetaTransverse < 1.0e-7,
+      "Relaxed transverse limit did not admit the expected mean velocity");
+    if (rank == 0)
+      std::cout << std::setprecision(12)
+                << "initial_field_mean_beta_transverse="
+                << report.meanBetaTransverse
+                << " default_limit=1e-8 relaxed_limit=1e-7"
+                << std::endl;
   }
 
   void checkLongitudinalLayout(int rank)
@@ -1011,7 +1086,7 @@ int main(int argc, char** argv)
           "Usage: aprl_core_checks <lorentz-elegant|boris-phase|"
           "longitudinal-layout|charge-continuity|cowan-dispersion|"
           "current-filter|cpml-reflection|runtime-defaults|"
-          "hdf5-versions|sase-generator-file> [path]");
+          "initial-field-transverse|hdf5-versions|sase-generator-file> [path]");
       const std::string check(argv[1]);
       if (check == "lorentz-elegant")
         checkLorentzAndElegant(MPI_COMM_WORLD, rank, size);
@@ -1029,6 +1104,14 @@ int main(int argc, char** argv)
         checkCpmlReflection(rank);
       else if (check == "runtime-defaults")
         checkRuntimeDefaults(rank);
+      else if (check == "initial-field-transverse")
+        {
+          if (argc != 4)
+            throw std::invalid_argument(
+              "initial-field-transverse requires valid and invalid YAML cards");
+          checkInitialFieldTransverseLimit(
+            argv[2], argv[3], MPI_COMM_WORLD, rank);
+        }
       else if (check == "hdf5-versions")
         {
           if (argc != 3)

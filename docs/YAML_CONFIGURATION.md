@@ -359,6 +359,7 @@ initial_self_field:
   enabled: true
   model: relativistic-poisson
   relative_tolerance: 1.0e-10
+  maximum_mean_transverse_beta: 1.0e-8
   maximum_iterations: 10000
 ```
 
@@ -374,6 +375,15 @@ is checked against the same charge deposition. Non-convergence and a
 post-check residual above the configured tolerance are hard errors;
 `maximum_iterations` must be positive and `relative_tolerance` must lie
 strictly between zero and one.
+
+`maximum_mean_transverse_beta` is the largest allowed magnitude of the
+represented-mass-weighted **mean transverse velocity divided by c in the
+boosted simulation frame** for `relativistic-poisson`. It defaults to `1e-8`
+and must be finite in `[0, 1)`. This is an approximation guard, not the
+Poisson solver's `relative_tolerance` or an input-beam emittance limit. A
+small nonzero centroid tilt can be allowed explicitly, for example
+`1.0e-7`; the rigid-beam initial field still uses only the mean axial
+velocity, so the chosen limit should be justified for the physics case.
 
 With CPML, the zero-potential surface for the static solve is the **inner CPML
 surface**, and E/B inside CPML start at zero. This prevents a non-radiative

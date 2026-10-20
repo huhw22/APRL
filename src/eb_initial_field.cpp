@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <climits>
 #include <cmath>
+#include <iomanip>
 #include <limits>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 
 #include "eb_deposition.h"
@@ -517,6 +519,7 @@ namespace aprl
       const FieldVector<Double>& localOriginSI,
       const std::vector<RelativisticParticleSI>& particles,
       InitialSelfFieldModel model,
+      Double maximumMeanTransverseBeta,
       const std::size_t staticFieldGuardCells[3],
       Double relativeTolerance,
       std::size_t maximumIterations,
@@ -526,6 +529,11 @@ namespace aprl
         !std::isfinite(relativeTolerance) || maximumIterations == 0)
       throw std::invalid_argument(
         "Invalid initial Gauss-field convergence controls");
+    if (!(maximumMeanTransverseBeta >= 0.0) ||
+        !(maximumMeanTransverseBeta < 1.0) ||
+        !std::isfinite(maximumMeanTransverseBeta))
+      throw std::invalid_argument(
+        "Invalid initial self-field maximum mean transverse beta");
     const EBGridGeometry& local = fields.geometry();
     if (local.nx != globalGeometry.nx || local.ny != globalGeometry.ny ||
         localZOffset + local.nz > globalGeometry.nz)
@@ -555,11 +563,19 @@ namespace aprl
     meanVelocity(particles, communicator, meanBetaZ,
                  meanBetaTransverse);
     if (model == InitialSelfFieldModel::RelativisticPoisson &&
-        meanBetaTransverse > 1.0e-8)
-      throw std::runtime_error(
-        "relativistic-poisson initialization currently supports a common "
-        "mean velocity along the boost z axis only; rotate/recenter the "
-        "input beam or use a closer longitudinal boost frame");
+        meanBetaTransverse > maximumMeanTransverseBeta)
+      {
+        std::ostringstream message;
+        message << std::setprecision(12)
+          << "relativistic-poisson mean beta_box_transverse="
+          << meanBetaTransverse
+          << " exceeds initial_self_field.maximum_mean_transverse_beta="
+          << maximumMeanTransverseBeta
+          << "; the rigid-beam initial field assumes a mean velocity along "
+             "the boost z axis. Align/recenter the beam or explicitly "
+             "relax this approximation limit.";
+        throw std::runtime_error(message.str());
+      }
     const Double appliedBetaZ =
       model == InitialSelfFieldModel::RelativisticPoisson ?
       meanBetaZ : 0.0;

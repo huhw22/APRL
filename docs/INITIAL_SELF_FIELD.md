@@ -61,6 +61,7 @@ initial_self_field:
   enabled: true
   model: relativistic-poisson
   relative_tolerance: 1.0e-10
+  maximum_mean_transverse_beta: 1.0e-8
   maximum_iterations: 10000
 ```
 
@@ -69,6 +70,11 @@ selected with `model: electrostatic-poisson`. An enabled solve is a hard
 preflight: non-convergence or a failed post-check aborts with a correction
 suggestion. Disabling it is allowed only for controlled zero-field/regression
 comparisons and prints a prominent warning.
+
+`maximum_mean_transverse_beta` controls the represented-mass-weighted mean
+transverse `|beta|` guard in the boosted frame. The default remains `1e-8`;
+setting a larger value does not rotate the rigid-beam initial field or change
+the deposited charge. Record and justify any relaxation when comparing runs.
 
 ## Physical scope
 

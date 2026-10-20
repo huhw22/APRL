@@ -119,6 +119,11 @@ aprl_required_test(required.longitudinal-layout
 aprl_required_test(required.runtime.defaults
   $<TARGET_FILE:aprl_core_checks> runtime-defaults)
 
+aprl_required_test(required.initial-field.transverse-limit
+  $<TARGET_FILE:aprl_core_checks> initial-field-transverse
+  "${APRL_VERIFY_CARDS}/initial-field-transverse.yaml"
+  "${APRL_VERIFY_CARDS}/initial-field-transverse-invalid.yaml")
+
 aprl_required_test(required.charge-continuity
   $<TARGET_FILE:aprl_core_checks> charge-continuity)
 
