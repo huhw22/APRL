@@ -275,7 +275,9 @@ set_tests_properties(required.ballistic-boundary-injection-two-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ballistic-injection-two"
   PASS_REGULAR_EXPRESSION "physical-aperture entries=[1-9]")
 
-aprl_required_test(required.ballistic-boundary-ledger
+# This check itself is serial, but its inputs are produced by the one- and
+# two-rank MPI tests.  Exclude it from verify_required_no_mpi as a unit.
+aprl_required_mpi_test(required.ballistic-boundary-ledger
   $<TARGET_FILE:aprl_output_checks> boundary-ledger
   "${APRL_VERIFY_WORK}/ballistic-injection/ledger/energy-ledger.h5"
   "${APRL_VERIFY_WORK}/ballistic-injection-two/ledger/energy-ledger.h5")
