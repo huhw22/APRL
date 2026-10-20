@@ -44,6 +44,12 @@ require that boundary source are outside the validated scope.
 - The inner CPML surface is the physical particle boundary. Escaping physical
   trajectories terminate there; compact output-free carriers preserve current
   continuity through the absorbing layer.
+- Experimental `mesh.ballistic_outside_transverse: true` retains particles
+  outside the transverse aperture as field-free ballistic particles and
+  injects their clipped current trajectories on re-entry. The initial Poisson
+  source includes only particles at least one cell inside the physical region.
+  This finite-window approximation does not guarantee global Gauss/energy
+  closure; see [boundary-injection limits](docs/PARTICLE_OPEN_BOUNDARY.md).
 
 ## Radiation workflow
 

@@ -51,6 +51,9 @@ namespace aprl
     unsigned int maximumParticleSubsteps;
     EBMaxwellSolver fieldSolver;
     EBCurrentFilter currentFilter;
+    /* Experimental finite-window boundary injection: particles outside the
+     * transverse physical region remain ballistic until they enter it. */
+    bool ballisticOutsideTransverse;
     LongitudinalMeshConfig longitudinal;
 
     MeshConfig();

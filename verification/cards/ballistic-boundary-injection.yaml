@@ -1,0 +1,34 @@
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output: {overwrite: true, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  cells: [20, 20, 200]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 30.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 1
+  ballistic_outside_transverse: true
+boundary:
+  type: cpml
+  cells: [4, 4, 4]
+  polynomial_order: 3.0
+  target_reflection: 1.0e-8
+  kappa_max: 8.0
+  alpha_fraction: 0.0
+initial_self_field: {enabled: true, model: electrostatic-poisson}
+beam:
+  reference: {initial_center_z: -0.5}
+  input:
+    type: generated-gaussian
+    electrons: 1.0
+    macroparticles: 1
+    gamma: 4.0
+    direction: [-0.8, 0.0, 0.6]
+    center: [5.0, 0.0, 0.0]
+    sigma_position: [0.0, 0.0, 0.0]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+sources: {incident_waves: [], magnetic_elements: []}
+stop: {mode: reference-center-z, z: 10.0}
+trajectory: {enabled: false}

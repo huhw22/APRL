@@ -1,5 +1,40 @@
 # CPML-aware particle boundary
 
+## Experimental transverse boundary injection
+
+The default policy below remains unchanged. For a Lorentz-synchronized bunch
+whose transverse extent is much larger at boosted time zero than at the lab
+input plane, an explicit opt-in mode is available:
+
+```yaml
+mesh:
+  ballistic_outside_transverse: true
+```
+
+This requires at least two CPML cells in both x and y and is incompatible with
+particle retirement. The reconstructed common-time lab snapshot is checked
+against the transverse physical aperture with a warning only. The boosted
+snapshot may extend arbitrarily far beyond x/y CPML and the outer mesh; z must
+still initially fit the physical region. Every particle remains in the MPI
+particle list. While outside the physical aperture it advances at its frozen
+velocity without grid or prescribed device fields. On entry, only the segment
+inside the physical aperture is deposited as Maxwell current, and subsequent
+in-aperture steps use the regular Boris pusher. Crossing an MPI z-slab preserves
+the same orbit and clipped current path. The final report gives entry crossings
+and the number still outside, not unique-particle entry counts.
+
+The initial Poisson solve includes only particles at least one full cell inside
+all physical faces, ensuring their CIC clouds do not touch the static boundary.
+If none qualify, E/B starts from zero. External charge is not represented by
+the initial field, and boundary-entry current does not provide an exact
+charge-continuity/Gauss-law closure for the whole original bunch. This is a
+finite-window approximation, **not** a validated open-boundary PIC injection
+condition: perform transverse-aperture, CPML-distance and initial-field scans,
+and treat energy-ledger closure and absolute radiation amplitudes cautiously.
+The mode is useful only when omitted external particles are intended to become
+physical particles upon re-entry; it cannot recover their prior collective
+fields or electromagnetic history.
+
 ## Purpose
 
 The inner CPML surface is the end of the physical particle domain. A particle

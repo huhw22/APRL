@@ -201,7 +201,10 @@ namespace aprl
                    << config.mesh.extent[2] << "]\n"
                    << "  center_m: [" << config.mesh.center[0] << ", "
                    << config.mesh.center[1] << ", "
-                   << config.mesh.center[2] << "]\n";
+                   << config.mesh.center[2] << "]\n"
+                   << "  ballistic_outside_transverse: "
+                   << (config.mesh.ballisticOutsideTransverse ?
+                       "true" : "false") << "\n";
             if (longitudinalLayout)
               {
                 const LongitudinalLayout& layout =

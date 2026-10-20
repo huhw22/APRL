@@ -124,7 +124,7 @@ namespace aprl
             "field_solver", "current_filter", "cells", "cell_size", "center",
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
-            "resolution"
+            "resolution", "ballistic_outside_transverse"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
           if (longitudinal)
@@ -623,7 +623,8 @@ namespace aprl
       boostGamma(1.0), particleStepsPerUndulatorPeriod(1024),
       maximumParticleSubsteps(4096),
       fieldSolver(EBMaxwellSolver::CowanZ),
-      currentFilter(EBCurrentFilter::None)
+      currentFilter(EBCurrentFilter::None),
+      ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
   }
@@ -858,6 +859,9 @@ namespace aprl
         "mesh.cells and physical mesh.cell_size instead");
     const bool automaticLongitudinal =
       meshCells(required(mesh, "cells"), result.mesh.cells);
+    if (mesh["ballistic_outside_transverse"])
+      result.mesh.ballisticOutsideTransverse =
+        mesh["ballistic_outside_transverse"].as<bool>();
     const YAML::Node longitudinal = mesh["longitudinal"];
     if (automaticLongitudinal)
       {
@@ -1559,6 +1563,18 @@ namespace aprl
         "boost_gamma must be at least one");
     if (!(result.mesh.duration > 0.0))
       throw configError(mesh["duration"], "duration must be positive");
+    if (result.mesh.ballisticOutsideTransverse &&
+        result.particleRetirement.enabled)
+      throw configError(mesh["ballistic_outside_transverse"],
+        "ballistic transverse boundary injection is incompatible with "
+        "particle retirement");
+    if (result.mesh.ballisticOutsideTransverse &&
+        (result.boundary.type != EBBoundaryType::Cpml ||
+         result.boundary.cpml.cells[0] < 2 ||
+         result.boundary.cpml.cells[1] < 2))
+      throw configError(mesh["ballistic_outside_transverse"],
+        "ballistic transverse boundary injection requires at least two "
+        "CPML cells on both x and y");
     if (result.mesh.longitudinal.automatic())
       {
         if (result.boundary.type != EBBoundaryType::Cpml ||

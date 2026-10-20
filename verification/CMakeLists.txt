@@ -25,7 +25,8 @@ foreach(directory
     smoke teardown detector mpi-one mpi-two ledger invalid-key invalid-stop
     invalid-watchdog
     physics-k0 physics-signal hdf5 sase auto-z-one auto-z-two
-    auto-z-reference)
+    auto-z-reference ballistic-injection ballistic-injection-two
+    ballistic-injection-mixed)
   file(MAKE_DIRECTORY "${APRL_VERIFY_WORK}/${directory}")
 endforeach()
 file(MAKE_DIRECTORY
@@ -255,6 +256,33 @@ aprl_required_mpi_test(required.mpi.one-rank
   "${APRL_VERIFY_CARDS}/mpi-consistency.yaml" ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.mpi.one-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/mpi-one")
+
+aprl_required_mpi_test(required.ballistic-boundary-injection
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/ballistic-boundary-injection.yaml"
+  ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.ballistic-boundary-injection PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ballistic-injection"
+  PASS_REGULAR_EXPRESSION "physical-aperture entries=[1-9]")
+
+aprl_required_mpi_test(required.ballistic-boundary-injection-two-rank
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/ballistic-boundary-injection.yaml"
+  ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.ballistic-boundary-injection-two-rank PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ballistic-injection-two"
+  PASS_REGULAR_EXPRESSION "physical-aperture entries=[1-9]")
+
+aprl_required_mpi_test(required.ballistic-boundary-mixed-poisson
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/ballistic-boundary-mixed.yaml"
+  ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.ballistic-boundary-mixed-poisson PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ballistic-injection-mixed"
+  PASS_REGULAR_EXPRESSION "Boundary-injection initial Poisson source: [1-9]")
 
 aprl_required_mpi_test(required.mpi.two-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2

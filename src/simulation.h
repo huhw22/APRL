@@ -142,6 +142,7 @@ namespace aprl
     std::size_t estimatedMaximumSteps_;
     std::uint64_t modeledLocalPeakBytes_;
     unsigned long long lostParticles_;
+    unsigned long long ballisticBoundaryEntries_;
     unsigned long long cpmlEntryCount_[6];
     Double cpmlEntryCharge_[6];
     unsigned long long directOuterCount_[6];

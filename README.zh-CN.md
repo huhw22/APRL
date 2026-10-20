@@ -36,6 +36,10 @@ seeded-FEL 与 laser-modulation 计算不属于已验证范围。
   计数。
 - CPML 内表面同时是物理粒子边界。物理轨迹在该处终止，轻量且不输出的载流子
   在吸收层内完成连续电流衰减。
+- 实验选项 `mesh.ballistic_outside_transverse: true` 保留横向物理区外的粒子，
+  使其无场漂移，并在入框后沉积裁剪后的电流轨迹。初始 Poisson 自场仅包含距离
+  物理边界至少一个网格单元的粒子。这是有限窗口近似，不保证全局 Gauss 约束或
+  能量闭合；详见[边界注入限制](docs/PARTICLE_OPEN_BOUNDARY.md)。
 
 ## 辐射计算流程
 

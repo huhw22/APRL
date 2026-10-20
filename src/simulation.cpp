@@ -34,6 +34,37 @@ namespace aprl
     const int RETIREMENT_LOWER_DATA = 721;
     const Double PLANCK_EV_SECOND = 4.135667696e-15;
 
+    /* Clip one straight Maxwell-step orbit to the transverse field aperture.
+     * The omitted part is a field-free external particle; its first in-box
+     * segment is a prescribed boundary source, not a periodic image. */
+    bool clipPhysicalSegment(
+        const FieldVector<Double>& start,
+        const FieldVector<Double>& end,
+        const ParticleCPMLRegion& region,
+        Double& first, Double& last)
+    {
+      first = 0.0;
+      last = 1.0;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          const Double low = region.physicalLower(axis);
+          const Double high = region.physicalUpper(axis);
+          const Double delta = end[axis] - start[axis];
+          if (delta == 0.0)
+            {
+              if (start[axis] < low || start[axis] > high) return false;
+              continue;
+            }
+          Double a = (low - start[axis]) / delta;
+          Double b = (high - start[axis]) / delta;
+          if (a > b) std::swap(a, b);
+          first = std::max(first, a);
+          last = std::min(last, b);
+          if (!(last > first)) return false;
+        }
+      return last > first;
+    }
+
     struct ParticlePacket
     {
       Double position[3];
@@ -191,6 +222,7 @@ namespace aprl
       configuredStopReached_(false), loopWallStart_(0.0),
       estimatedStepSeconds_(0.0), estimatedMaximumSteps_(0),
       modeledLocalPeakBytes_(0), lostParticles_(0),
+      ballisticBoundaryEntries_(0),
       retirementEntryCount_(0), retirementEntryCharge_(0.0),
       retirementExitCount_(0), retirementExitResidualCharge_(0.0),
       peakRetirementCarriers_(0), stopReason_()
@@ -485,9 +517,20 @@ namespace aprl
         else
           logRoot(communicator_,
             "Boundary: PEC regression mode; no absorbing-layer state allocated.");
-        logRoot(communicator_,
-          "Outer particle fallback: charge-conserving open absorption remains active on non-CPML faces and for residual carrier cleanup; production mode retains only face totals.");
-        if (particleCPML_->enabled())
+        if (config_.mesh.ballisticOutsideTransverse)
+          logRoot(communicator_,
+            "EXPERIMENTAL boundary injection: particles outside the physical "
+            "aperture are retained and drift without grid or prescribed "
+            "fields, including through CPML/outside the box; trajectories "
+            "are current-deposited only on clipped in-aperture segments. "
+            "Incoming charge is an approximate boundary source, so global "
+            "Gauss/energy closure is not guaranteed; compare aperture and "
+            "initialization scans before interpreting radiation.");
+        else
+          logRoot(communicator_,
+            "Outer particle fallback: charge-conserving open absorption remains active on non-CPML faces and for residual carrier cleanup; production mode retains only face totals.");
+        if (particleCPML_->enabled() &&
+            !config_.mesh.ballisticOutsideTransverse)
           logRoot(communicator_,
             "CPML particle policy: physical trajectories and detector participation end at the inner CPML surface; lightweight ballistic carriers continue with per-particle conductivity-matched current damping and no diagnostic output.");
         if (config_.particleRetirement.enabled)
@@ -748,13 +791,60 @@ namespace aprl
   void Simulation::initializeParticleSelfField()
   {
     if (!config_.initialSelfField.enabled) return;
+    std::vector<RelativisticParticleSI> initialFieldParticles;
+    const std::vector<RelativisticParticleSI>* initialSource = &particles_;
+    if (config_.mesh.ballisticOutsideTransverse)
+      {
+        /* CIC must be one complete cell clear of the zero-potential
+         * boundary.  Particles beyond that aperture are explicit external
+         * sources and are not silently projected onto the field grid. */
+        const Double spacing[3] = {
+          globalGeometry_.dx, globalGeometry_.dy, globalGeometry_.dz
+        };
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            bool safe = true;
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              safe = safe &&
+                particles_[index].position[axis] >
+                  particleCPML_->physicalLower(axis) + spacing[axis] &&
+                particles_[index].position[axis] <
+                  particleCPML_->physicalUpper(axis) - spacing[axis];
+            if (safe) initialFieldParticles.push_back(particles_[index]);
+          }
+        const unsigned long long localIncluded =
+          static_cast<unsigned long long>(initialFieldParticles.size());
+        unsigned long long globalIncluded = 0;
+        MPI_Allreduce(&localIncluded, &globalIncluded, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+        if (rank_ == 0)
+          {
+            std::ostringstream message;
+            message << "Boundary-injection initial Poisson source: "
+                    << globalIncluded << " particles at least one complete "
+                       "cell inside the physical aperture. All other "
+                       "particles are omitted from the initial field.";
+            logRoot(communicator_, message.str());
+          }
+        if (globalIncluded == 0)
+          {
+            if (rank_ == 0)
+              logRoot(communicator_,
+                "WARNING: no particles qualify for the initial Poisson "
+                "source; the self-field starts at zero and subsequent "
+                "boundary injection is approximate.");
+            return;
+          }
+        initialSource = &initialFieldParticles;
+      }
     std::size_t staticFieldGuardCells[3] = {0, 0, 0};
     if (config_.boundary.type == EBBoundaryType::Cpml)
       for (unsigned int axis = 0; axis < 3; ++axis)
         staticFieldGuardCells[axis] = config_.boundary.cpml.cells[axis];
     const EBGaussInitializationReport report =
       EBGaussFieldInitializer::initialize(
-        *fields_, globalGeometry_, localZOffset_, localOriginBox_, particles_,
+        *fields_, globalGeometry_, localZOffset_, localOriginBox_,
+        *initialSource,
         config_.initialSelfField.model,
         config_.initialSelfField.maximumMeanTransverseBeta,
         staticFieldGuardCells,
@@ -902,9 +992,15 @@ namespace aprl
         {
           RelativisticParticleSI particle(particles_[index]);
           const FieldVector<Double> start(particle.position);
-          RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
-            particle, *fields_, localOriginBox_, sources_, frame_,
-            timeBoxSI_, globalGeometry_.dt, particleSubsteps_);
+          if (config_.mesh.ballisticOutsideTransverse &&
+              !particleCPML_->containsPhysical(start))
+            RelativisticBorisPusher::pushPosition(
+              particle.position, particle.properVelocity,
+              globalGeometry_.dt);
+          else
+            RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
+              particle, *fields_, localOriginBox_, sources_, frame_,
+              timeBoxSI_, globalGeometry_.dt, particleSubsteps_);
           bool local = true;
           for (unsigned int axis = 0; axis < 3; ++axis)
             {
@@ -917,7 +1013,10 @@ namespace aprl
                 particle.position[axis] >= localOriginBox_[axis] &&
                 particle.position[axis] <= upper;
             }
-          if (local)
+          if (local &&
+              (!config_.mesh.ballisticOutsideTransverse ||
+               (particleCPML_->containsPhysical(start) &&
+                particleCPML_->containsPhysical(particle.position))))
             depositor.depositSegment(start, particle.position,
                                      particle.charge);
           ++completedSamples;
@@ -1475,6 +1574,41 @@ namespace aprl
      * lab snapshot.  The remaining particles are synchronized relative to
      * this event.  Their potentially large lab-time span is not interpreted
      * as a required physical drift upstream of the input plane. */
+    if (config_.mesh.ballisticOutsideTransverse)
+      {
+        unsigned long long localLabOutside = 0;
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            bool outside = false;
+            for (unsigned int axis = 0; axis < 2; ++axis)
+              {
+                const Double lower = config_.mesh.center[axis] -
+                  0.5 * config_.mesh.extent[axis] +
+                  config_.boundary.cpml.cells[axis] *
+                  config_.mesh.cellSize[axis];
+                const Double upper = config_.mesh.center[axis] +
+                  0.5 * config_.mesh.extent[axis] -
+                  config_.boundary.cpml.cells[axis] *
+                  config_.mesh.cellSize[axis];
+                outside = outside ||
+                  particles_[index].position[axis] < lower ||
+                  particles_[index].position[axis] > upper;
+              }
+            if (outside) ++localLabOutside;
+          }
+        unsigned long long globalLabOutside = 0;
+        MPI_Allreduce(&localLabOutside, &globalLabOutside, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+        if (globalLabOutside && rank_ == 0)
+          {
+            std::ostringstream message;
+            message << "WARNING: reconstructed initial lab snapshot has "
+                    << globalLabOutside << " particles outside the "
+                       "transverse physical aperture; boundary injection "
+                       "is enabled, so this is not fatal.";
+            logRoot(communicator_, message.str());
+          }
+      }
     frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
       placementReport.headAfterLab, 0.0);
     const SIBunchBoostReport localBoostReport =
@@ -3130,12 +3264,30 @@ namespace aprl
       crossUpper = rank_ + 1 < size_ && end[2] >= upperZ;
       if (!crossLower && !crossUpper) return 1.0;
       const Double boundary = crossLower ? lowerZ : upperZ;
-      const Double fraction = (boundary - start[2]) /
+      Double fraction = (boundary - start[2]) /
         (end[2] - start[2]);
+      const Double endpointTolerance = 128.0 *
+        std::numeric_limits<Double>::epsilon() *
+        std::max(globalGeometry_.dz,
+          std::max(std::abs(globalOriginBox_[2]), std::abs(boundary)));
+      if (fraction < 0.0 &&
+          std::abs(start[2] - boundary) <= endpointTolerance)
+        fraction = 0.0;
+      if (fraction > 1.0 &&
+          std::abs(end[2] - boundary) <= endpointTolerance)
+        fraction = 1.0;
       if (!(fraction >= 0.0 && fraction <= 1.0) ||
           !std::isfinite(fraction))
-        throw std::runtime_error(
-          "Invalid MPI-interface particle crossing");
+        {
+          std::ostringstream message;
+          message << std::setprecision(17)
+                  << "Invalid MPI-interface particle crossing: rank="
+                  << rank_ << " start_z=" << start[2]
+                  << " end_z=" << end[2]
+                  << " boundary_z=" << boundary
+                  << " fraction=" << fraction;
+          throw std::runtime_error(message.str());
+        }
       return fraction;
     };
 
@@ -3451,6 +3603,57 @@ namespace aprl
       const Double interfaceFraction = interfaceCrossing(
         segmentStart, particle.position, crossLower, crossUpper);
       const bool crossesInterface = crossLower || crossUpper;
+      if (config_.mesh.ballisticOutsideTransverse)
+        {
+          if (crossesInterface && !allowTransfer)
+            throw std::runtime_error(
+              "An injected particle crossed more than one MPI interface "
+              "in one field step");
+          const Double localEndFraction = crossesInterface ?
+            interfaceFraction : 1.0;
+          FieldVector<Double> segmentEnd(particle.position);
+          if (crossesInterface)
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              segmentEnd[axis] = segmentStart[axis] +
+                localEndFraction *
+                (particle.position[axis] - segmentStart[axis]);
+          Double first = 0.0;
+          Double last = 1.0;
+          if (clipPhysicalSegment(segmentStart, segmentEnd,
+                                  *particleCPML_, first, last))
+            {
+              FieldVector<Double> entry(0.0);
+              FieldVector<Double> exit(0.0);
+              for (unsigned int axis = 0; axis < 3; ++axis)
+                {
+                  const Double advance =
+                    segmentEnd[axis] - segmentStart[axis];
+                  entry[axis] = segmentStart[axis] + first * advance;
+                  exit[axis] = segmentStart[axis] + last * advance;
+                }
+              depositor.depositSegment(entry, exit, particle.charge);
+              if (first > 0.0 &&
+                  !particleCPML_->containsPhysical(segmentStart))
+                ++ballisticBoundaryEntries_;
+            }
+          if (crossesInterface)
+            {
+              TransferPacket transfer = {};
+              transfer.particle = packParticle(particle);
+              for (unsigned int axis = 0; axis < 3; ++axis)
+                transfer.segmentStart[axis] = segmentEnd[axis];
+              transfer.segmentStartFraction = segmentStartFraction +
+                localEndFraction * (1.0 - segmentStartFraction);
+              (crossLower ? sendLower : sendUpper).push_back(transfer);
+            }
+          else
+            retained.push_back(particle);
+          if (config_.mesh.longitudinal.automatic() &&
+              (particle.position[2] < particleCPML_->physicalLower(2) ||
+               particle.position[2] > particleCPML_->physicalUpper(2)))
+            localAutomaticLongitudinalExit = 1;
+          return;
+        }
       ParticleBoundaryHit cpmlHit;
       ParticleBoundaryHit outerHit;
       ParticleBoundaryHit retirementHit;
@@ -3590,10 +3793,28 @@ namespace aprl
         RelativisticParticleSI particle = particles_[index];
         const FieldVector<Double> start(particle.position);
         Double prescribedWork = 0.0;
-        RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
-          particle, *fields_, localOriginBox_, sources_, frame_,
-          timeBoxSI_, globalGeometry_.dt, particleSubsteps_,
-          config_.energyLedger.enabled ? &prescribedWork : 0);
+        if (config_.mesh.ballisticOutsideTransverse &&
+            !particleCPML_->containsPhysical(start))
+          RelativisticBorisPusher::pushPosition(
+            particle.position, particle.properVelocity,
+            globalGeometry_.dt);
+        else
+          RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
+            particle, *fields_, localOriginBox_, sources_, frame_,
+            timeBoxSI_, globalGeometry_.dt, particleSubsteps_,
+            config_.energyLedger.enabled ? &prescribedWork : 0);
+
+        if (config_.mesh.ballisticOutsideTransverse)
+          {
+            if (config_.energyLedger.enabled)
+              energyLedgerPrescribedWork_ += prescribedWork;
+            if (detectors_)
+              detectors_->captureParticleStep(
+                particles_[index], particle, timeBoxSI_,
+                timeBoxSI_ + globalGeometry_.dt);
+            processActiveSegment(particle, start, 0.0, true);
+            continue;
+          }
 
         ParticleBoundaryHit diagnosticHit;
         ParticleBoundaryHit cpmlHit;
@@ -3783,6 +4004,30 @@ namespace aprl
 
   void Simulation::reportParticleBoundaryLosses() const
   {
+    if (config_.mesh.ballisticOutsideTransverse)
+      {
+        unsigned long long localOutside = 0;
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          if (!particleCPML_->containsPhysical(particles_[index].position))
+            ++localOutside;
+        unsigned long long globalOutside = 0;
+        unsigned long long globalEntries = 0;
+        MPI_Reduce(&localOutside, &globalOutside, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+        MPI_Reduce(&ballisticBoundaryEntries_, &globalEntries, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+        if (rank_ == 0)
+          {
+            std::ostringstream message;
+            message << "Experimental transverse boundary injection: "
+                    << "physical-aperture entries=" << globalEntries
+                    << ", currently outside=" << globalOutside
+                    << ". Entries count crossings, not unique particles; "
+                       "external particles are retained without grid or "
+                       "prescribed fields.";
+            logRoot(communicator_, message.str());
+          }
+      }
     unsigned long long localCounts[18] = {};
     Double localCharges[18] = {};
     for (std::size_t face = 0; face < 6; ++face)
@@ -3984,13 +4229,32 @@ namespace aprl
     };
     int localInvalid = 0;
     int localInCpml = 0;
+    unsigned long long localOutsideTransverse = 0;
     for (std::size_t index = 0; index < particles_.size(); ++index)
-      for (unsigned int axis = 0; axis < 3; ++axis)
-        if (particles_[index].position[axis] < globalOriginBox_[axis] ||
-            particles_[index].position[axis] > upper[axis])
-          localInvalid = 1;
+      {
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          if (particles_[index].position[axis] < globalOriginBox_[axis] ||
+              particles_[index].position[axis] > upper[axis])
+            if (!config_.mesh.ballisticOutsideTransverse || axis == 2)
+              localInvalid = 1;
+        if (config_.mesh.ballisticOutsideTransverse &&
+            (particles_[index].position[0] <
+               particleCPML_->physicalLower(0) ||
+             particles_[index].position[0] >
+               particleCPML_->physicalUpper(0) ||
+             particles_[index].position[1] <
+               particleCPML_->physicalLower(1) ||
+             particles_[index].position[1] >
+               particleCPML_->physicalUpper(1)))
+          ++localOutsideTransverse;
+      }
     for (std::size_t index = 0; index < particles_.size(); ++index)
-      if (!particleCPML_->containsPhysical(particles_[index].position))
+      if (!particleCPML_->containsPhysical(particles_[index].position) &&
+          (!config_.mesh.ballisticOutsideTransverse ||
+           particles_[index].position[2] <
+             particleCPML_->physicalLower(2) ||
+           particles_[index].position[2] >
+             particleCPML_->physicalUpper(2)))
         localInCpml = 1;
     int globalInvalid = 0;
     int globalInCpml = 0;
@@ -3998,6 +4262,24 @@ namespace aprl
                   communicator_);
     MPI_Allreduce(&localInCpml, &globalInCpml, 1, MPI_INT, MPI_MAX,
                   communicator_);
+    if (config_.mesh.ballisticOutsideTransverse)
+      {
+        unsigned long long globalOutsideTransverse = 0;
+        MPI_Allreduce(&localOutsideTransverse, &globalOutsideTransverse, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+        if (rank_ == 0)
+          {
+            std::ostringstream message;
+            message << "Experimental transverse boundary injection: "
+                    << globalOutsideTransverse
+                    << " boosted particles start outside the physical "
+                       "x/y aperture. They remain ballistic and are "
+                       "excluded from the initial Poisson source until "
+                       "entry; Gauss-law closure across this artificial "
+                       "boundary is approximate.";
+            logRoot(communicator_, message.str());
+          }
+      }
     if (globalInvalid)
       throw std::out_of_range(
         "Boosted bunch does not fit inside the configured direct E/B box");
