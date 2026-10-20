@@ -273,6 +273,7 @@ endif()
 if(HAVE_ELEGANT_SDDS_CONVERTER)
   install(TARGETS elegant_sdds_to_hdf5 RUNTIME DESTINATION bin)
 endif()
+install(PROGRAMS utilities/crop_elegant_hdf5.py DESTINATION bin)
 
 install(FILES README.md README.zh-CN.md DESTINATION share/aprl)
 install(DIRECTORY docs config examples

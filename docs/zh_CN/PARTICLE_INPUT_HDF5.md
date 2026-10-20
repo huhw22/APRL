@@ -84,6 +84,23 @@ SDDS 文件可包含多页，例如不同 pass、step 或 bunch。转换器有�
 
 Elegant 页级 `Charge` 参数不是逐粒子权重。总物理粒子数仍由 YAML 的 `beam.input.electrons` 权威定义；只有真实逐行相对权重列才能传给 `--weight-column`。
 
+## 截取束团中心纵向窗口
+
+转换后、APRL 准备/运行前，可以用独立工具逐块截取中心 60 µm；它不需要重新运行 Elegant，也不更改原文件：
+
+```bash
+python3 utilities/crop_elegant_hdf5.py \
+  --input particles_full.h5 \
+  --output particles.h5 \
+  --width-um 60
+```
+
+需要 Python 的 `numpy` 和 `h5py`（与 APRL `prepare_case.py` 相同）。默认中心 `tau=0`，即 Elegant 转换文件原始宏权重加权平均到达时刻。对每个粒子按它自己的纵向速度计算 `z_slice=-beta_z*c*(tau-tau_center)`，仅保留 `|z_slice|<=30 µm` 的记录；`--center-time-offset-fs` 可在确认纵向分布后微调中心。工具按块读取并追加写入，内存不随总粒子数增长。它拒绝覆盖已有输出；输出仍是 HDF5 v4，原始时间偏移、参考时刻、横向坐标、速度、`source_id` 和 `macro_weight` 都原样保留，另附裁剪范围、原/新条数及权重和元数据。
+
+安装 APRL 后也可使用安装目录 `bin/crop_elegant_hdf5.py`；此工具无需编译，但运行时 Python 环境必须有上述两个包。
+
+截取减少 APRL 的粒子数与纵向计算区域，但不会重新归一化保留粒子的电荷。`beam.input.electrons` 应表示**裁剪后**的物理电子数：若上游确实每宏粒子代表一个电子，则为工具报告的保留条数；若使用其他权重/缩放，则用原总电子数乘以工具报告的 `Selected weight fraction`。不要沿用完整束团的总电子数。`input_plane_z` 与 `initial_center_z` 的物理位置定义不因裁剪改变；APRL 仍按保留记录的过面时间构造共同实验室时刻快照。
+
 ## 文本转换输入
 
 旧工具 `particle_text_to_hdf5` 仍接受：

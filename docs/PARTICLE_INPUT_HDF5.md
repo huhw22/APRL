@@ -141,6 +141,41 @@ the authoritative total physical population in YAML
 `beam.input.electrons`; use `--weight-column` only for a true per-row relative
 weight column.
 
+## Crop a central longitudinal window
+
+After conversion and before APRL preparation, the standalone streaming tool
+can select the central 60 µm without rerunning Elegant or modifying the source:
+
+```bash
+python3 utilities/crop_elegant_hdf5.py \
+  --input particles_full.h5 \
+  --output particles.h5 \
+  --width-um 60
+```
+
+It requires Python `numpy` and `h5py` (also used by APRL `prepare_case.py`).
+The default centre is `tau=0`, the original macro-weighted mean arrival time
+from the converter. For each particle it forms
+`z_slice=-beta_z*c*(tau-tau_center)` from that particle's longitudinal speed
+and retains `|z_slice|<=30 µm`. Use `--center-time-offset-fs` to shift the
+centre after inspecting the longitudinal profile. Input is read in bounded
+blocks; existing output is never overwritten. The result remains HDF5 v4,
+preserving every retained record, the original time offsets and reference,
+IDs, and relative weights. Crop extent and source/selected counts and weight
+sums are stored as `/particles` attributes.
+
+An APRL installation also provides `bin/crop_elegant_hdf5.py`. It needs no
+compilation, but its Python environment must provide the two packages above.
+
+Cropping reduces APRL's particle count and longitudinal domain but does not
+renormalize charge. Set `beam.input.electrons` to the **cropped** physical
+electron count: if the upstream generator really used one electron per macro
+particle, use the reported retained record count; otherwise multiply the
+full-bunch physical electron count by the reported `Selected weight fraction`.
+Do not reuse the full-bunch count. Cropping does not change the physical
+definitions of `input_plane_z` or `initial_center_z`; APRL still constructs a
+common-time snapshot from the retained plane-crossing events.
+
 ## Text conversion input
 
 The legacy `particle_text_to_hdf5` utility still accepts:
