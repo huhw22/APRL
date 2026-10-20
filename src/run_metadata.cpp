@@ -186,6 +186,9 @@ namespace aprl
                    << "  enabled: "
                    << (config.initialSelfField.enabled ? "true" : "false")
                    << "\n"
+                   << "  include_transverse_cpml_particles: "
+                   << (config.initialSelfField.includeTransverseCpmlParticles ?
+                       "true" : "false") << "\n"
                    << "  maximum_mean_transverse_beta: "
                    << config.initialSelfField.maximumMeanTransverseBeta
                    << "\n"

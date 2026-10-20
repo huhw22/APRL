@@ -23,10 +23,15 @@ in-aperture steps use the regular Boris pusher. Crossing an MPI z-slab preserves
 the same orbit and clipped current path. The final report gives entry crossings
 and the number still outside, not unique-particle entry counts.
 
-The initial Poisson solve includes only particles at least one full cell inside
-all physical faces, ensuring their CIC clouds do not touch the static boundary.
-If none qualify, E/B starts from zero. External charge is not represented by
-the initial field, and boundary-entry current does not provide an exact
+By default, the initial Poisson solve includes only particles at least one full
+cell inside all physical faces. With
+`initial_self_field.include_transverse_cpml_particles: true`, particles inside
+the transverse CPML strips also contribute to the one-time physical-region
+initial E/B; particles beyond the outer mesh remain excluded. The temporary
+Poisson grid is padded in x/y, while the evolving CPML fields and memories
+still start at zero. If no particles qualify, E/B starts from zero. Omitted
+external charge is not represented by the initial field, and boundary-entry
+current does not provide an exact
 charge-continuity/Gauss-law closure for the whole original bunch. This is a
 finite-window approximation, **not** a validated open-boundary PIC injection
 condition: perform transverse-aperture, CPML-distance and initial-field scans,

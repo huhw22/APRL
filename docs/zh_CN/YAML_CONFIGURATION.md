@@ -189,6 +189,7 @@ PEC 不分配边界历史。数值构造见[Cowan-z 与 CPML](MAXWELL_COWAN_CPML
 initial_self_field:
   enabled: true
   model: relativistic-poisson
+  include_transverse_cpml_particles: false
   relative_tolerance: 1.0e-10
   maximum_mean_transverse_beta: 1.0e-8
   maximum_iterations: 10000
@@ -198,7 +199,9 @@ initial_self_field:
 
 `maximum_mean_transverse_beta` 限制 boost 后计算系内按代表质量加权的**平均横向速度大小除以光速**，默认 `1e-8`，必须是 `[0,1)` 内有限值。它是 `relativistic-poisson` 刚性束模型的适用性检查，**不是** Poisson 收敛参数 `relative_tolerance`，也不是单粒子发散角上限。对于已量化的极小质心倾角，可显式设为例如 `1.0e-7`；初场构造仍只采用平均轴向速度，需自行验证这种近似对目标物理量足够准确。
 
-CPML 下静态求解零势面是**CPML 内表面**，CPML 内 E/B 从零开始，避免非辐射 Coulomb 尾给零记忆变量充电后回流。若任一 CIC 电荷权重触及该面则停止；应把粒子至少移动到 CPML 内一整个单元，或增大物理 padding，不能静默丢电荷。
+默认情况下，CPML 下静态求解零势面是**CPML 内表面**，CPML 内 E/B 从零开始，避免非辐射 Coulomb 尾给零记忆变量充电后回流。若任一 CIC 电荷权重触及该面则停止；应把粒子至少移动到物理区内、距 CPML 入口一整个单元，或增大物理 padding，不能静默丢电荷。
+
+启用实验性的 `mesh.ballistic_outside_transverse: true` 时，可设置 `include_transverse_cpml_particles: true`，让初始位于横向 CPML 内、但仍在计算网格内的粒子参与**一次**初场求解。临时 Poisson 网格在 x/y 外侧各补两格以容纳完整 CIC 电荷；只把物理区 E/B 写入演化场，CPML 场与记忆变量仍从零开始。运行中的粒子推进与电流沉积不变，更外层粒子不参加初场。应比较初期场能、边界通量和横向孔径收敛。
 
 对自动观测有界 z 网格，`mesh.longitudinal.self_field_padding_rms: 0.0` 明确表示“只初始化已解析的框”。这不会关闭初场：全部代表电荷仍会沉积，相对论 Poisson 场覆盖完整非 CPML 物理区，求解后的 Gauss 检查仍是硬约束。被截断的只是所选框以外的场域。因此初始能量在离散 Gauss 意义上自洽，但其绝对值可能依赖零势边界；若该值本身是观测量，仍需扫描纵向保护格或使用非零 RMS padding。
 

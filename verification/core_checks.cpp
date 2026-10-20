@@ -44,6 +44,8 @@ namespace
   void checkRuntimeDefaults(int rank)
   {
     const aprl::RuntimeConfig runtime;
+    require(!aprl::InitialSelfFieldConfig().includeTransverseCpmlParticles,
+      "Transverse CPML initial sources must remain opt-in");
     require(runtime.shutdownWatchdogEnabled,
       "Shutdown watchdog default unexpectedly disabled");
     require(runtime.shutdownWatchdogTimeoutSeconds == 600,
@@ -126,6 +128,55 @@ namespace
                 << "initial_field_mean_beta_transverse="
                 << report.meanBetaTransverse
                 << " default_limit=1e-8 relaxed_limit=1e-7"
+                << std::endl;
+  }
+
+  void checkCpmlParticleInitialField(MPI_Comm communicator, int rank)
+  {
+    const aprl::EBGridGeometry geometry(
+      24, 24, 24, 0.1, 0.1, 0.1, 0.05 / aprl::SI::c);
+    aprl::EBFieldGrid fields(geometry);
+    const aprl::FieldVector<double> origin(0.0);
+    const std::size_t guards[3] = {4, 4, 4};
+    std::vector<aprl::RelativisticParticleSI> particles(2);
+    for (std::size_t index = 0; index < particles.size(); ++index)
+      {
+        particles[index].position[0] = index == 0 ? 1.2 : 0.15;
+        particles[index].position[1] = 1.2;
+        particles[index].position[2] = 1.2;
+        particles[index].properVelocity[2] = 0.2;
+        particles[index].charge = -1.0e-15;
+        particles[index].mass = aprl::SI::electronMass;
+        particles[index].weight = 1.0;
+      }
+
+    std::vector<aprl::RelativisticParticleSI> insideOnly(1, particles[0]);
+    const aprl::EBGaussInitializationReport first =
+      aprl::EBGaussFieldInitializer::initialize(
+        fields, geometry, 0, origin, insideOnly,
+        aprl::InitialSelfFieldModel::RelativisticPoisson,
+        1.0e-8, guards, 1.0e-8, 2000, communicator, true);
+    const double withoutCpml = fields.ex()(5, 12, 12);
+    const aprl::EBGaussInitializationReport second =
+      aprl::EBGaussFieldInitializer::initialize(
+        fields, geometry, 0, origin, particles,
+        aprl::InitialSelfFieldModel::RelativisticPoisson,
+        1.0e-8, guards, 1.0e-8, 2000, communicator, true);
+    require(first.transversePoissonPaddingCells == 2 &&
+            second.transversePoissonPaddingCells == 2,
+      "CPML-source solve did not pad its temporary Poisson lattice");
+    require(std::abs(fields.ex()(5, 12, 12) - withoutCpml) > 1.0e-7,
+      "Transverse CPML particle did not affect the physical initial field");
+    require(fields.ex()(0, 12, 12) == 0.0 &&
+            fields.ey()(0, 12, 12) == 0.0 &&
+            fields.bx()(0, 12, 12) == 0.0,
+      "CPML evolution fields did not remain zero at initialization");
+    require(second.relativeResidual < 4.0e-8,
+      "CPML-source initial field failed its physical Gauss check");
+    if (rank == 0)
+      std::cout << "cpml_particle_initial_delta_ex="
+                << fields.ex()(5, 12, 12) - withoutCpml
+                << " physical_gauss_residual=" << second.relativeResidual
                 << std::endl;
   }
 
@@ -1112,6 +1163,8 @@ int main(int argc, char** argv)
           checkInitialFieldTransverseLimit(
             argv[2], argv[3], MPI_COMM_WORLD, rank);
         }
+      else if (check == "initial-field-cpml-particles")
+        checkCpmlParticleInitialField(MPI_COMM_WORLD, rank);
       else if (check == "hdf5-versions")
         {
           if (argc != 3)

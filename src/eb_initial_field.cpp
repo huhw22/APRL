@@ -153,6 +153,7 @@ namespace aprl
         EBFieldGrid& fields,
         const FieldVector<Double>& localOriginSI,
         const std::vector<RelativisticParticleSI>& particles,
+        std::size_t transversePaddingCells,
         int rank, int size, MPI_Comm communicator)
     {
       const EBGridGeometry& local = fields.geometry();
@@ -163,7 +164,21 @@ namespace aprl
         depositor.depositCharge(particles[index].position,
                                 particles[index].charge, *rho);
       sumSharedChargePlanes(*rho, rank, size, communicator);
-      return rho;
+      if (transversePaddingCells == 0) return rho;
+
+      /* Keep the production CIC deposition bit-for-bit, then embed its
+       * vertices in a temporary x/y-padded Poisson lattice. The outermost
+       * CPML particles can contribute without touching the artificial
+       * zero-potential surface. No padded Maxwell field is allocated. */
+      const std::size_t padding = transversePaddingCells;
+      std::unique_ptr<YeeComponent> padded(new YeeComponent(
+        local.nx + 2 * padding + 1,
+        local.ny + 2 * padding + 1, local.nz + 1));
+      for (std::size_t k = 0; k <= local.nz; ++k)
+        for (std::size_t j = 0; j <= local.ny; ++j)
+          for (std::size_t i = 0; i <= local.nx; ++i)
+            (*padded)(i + padding, j + padding, k) = (*rho)(i, j, k);
+      return padded;
     }
 
     bool interiorVertex(std::size_t i, std::size_t j,
@@ -266,29 +281,31 @@ namespace aprl
     void fieldsFromPotential(EBFieldGrid& fields, ScalarSlab& potential,
                              Double meanBetaZ,
                              Double longitudinalCoefficient,
+                             std::size_t transversePaddingCells,
                              int rank, int size, MPI_Comm communicator)
     {
       exchangeScalarGhosts(potential, rank, size, communicator);
       const EBGridGeometry& g = fields.geometry();
+      const std::size_t pad = transversePaddingCells;
       for (std::size_t k = 0; k <= g.nz; ++k)
         for (std::size_t j = 0; j <= g.ny; ++j)
           for (std::size_t i = 0; i < g.nx; ++i)
             fields.ex()(i, j, k) =
-              -(potential(i + 1, j, k + 1) -
-                potential(i, j, k + 1)) / g.dx;
+              -(potential(i + pad + 1, j + pad, k + 1) -
+                potential(i + pad, j + pad, k + 1)) / g.dx;
       for (std::size_t k = 0; k <= g.nz; ++k)
         for (std::size_t j = 0; j < g.ny; ++j)
           for (std::size_t i = 0; i <= g.nx; ++i)
             fields.ey()(i, j, k) =
-              -(potential(i, j + 1, k + 1) -
-                potential(i, j, k + 1)) / g.dy;
+              -(potential(i + pad, j + pad + 1, k + 1) -
+                potential(i + pad, j + pad, k + 1)) / g.dy;
       for (std::size_t k = 0; k < g.nz; ++k)
         for (std::size_t j = 0; j <= g.ny; ++j)
           for (std::size_t i = 0; i <= g.nx; ++i)
             fields.ez()(i, j, k) =
               -longitudinalCoefficient *
-              (potential(i, j, k + 2) -
-               potential(i, j, k + 1)) / g.dz;
+              (potential(i + pad, j + pad, k + 2) -
+               potential(i + pad, j + pad, k + 1)) / g.dz;
 
       /* For a charge distribution translating rigidly along z, the Vay
        * relativistic-Poisson construction gives B=beta x E/c.  B is stored
@@ -316,6 +333,58 @@ namespace aprl
               (lowerWeight * fields.ex()(i, j, k) +
                upperWeight * fields.ex()(i, j, k + 1));
       fields.bz().fill(0.0);
+    }
+
+    bool insidePhysicalFieldCoordinate(std::size_t index, bool vertex,
+                                       std::size_t cells,
+                                       std::size_t guard)
+    {
+      return index >= guard &&
+        (vertex ? index <= cells - guard : index < cells - guard);
+    }
+
+    void clearComponentOutsidePhysical(
+        YeeComponent& component, bool electric, unsigned int componentAxis,
+        const EBGridGeometry& global, std::size_t localZOffset,
+        const std::size_t guard[3])
+    {
+      const std::size_t cells[3] = {global.nx, global.ny, global.nz};
+      for (std::size_t k = 0; k < component.nz(); ++k)
+        for (std::size_t j = 0; j < component.ny(); ++j)
+          for (std::size_t i = 0; i < component.nx(); ++i)
+            {
+              const std::size_t coordinate[3] = {
+                i, j, localZOffset + k
+              };
+              bool inside = true;
+              for (unsigned int axis = 0; axis < 3; ++axis)
+                {
+                  const bool vertex = electric ? axis != componentAxis :
+                    axis == componentAxis;
+                  inside = inside && insidePhysicalFieldCoordinate(
+                    coordinate[axis], vertex, cells[axis], guard[axis]);
+                }
+              if (!inside) component(i, j, k) = 0.0;
+            }
+    }
+
+    void clearCpmlFields(EBFieldGrid& fields,
+                         const EBGridGeometry& global,
+                         std::size_t localZOffset,
+                         const std::size_t guard[3])
+    {
+      clearComponentOutsidePhysical(fields.ex(), true, 0,
+        global, localZOffset, guard);
+      clearComponentOutsidePhysical(fields.ey(), true, 1,
+        global, localZOffset, guard);
+      clearComponentOutsidePhysical(fields.ez(), true, 2,
+        global, localZOffset, guard);
+      clearComponentOutsidePhysical(fields.bx(), false, 0,
+        global, localZOffset, guard);
+      clearComponentOutsidePhysical(fields.by(), false, 1,
+        global, localZOffset, guard);
+      clearComponentOutsidePhysical(fields.bz(), false, 2,
+        global, localZOffset, guard);
     }
 
     void meanVelocity(const std::vector<RelativisticParticleSI>& particles,
@@ -502,6 +571,7 @@ namespace aprl
     : iterations(0), relativeResidual(0.0), maximumGaussResidual(0.0),
       totalCharge(0.0), meanBetaZ(0.0), meanBetaTransverse(0.0),
       initialElectricEnergy(0.0), initialMagneticEnergy(0.0),
+      transversePoissonPaddingCells(0),
       temporaryBytes(0)
   {
     for (unsigned int axis = 0; axis < 3; ++axis)
@@ -523,7 +593,8 @@ namespace aprl
       const std::size_t staticFieldGuardCells[3],
       Double relativeTolerance,
       std::size_t maximumIterations,
-      MPI_Comm communicator)
+      MPI_Comm communicator,
+      bool includeTransverseCpmlParticles)
   {
     if (!(relativeTolerance > 0.0) || !(relativeTolerance < 1.0) ||
         !std::isfinite(relativeTolerance) || maximumIterations == 0)
@@ -539,8 +610,25 @@ namespace aprl
         localZOffset + local.nz > globalGeometry.nz)
       throw std::invalid_argument(
         "Initial Gauss-field local slab does not match global geometry");
+    if (includeTransverseCpmlParticles &&
+        (staticFieldGuardCells[0] < 2 || staticFieldGuardCells[1] < 2))
+      throw std::invalid_argument(
+        "Transverse CPML-source initialization requires at least two "
+        "physical guard cells in x and y");
+
+    const std::size_t transversePaddingCells =
+      includeTransverseCpmlParticles ? 2 : 0;
+    EBGridGeometry poissonGeometry(globalGeometry);
+    poissonGeometry.nx += 2 * transversePaddingCells;
+    poissonGeometry.ny += 2 * transversePaddingCells;
+    FieldVector<Double> poissonOrigin(localOriginSI);
+    poissonOrigin[0] -= static_cast<Double>(transversePaddingCells) *
+      globalGeometry.dx;
+    poissonOrigin[1] -= static_cast<Double>(transversePaddingCells) *
+      globalGeometry.dy;
 
     ScalarDomain domain;
+    ScalarDomain physicalDomain;
     const std::size_t globalCells[3] = {
       globalGeometry.nx, globalGeometry.ny, globalGeometry.nz
     };
@@ -549,8 +637,14 @@ namespace aprl
         if (2 * staticFieldGuardCells[axis] + 2 >= globalCells[axis])
           throw std::invalid_argument(
             "Initial static-field guard leaves fewer than two physical cells");
-        domain.lower[axis] = staticFieldGuardCells[axis];
-        domain.upper[axis] = globalCells[axis] - staticFieldGuardCells[axis];
+        physicalDomain.lower[axis] = staticFieldGuardCells[axis];
+        physicalDomain.upper[axis] = globalCells[axis] -
+          staticFieldGuardCells[axis];
+        domain.lower[axis] = includeTransverseCpmlParticles && axis < 2 ?
+          0 : staticFieldGuardCells[axis];
+        const std::size_t poissonCells = axis == 0 ? poissonGeometry.nx :
+          (axis == 1 ? poissonGeometry.ny : poissonGeometry.nz);
+        domain.upper[axis] = poissonCells - domain.lower[axis];
       }
 
     int rank = 0;
@@ -588,27 +682,36 @@ namespace aprl
         "the bunch remains too relativistic in the simulation frame; choose "
         "boost_gamma closer to the bunch mean gamma");
 
-    ScalarSlab potential(globalGeometry.nx + 1, globalGeometry.ny + 1,
+    ScalarSlab potential(poissonGeometry.nx + 1, poissonGeometry.ny + 1,
                          local.nz);
-    ScalarSlab residual(globalGeometry.nx + 1, globalGeometry.ny + 1,
+    ScalarSlab residual(poissonGeometry.nx + 1, poissonGeometry.ny + 1,
                         local.nz);
-    ScalarSlab direction(globalGeometry.nx + 1, globalGeometry.ny + 1,
+    ScalarSlab direction(poissonGeometry.nx + 1, poissonGeometry.ny + 1,
                          local.nz);
-    ScalarSlab image(globalGeometry.nx + 1, globalGeometry.ny + 1,
+    ScalarSlab image(poissonGeometry.nx + 1, poissonGeometry.ny + 1,
                      local.nz);
 
     EBGaussInitializationReport report;
     report.meanBetaZ = meanBetaZ;
     report.meanBetaTransverse = meanBetaTransverse;
+    report.transversePoissonPaddingCells = transversePaddingCells;
     for (unsigned int axis = 0; axis < 3; ++axis)
-      report.staticFieldGuardCells[axis] = staticFieldGuardCells[axis];
-    distributionResolution(particles, globalGeometry, domain,
-      localZOffset, localOriginSI, communicator, report);
+      report.staticFieldGuardCells[axis] = domain.lower[axis];
+    distributionResolution(particles, poissonGeometry, domain,
+      localZOffset, poissonOrigin, communicator, report);
     report.temporaryBytes = potential.bytes() + residual.bytes() +
       direction.bytes() + image.bytes();
+    const std::size_t unpaddedRhoBytes =
+      (local.nx + 1) * (local.ny + 1) * (local.nz + 1) * sizeof(Double);
+    report.temporaryBytes += unpaddedRhoBytes;
+    if (transversePaddingCells > 0)
+      report.temporaryBytes +=
+        (poissonGeometry.nx + 1) * (poissonGeometry.ny + 1) *
+        (local.nz + 1) * sizeof(Double);
 
     std::unique_ptr<YeeComponent> rho = depositCharge(
-      fields, localOriginSI, particles, rank, size, communicator);
+      fields, localOriginSI, particles, transversePaddingCells,
+      rank, size, communicator);
     long double localCharge = 0.0L;
     for (std::size_t index = 0; index < particles.size(); ++index)
       localCharge += static_cast<long double>(particles[index].charge);
@@ -625,8 +728,8 @@ namespace aprl
     for (std::size_t p = 1; p <= local.nz; ++p)
       {
         const std::size_t globalK = localZOffset + p - 1;
-        for (std::size_t j = 0; j <= globalGeometry.ny; ++j)
-          for (std::size_t i = 0; i <= globalGeometry.nx; ++i)
+        for (std::size_t j = 0; j <= poissonGeometry.ny; ++j)
+          for (std::size_t i = 0; i <= poissonGeometry.nx; ++i)
             if (interiorVertex(i, j, globalK, domain))
               {
                 residual(i, j, p) =
@@ -658,7 +761,7 @@ namespace aprl
     for (std::size_t iteration = 0;
          iteration < maximumIterations; ++iteration)
       {
-        applyNegativeLaplacian(direction, image, globalGeometry, domain,
+        applyNegativeLaplacian(direction, image, poissonGeometry, domain,
           localZOffset, longitudinalCoefficient,
           rank, size, communicator);
         const long double denominator = globalDot(
@@ -689,7 +792,7 @@ namespace aprl
             "Initial Gauss-field CG produced a non-finite residual");
         const Double beta = static_cast<Double>(
           nextNorm2 / residualNorm2);
-        combineDirection(direction, residual, beta, globalGeometry, domain,
+        combineDirection(direction, residual, beta, poissonGeometry, domain,
                          localZOffset);
         residualNorm2 = nextNorm2;
       }
@@ -701,10 +804,14 @@ namespace aprl
         "or reduce the grid aspect ratio");
 
     fieldsFromPotential(fields, potential, appliedBetaZ,
-      longitudinalCoefficient, rank, size, communicator);
+      longitudinalCoefficient, transversePaddingCells,
+      rank, size, communicator);
+    if (includeTransverseCpmlParticles)
+      clearCpmlFields(fields, globalGeometry, localZOffset,
+                      staticFieldGuardCells);
     std::unique_ptr<YeeComponent> validationRho = depositCharge(
-      fields, localOriginSI, particles, rank, size, communicator);
-    validateGauss(fields, *validationRho, domain, localZOffset,
+      fields, localOriginSI, particles, 0, rank, size, communicator);
+    validateGauss(fields, *validationRho, physicalDomain, localZOffset,
                   communicator, report.relativeResidual,
                   report.maximumGaussResidual);
     if (report.relativeResidual > 4.0 * relativeTolerance)

@@ -97,6 +97,9 @@ namespace aprl
   struct InitialSelfFieldConfig
   {
     bool enabled;
+    /* Include particles inside the transverse CPML in the one-time field
+     * solve while keeping the evolving CPML field and memory at zero. */
+    bool includeTransverseCpmlParticles;
     InitialSelfFieldModel model;
     Double relativeTolerance;
     Double maximumMeanTransverseBeta;

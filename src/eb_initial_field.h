@@ -26,6 +26,7 @@ namespace aprl
     Double rmsPositionCells[3];
     Double centrePaddingRms[3];
     std::size_t staticFieldGuardCells[3];
+    std::size_t transversePoissonPaddingCells;
     std::size_t temporaryBytes;
 
     EBGaussInitializationReport();
@@ -35,9 +36,11 @@ namespace aprl
    * a scalar potential in the evolution state. Charge is deposited with the
    * production CIC shape. A distributed matrix-free relativistic-Poisson
    * solve enforces div(E)=rho/epsilon0 and B=beta x E/c on the Yee lattice.
-   * For CPML, the static zero-potential surface is its inner entrance so the
-   * absorbing memory and fields start consistently at zero. Physical padding
-   * convergence remains mandatory. */
+   * Normally the CPML entrance is the static zero-potential surface. The
+   * opt-in transverse CPML-source solve instead pads a temporary Poisson
+   * lattice and retains only physical-region E/B; evolving CPML fields and
+   * memories still begin at zero. Physical padding convergence remains
+   * mandatory. */
   class EBGaussFieldInitializer
   {
   public:
@@ -52,7 +55,8 @@ namespace aprl
         const std::size_t staticFieldGuardCells[3],
         Double relativeTolerance,
         std::size_t maximumIterations,
-        MPI_Comm communicator);
+        MPI_Comm communicator,
+        bool includeTransverseCpmlParticles = false);
   };
 }
 

@@ -14,7 +14,7 @@ state remains direct SI E/B; A/phi never enters the time advance.
 1. Each boosted-frame particle deposits charge on Yee vertices with the same
    first-order CIC shape used by the charge-conserving trajectory depositor.
 2. Contributions on duplicated MPI z-interface vertices are summed. Global z
-   planes have one owner, so dot products never count a shared plane twice.
+planes have one owner, so dot products never count a shared plane twice.
 3. The represented-mass-weighted mean axial velocity `beta_bar` is evaluated
    in the simulation frame. A matrix-free distributed conjugate-gradient solve
    computes the scalar potential for
@@ -37,11 +37,13 @@ state remains direct SI E/B; A/phi never enters the time advance.
    by the rigid-translation shift `z -> z+beta_bar*c*dt/2`. A second CIC
    deposition and a true cross-rank divergence calculation verify
    `div(E) = rho/epsilon0` before the run can continue.
-5. For CPML runs, the inner CPML surface is the static zero-potential surface;
-   CPML field cells and auxiliary variables start at zero. This avoids the
-   startup flow produced when a static Coulomb tail is loaded into CPML while
-   its memory variables remain zero. For PEC regression, the mesh outer surface
-   remains the zero-potential surface.
+5. By default, the inner CPML surface is the static zero-potential surface;
+   CPML field cells and auxiliary variables start at zero. With the opt-in
+   transverse CPML-source mode, a temporary Poisson grid extends two cells
+   beyond each outer transverse mesh face. Particles in the transverse CPML
+   contribute to the initial physical-region E/B, but all evolving CPML E/B
+   and auxiliary variables still start at zero. For PEC regression, the mesh
+   outer surface remains the zero-potential surface.
 6. The solver verifies that the complete CIC charge remains strictly inside
    the static surface. It also reports bunch RMS resolution and centroid
    padding in RMS units; under-resolved axes and padding below four RMS emit
@@ -52,7 +54,7 @@ constraint. Four vertex slabs are live during CG (`phi`, residual, direction,
 and operator image); the charge lattice is allocated only during deposition
 and post-check phases. Startup reports iterations, Gauss residuals, charge,
 mean velocity, electric/magnetic energy, RMS resolution, padding and temporary
-memory per rank.
+memory per rank, including transient CIC charge lattices.
 
 ## Input
 
@@ -60,6 +62,7 @@ memory per rank.
 initial_self_field:
   enabled: true
   model: relativistic-poisson
+  include_transverse_cpml_particles: false
   relative_tolerance: 1.0e-10
   maximum_mean_transverse_beta: 1.0e-8
   maximum_iterations: 10000
@@ -75,6 +78,20 @@ comparisons and prints a prominent warning.
 transverse `|beta|` guard in the boosted frame. The default remains `1e-8`;
 setting a larger value does not rotate the rigid-beam initial field or change
 the deposited charge. Record and justify any relaxation when comparing runs.
+
+`include_transverse_cpml_particles: true` requires
+`mesh.ballistic_outside_transverse: true` and transverse CPML. It changes only
+the one-time initial Poisson solve: all particles inside the transverse mesh,
+including its CPML strips, may source the physical-region initial field.
+Particles beyond the outer mesh remain excluded. The z source still needs a
+full-cell margin inside the physical z interval. A temporary two-cell x/y
+Poisson padding retains complete CIC charge even at the outer CPML edge; it
+does not enlarge the Maxwell mesh. After the solve, only physical-region Yee
+E/B are retained and the CPML E/B and memory variables remain zero. Particle
+motion and current deposition during time advance are unchanged. This is an
+initial-condition approximation, not a time-dependent field contribution from
+the outside particles; compare aperture and initial-field scans, especially
+startup energy and interface flux.
 
 ## Physical scope
 

@@ -26,7 +26,8 @@ foreach(directory
     invalid-watchdog
     physics-k0 physics-signal hdf5 sase auto-z-one auto-z-two
     auto-z-reference ballistic-injection ballistic-injection-two
-    ballistic-injection-mixed)
+    ballistic-injection-mixed ballistic-cpml-initial
+    ballistic-cpml-initial-two)
   file(MAKE_DIRECTORY "${APRL_VERIFY_WORK}/${directory}")
 endforeach()
 file(MAKE_DIRECTORY
@@ -124,6 +125,9 @@ aprl_required_test(required.initial-field.transverse-limit
   $<TARGET_FILE:aprl_core_checks> initial-field-transverse
   "${APRL_VERIFY_CARDS}/initial-field-transverse.yaml"
   "${APRL_VERIFY_CARDS}/initial-field-transverse-invalid.yaml")
+
+aprl_required_test(required.initial-field.cpml-particles
+  $<TARGET_FILE:aprl_core_checks> initial-field-cpml-particles)
 
 aprl_required_test(required.charge-continuity
   $<TARGET_FILE:aprl_core_checks> charge-continuity)
@@ -292,6 +296,24 @@ aprl_required_mpi_test(required.ballistic-boundary-mixed-poisson
 set_tests_properties(required.ballistic-boundary-mixed-poisson PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ballistic-injection-mixed"
   PASS_REGULAR_EXPRESSION "Boundary-injection initial Poisson source: [1-9]")
+
+aprl_required_mpi_test(required.ballistic-boundary-cpml-initial
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/ballistic-boundary-cpml-initial.yaml"
+  ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.ballistic-boundary-cpml-initial PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ballistic-cpml-initial"
+  PASS_REGULAR_EXPRESSION "including [1-9][0-9]* in the transverse CPML")
+
+aprl_required_mpi_test(required.ballistic-boundary-cpml-initial-two-rank
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  "${APRL_VERIFY_CARDS}/ballistic-boundary-cpml-initial.yaml"
+  ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.ballistic-boundary-cpml-initial-two-rank PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ballistic-cpml-initial-two"
+  PASS_REGULAR_EXPRESSION "including [1-9][0-9]* in the transverse CPML")
 
 aprl_required_mpi_test(required.mpi.two-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2

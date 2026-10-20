@@ -798,37 +798,73 @@ namespace aprl
     if (!config_.initialSelfField.enabled) return;
     std::vector<RelativisticParticleSI> initialFieldParticles;
     const std::vector<RelativisticParticleSI>* initialSource = &particles_;
+    const bool includeCpml =
+      config_.initialSelfField.includeTransverseCpmlParticles;
     if (config_.mesh.ballisticOutsideTransverse)
       {
-        /* CIC must be one complete cell clear of the zero-potential
-         * boundary.  Particles beyond that aperture are explicit external
-         * sources and are not silently projected onto the field grid. */
+        /* The legacy solve requires a complete CIC cell between every source
+         * and the inner CPML potential boundary. In the opt-in solve, x/y
+         * sources may occupy the whole mesh including CPML; its temporary
+         * Poisson grid is padded outside the outer mesh surface. The z
+         * boundary retains the existing one-cell protection. */
         const Double spacing[3] = {
           globalGeometry_.dx, globalGeometry_.dy, globalGeometry_.dz
         };
+        unsigned long long localCpmlIncluded = 0;
         for (std::size_t index = 0; index < particles_.size(); ++index)
           {
             bool safe = true;
             for (unsigned int axis = 0; axis < 3; ++axis)
-              safe = safe &&
-                particles_[index].position[axis] >
-                  particleCPML_->physicalLower(axis) + spacing[axis] &&
-                particles_[index].position[axis] <
-                  particleCPML_->physicalUpper(axis) - spacing[axis];
-            if (safe) initialFieldParticles.push_back(particles_[index]);
+              {
+                const Double lower = particleCPML_->physicalLower(axis);
+                const Double upper = particleCPML_->physicalUpper(axis);
+                if (includeCpml && axis < 2)
+                  safe = safe && particles_[index].position[axis] >=
+                    lower - config_.boundary.cpml.cells[axis] * spacing[axis] &&
+                    particles_[index].position[axis] <=
+                    upper + config_.boundary.cpml.cells[axis] * spacing[axis];
+                else
+                  safe = safe && particles_[index].position[axis] >
+                    lower + spacing[axis] &&
+                    particles_[index].position[axis] < upper - spacing[axis];
+              }
+            if (safe)
+              {
+                initialFieldParticles.push_back(particles_[index]);
+                if (includeCpml &&
+                    (particles_[index].position[0] <
+                       particleCPML_->physicalLower(0) ||
+                     particles_[index].position[0] >
+                       particleCPML_->physicalUpper(0) ||
+                     particles_[index].position[1] <
+                       particleCPML_->physicalLower(1) ||
+                     particles_[index].position[1] >
+                       particleCPML_->physicalUpper(1)))
+                  ++localCpmlIncluded;
+              }
           }
         const unsigned long long localIncluded =
           static_cast<unsigned long long>(initialFieldParticles.size());
         unsigned long long globalIncluded = 0;
         MPI_Allreduce(&localIncluded, &globalIncluded, 1,
           MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+        unsigned long long globalCpmlIncluded = 0;
+        MPI_Allreduce(&localCpmlIncluded, &globalCpmlIncluded, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
         if (rank_ == 0)
           {
             std::ostringstream message;
             message << "Boundary-injection initial Poisson source: "
-                    << globalIncluded << " particles at least one complete "
-                       "cell inside the physical aperture. All other "
-                       "particles are omitted from the initial field.";
+                    << globalIncluded << " particles";
+            if (includeCpml)
+              message << " inside the full transverse mesh, including "
+                      << globalCpmlIncluded << " in the transverse CPML; "
+                         "all farther-out particles are omitted. The CPML "
+                         "evolution fields and memories still start at zero.";
+            else
+              message << " at least one complete cell inside the physical "
+                         "aperture. All other particles are omitted from "
+                         "the initial field.";
             logRoot(communicator_, message.str());
           }
         if (globalIncluded == 0)
@@ -854,7 +890,8 @@ namespace aprl
         config_.initialSelfField.maximumMeanTransverseBeta,
         staticFieldGuardCells,
         config_.initialSelfField.relativeTolerance,
-        config_.initialSelfField.maximumIterations, communicator_);
+        config_.initialSelfField.maximumIterations, communicator_,
+        includeCpml);
     if (rank_ == 0)
       {
         std::ostringstream message;
@@ -882,7 +919,9 @@ namespace aprl
           << report.staticFieldGuardCells[0] << ", "
           << report.staticFieldGuardCells[1] << ", "
           << report.staticFieldGuardCells[2]
-          << "), bunch RMS cells=("
+          << "), transverse Poisson padding cells="
+          << report.transversePoissonPaddingCells
+          << ", bunch RMS cells=("
           << report.rmsPositionCells[0] << ", "
           << report.rmsPositionCells[1] << ", "
           << report.rmsPositionCells[2] << "), centre-to-static-boundary "
@@ -892,7 +931,8 @@ namespace aprl
           << report.centrePaddingRms[2]
           << "), temporary scalar memory/rank<="
           << static_cast<Double>(report.temporaryBytes) /
-             (1024.0 * 1024.0) << " MiB. The potential is now released; "
+             (1024.0 * 1024.0) << " MiB including transient CIC charge "
+             "lattices. The potential is now released; "
              "only SI E/B remains. The reported static zero-potential "
              "boundary still requires padding convergence. ";
         if (config_.initialSelfField.model ==
@@ -4378,10 +4418,15 @@ namespace aprl
             message << "Experimental transverse boundary injection: "
                     << globalOutsideTransverse
                     << " boosted particles start outside the physical "
-                       "x/y aperture. They remain ballistic and are "
-                       "excluded from the initial Poisson source until "
-                       "entry; Gauss-law closure across this artificial "
-                       "boundary is approximate.";
+                       "x/y aperture. They remain ballistic without grid "
+                       "current until entry; ";
+            if (config_.initialSelfField.includeTransverseCpmlParticles)
+              message << "only those inside the transverse CPML may "
+                         "contribute to the one-time initial Poisson field. ";
+            else
+              message << "all are excluded from the initial Poisson source. ";
+            message << "Gauss-law closure across this artificial boundary "
+                       "is approximate.";
             logRoot(communicator_, message.str());
           }
       }

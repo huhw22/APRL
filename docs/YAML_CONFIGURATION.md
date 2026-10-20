@@ -358,6 +358,7 @@ stability conditions are detailed in
 initial_self_field:
   enabled: true
   model: relativistic-poisson
+  include_transverse_cpml_particles: false
   relative_tolerance: 1.0e-10
   maximum_mean_transverse_beta: 1.0e-8
   maximum_iterations: 10000
@@ -385,13 +386,22 @@ small nonzero centroid tilt can be allowed explicitly, for example
 `1.0e-7`; the rigid-beam initial field still uses only the mean axial
 velocity, so the chosen limit should be justified for the physics case.
 
-With CPML, the zero-potential surface for the static solve is the **inner CPML
-surface**, and E/B inside CPML start at zero. This prevents a non-radiative
+By default with CPML, the zero-potential surface for the static solve is the
+**inner CPML surface**, and E/B inside CPML start at zero. This prevents a non-radiative
 Coulomb tail from charging zeroed CPML memory variables and then flowing back
 into the physical box. Radiation still sees the normal CPML update. The run
 stops if any CIC charge weight reaches this static boundary. Move every
 particle at least one complete cell inside the CPML entrance or enlarge the
 physical mesh padding rather than silently dropping boundary charge.
+
+For experimental transverse boundary injection,
+`include_transverse_cpml_particles: true` adds particles inside the x/y CPML
+strips to the one-time initial field source. A temporary two-cell transverse
+Poisson pad includes their complete CIC charge; only physical-region E/B are
+retained. CPML E/B and memory still start at zero, and time-advance particle
+handling is unchanged. The option requires
+`mesh.ballistic_outside_transverse: true` and CPML. Compare startup energy and
+aperture convergence because particles farther outside remain omitted.
 
 For an automatic observation-bounded z mesh,
 `mesh.longitudinal.self_field_padding_rms: 0.0` is the explicit

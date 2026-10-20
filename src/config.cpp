@@ -155,7 +155,7 @@ namespace aprl
       if (initial)
         validateMapKeys(initial, "initial_self_field", {
           "enabled", "model", "relative_tolerance", "maximum_iterations",
-          "maximum_mean_transverse_beta"
+          "maximum_mean_transverse_beta", "include_transverse_cpml_particles"
         });
 
       const YAML::Node beam = root["beam"];
@@ -641,7 +641,8 @@ namespace aprl
   {}
 
   InitialSelfFieldConfig::InitialSelfFieldConfig()
-    : enabled(true), model(InitialSelfFieldModel::RelativisticPoisson),
+    : enabled(true), includeTransverseCpmlParticles(false),
+      model(InitialSelfFieldModel::RelativisticPoisson),
       relativeTolerance(1.0e-10), maximumMeanTransverseBeta(1.0e-8),
       maximumIterations(10000)
   {}
@@ -1057,6 +1058,9 @@ namespace aprl
         if (initialSelfField["enabled"])
           result.initialSelfField.enabled =
             initialSelfField["enabled"].as<bool>();
+        if (initialSelfField["include_transverse_cpml_particles"])
+          result.initialSelfField.includeTransverseCpmlParticles =
+            initialSelfField["include_transverse_cpml_particles"].as<bool>();
         if (initialSelfField["model"])
           result.initialSelfField.model = initialSelfFieldModel(
             initialSelfField["model"]);
@@ -1575,6 +1579,14 @@ namespace aprl
       throw configError(mesh["ballistic_outside_transverse"],
         "ballistic transverse boundary injection requires at least two "
         "CPML cells on both x and y");
+    if (result.initialSelfField.includeTransverseCpmlParticles &&
+        (!result.initialSelfField.enabled ||
+         !result.mesh.ballisticOutsideTransverse ||
+         result.boundary.type != EBBoundaryType::Cpml))
+      throw configError(initialSelfField["include_transverse_cpml_particles"],
+        "initial_self_field.include_transverse_cpml_particles requires "
+        "initial_self_field.enabled, mesh.ballistic_outside_transverse "
+        "and CPML");
     if (result.mesh.longitudinal.automatic())
       {
         if (result.boundary.type != EBBoundaryType::Cpml ||
