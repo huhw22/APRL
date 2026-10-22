@@ -30,6 +30,12 @@ ENTRIES = re.compile(
 ACTIVATIONS = re.compile(
     r"Frozen lab-plane injection: activations=(\d+),.*?still frozen=(\d+)"
 )
+INPUT_RECORDS = re.compile(r"Macro-particle normalization: records=(\d+)")
+ALL_PASSED = re.compile(
+    r"Configured stop reached: all (\d+) valid particles passed the last "
+    r"interaction boundary"
+)
+ESCAPED = re.compile(r"excluded escaped particles=(\d+)")
 FIELDS = (
     "step", "time_box_s", "closure_valid", "active_macroparticles",
     "removed_macroparticles", "boundary_injection_entries",
@@ -101,6 +107,22 @@ def log_diagnostics(run_dir):
     if match:
         result["activated_macroparticles"] = int(match.group(1))
         result["still_frozen_macroparticles"] = int(match.group(2))
+    match = INPUT_RECORDS.search(text)
+    if match:
+        result["input_macroparticles"] = int(match.group(1))
+    match = ALL_PASSED.search(text)
+    if match:
+        result["valid_particles_past_last_element"] = int(match.group(1))
+        escaped = ESCAPED.search(text[match.start():].splitlines()[0])
+        result["escaped_macroparticles"] = int(escaped.group(1)) if escaped else 0
+        result["all_input_particles_past_last_element"] = (
+            result["valid_particles_past_last_element"] ==
+            result.get("input_macroparticles") and
+            result["escaped_macroparticles"] == 0 and
+            result.get("still_frozen_macroparticles") == 0
+        )
+    if "no valid particles remain before the last interaction" in text:
+        result["all_input_particles_past_last_element"] = False
     result["duration_exhausted"] = "mesh.duration was exhausted" in text
     result["normal_stop"] = "Configured stop reached:" in text
     return result
@@ -212,6 +234,12 @@ def print_summary(summary):
         print("  activated / still frozen: "
               f"{summary['activated_macroparticles']} / "
               f"{summary['still_frozen_macroparticles']}")
+    if "all_input_particles_past_last_element" in summary:
+        print("  all input particles past last element: "
+              f"{summary['all_input_particles_past_last_element']}")
+        if not summary["all_input_particles_past_last_element"]:
+            print("  WARNING: final state is not a complete whole-bunch "
+                  "crossing of the last element")
     print("  final boundary-source |work| [J]: "
           f"{summary['final_boundary_source_abs_work_J']}")
     if not summary["closure_valid_all_scanned"]:

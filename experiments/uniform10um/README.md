@@ -63,6 +63,32 @@ python3 experiments/uniform10um/analyze.py \
 
 分析器逐条读取已提交的账本记录，给出初值、峰值、末值、最大单步正增量，并在相同计算系时间插值比较两组。CSV 可自行绘图；它不需要载入完整粒子 HDF5。`boundary_source_abs_work_J` 代表边界源活动量级，**不是**外部近场缺失比例；`closure_valid=0` 的原始残差不是严格整束能量守恒证明。
 
+## γ≈929、1 m 无波荡器漂移候选卡
+
+`g929-1m` 是针对启动方法的**首轮大束测试**，不是已经完成的物理收敛结论。束团初始中心在实验室 z=10 µm，末端场面和可选粒子面在 z=1,000,010 µm，故中心到探测面恰好 1 m。卡使用 γ=929.130549、`dz′=5 µm`、自动 `observation-bounded` 纵向盒、初场 4σ 留白和两端各 384 个物理保护格；权重 10 的轻量几何预检得到 6,144 个纵向网格单元，正式运行仍须看启动日志的网格和内存估计。`mesh.duration=50 ps` 只是硬上限。停止条件是 `after-last-element`，会等待所有**仍有效**粒子通过末端面。预计整束通过约需 2,040 个场步（约 34 ps 计算系），实际以启动时 `[duration-estimate]` 和停止日志为准。场面以 1 fs 实验室时间间隔记录原始 E/B；它不是已经减去粒子近场的辐射场。
+
+```bash
+python3 experiments/uniform10um/prepare.py \
+  --input work/uniform10um/particles-10um-50A-w10.h5 \
+  --output-dir work/uniform10um/g929-1m-w10 \
+  --profile g929-1m --electrons 10409720 \
+  --cases held-field,ballistic-field --particle-plane
+```
+
+`prepare.py` 只写卡，不运行 APRL。全粒子 1 m 截面必须用 `--particle-plane`：权重 1 的单组记录约 1.2 GB，可按粒子 ID 与输入惯性轨道配对。整束末态能量账可监测自场量级及突增，**不能当作全体粒子恰好走了 1 m 的截面**：尾粒子到面时，头粒子已继续漂移。正常退出还要核对 `analysis.json` 的 `all_input_particles_past_last_element=true`、`activated_macroparticles` 等于输入行数、`still_frozen_macroparticles=0`、无逃逸粒子，且粒子面 HDF5 完整并有预期记录数；单凭 APRL 进程退出码不够。若一些粒子横向逃逸或纵向自动盒报错，仍可保留结果诊断，但不可称为完整 1 m 截面。
+
+仿真结束后可选用 `analyze_particle_plane.py` 将过面 x/y 和方向斜率与各自输入粒子的无场直线外推配对；它按 `source_id` 分块读取，给出均值、RMS 与抽样绝对误差分位数，不把约千万粒子同时载入内存。此后处理需要 Python `h5py`、NumPy 和至少约 350 MB 临时磁盘，**不参与 Slurm 仿真**。例如：
+
+```bash
+python3 experiments/uniform10um/analyze_particle_plane.py \
+  --input work/uniform10um/particles-10um-50A-w10.h5 \
+  --plane work/uniform10um/g929-1m-w10/runs/g929-1m-held-field/detectors/after-1m.h5 \
+  --plane work/uniform10um/g929-1m-w10/runs/g929-1m-ballistic-field/detectors/after-1m.h5 \
+  --json-out work/uniform10um/g929-1m-w10/particle-plane-comparison.json
+```
+
+在 γ≈929、`dz′=5 µm` 下，单粒子每场步约走 5.71 mm 实验室距离，1 m 约 175 步；整束因固定实验室输入事件的相对论同步跨度，需约 2,040 步。`dz′/γ≈5.38 nm` 是前向光波的实验室等效采样刻度，不是粒子每步行程，且不满足旧 4 m 卡约 1.35 nm 的光波采样要求。这组卡不用于辐射频谱结论。自动盒保证设计的粒子世界管和前向因果路径，不证明末态全空间场或近场边界已收敛；初始 Poisson、横向开边界注入、CPML 和宏粒子权重仍须扫描。轻量几何预检发现 ballistic 模式初始约 5.96% 粒子在整个横向网格外，held 模式约 0.03%；两组初始自场实际纳入的源粒子数因此不同，场差不能只解释为启动面后的轨道动力学差。关闭初场的控制组会跳过 4σ 初场留白，自动网格因而可能改变，不可在未对齐网格的情况下将差异全归于初场。现有冻结/开边界能量账 `closure_valid=0`，其残差只作数量级诊断。
+
 ## γ≈929 几何预检与生产限制
 
 固定实验室面输入在高 boost 的 `t_box=0` 伸展约 11.4 mm，而从第一到最后一个粒子过启动面的计算系时间差约 31 ps。因此不能把一个只覆盖微米自由漂移的盒子或几十飞秒的运行当作完整整束启动。曾经拟议的 5.12 mm 纵向网格不足以容纳初始分布。即便增大到预检的 `3072×5 µm = 15.36 mm`，也只验证了初始几何，没有证明整段演化期间粒子、近场和观测面都远离纵向 CPML。

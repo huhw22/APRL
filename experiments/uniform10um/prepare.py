@@ -17,6 +17,9 @@ PROFILES = {
     "g2-short-fine": (2.0, 512, 0.5, 180.0, 30.0, 5.0, 24),
     "g2": (2.0, 256, 1.0, 300.0, 100.0, 5.0, 12),
     "g100": (100.0, 2048, 2.0, 7000.0, 200000.0, 25.0, 12),
+    # The observation plane is exactly 1 m beyond the initial center at 10 um.
+    # The whole 10 um lab bunch takes about 34 ps / 2040 Maxwell steps to pass.
+    "g929-1m": (929.130549, "auto", 5.0, 50000.0, 1000010.0, 1.0, 12),
 }
 
 CASES = {
@@ -37,16 +40,35 @@ def card(profile, name, input_file, electrons, output_root,
          particle_plane):
     gamma, nz, dz, duration, stop_z, field_rhythm, cpml_z = PROFILES[profile]
     held, initial_field, feedback = CASES[name]
+    one_meter = profile == "g929-1m"
     run_dir = (output_root / "runs" / (profile + "-" + name)).resolve()
     input_file = input_file.resolve()
-    particle_entry = ("    - {name: after-20um, z: 20, "
-                      "buffer_records: 65536, compression: 0}\n") \
-        if particle_plane else ""
+    plane_z = stop_z if one_meter else 20.0
+    particle_name = "after-1m" if one_meter else "after-20um"
+    particle_entry = (
+        f"    - {{name: {particle_name}, z: {plane_z}, "
+        "buffer_records: 65536, compression: 0}\n"
+    ) if particle_plane else ""
     particle_plane_yaml = particle_entry or "    []\n"
+    longitudinal_yaml = """  longitudinal:
+    mode: observation-bounded
+    lower_guard_cells: 384
+    upper_guard_cells: 384
+    self_field_padding_rms: 4.0
+    ballistic_time_safety_factor: 1.1
+    alignment_cells: 256
+""" if one_meter else ""
+    stop_yaml = ("stop: {mode: after-last-element}" if one_meter else
+                 f"stop: {{mode: reference-center-z, z: {stop_z}}}")
+    runtime_yaml = (
+        "runtime: {mode: throughput, resource_monitor: {enabled: true, "
+        "progress_interval_steps: 50, calibration_steps: 1}}" if one_meter
+        else "runtime: {mode: throughput, resource_monitor: {enabled: false}}"
+    )
     return f"""# Independent synthetic 10 um, 50 A laboratory-plane event bunch.
 # Profile {profile}; case {name}. No Elegant data and no magnetic elements.
 units: {{length: micrometer, time: femtosecond}}
-runtime: {{mode: throughput, resource_monitor: {{enabled: false}}}}
+{runtime_yaml}
 output:
   overwrite: false
   manifest: {json.dumps(str(run_dir / 'run-manifest.yaml'))}
@@ -61,7 +83,7 @@ mesh:
   duration: {duration}
   boost_gamma: {gamma}
   particle_steps_per_undulator_period: 1
-boundary:
+{longitudinal_yaml}boundary:
   type: cpml
   cells: [10, 10, {cpml_z}]
   polynomial_order: 3
@@ -92,9 +114,9 @@ detectors:
   enabled: true
   directory: {json.dumps(str(run_dir / 'detectors'))}
   field_planes:
-    - {{name: near-field, z: 20, rhythm: {field_rhythm}, buffer_samples: 4, compression: 0}}
+    - {{name: near-field, z: {plane_z}, rhythm: {field_rhythm}, buffer_samples: 4, compression: 0}}
   particle_planes:
-{particle_plane_yaml}stop: {{mode: reference-center-z, z: {stop_z}}}
+{particle_plane_yaml}{stop_yaml}
 trajectory: {{enabled: false}}
 energy_ledger:
   enabled: true
@@ -117,7 +139,7 @@ def main():
     parser.add_argument("--cases", default=",".join(CASES),
                         help="comma-separated names; default writes six comparisons")
     parser.add_argument("--particle-plane", action="store_true",
-                        help="also write all particles at 20 um (roughly 112 bytes/row/case)")
+                        help="also write all particles at the profile's observation plane (roughly 112 bytes/row/case)")
     parser.add_argument("--overwrite-cards", action="store_true")
     args = parser.parse_args()
     if not args.input.is_file():
