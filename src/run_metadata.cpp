@@ -192,6 +192,17 @@ namespace aprl
                    << "  maximum_mean_transverse_beta: "
                    << config.initialSelfField.maximumMeanTransverseBeta
                    << "\n"
+                   << "resolved_beam_reference:\n"
+                   << "  input_plane_z_m: "
+                   << config.reference.inputPlaneZ << "\n"
+                   << "  frozen_lab_plane_injection: "
+                   << (config.reference.frozenLabPlaneInjection ?
+                       "true" : "false") << "\n"
+                   << "  hold_transverse_until_activation: "
+                   << (config.reference.holdTransverseUntilActivation ?
+                       "true" : "false") << "\n"
+                   << "  activation_plane_z_m: "
+                   << config.reference.activationPlaneZ << "\n"
                    << "resolved_mesh:\n"
                    << "  cells: [" << config.mesh.cells[0] << ", "
                    << config.mesh.cells[1] << ", "
@@ -207,6 +218,9 @@ namespace aprl
                    << config.mesh.center[2] << "]\n"
                    << "  ballistic_outside_transverse: "
                    << (config.mesh.ballisticOutsideTransverse ?
+                       "true" : "false") << "\n"
+                   << "  self_field_feedback: "
+                   << (config.mesh.selfFieldFeedback ?
                        "true" : "false") << "\n";
             if (longitudinalLayout)
               {

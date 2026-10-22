@@ -153,6 +153,8 @@ namespace aprl
     std::uint64_t modeledLocalPeakBytes_;
     unsigned long long lostParticles_;
     unsigned long long ballisticBoundaryEntries_;
+    unsigned long long frozenPlaneActivations_;
+    unsigned long long crossRankActivationPushes_;
     std::vector<BoundaryInjectionWorkSample> boundaryInjectionWorkSamples_;
     unsigned long long cpmlEntryCount_[6];
     Double cpmlEntryCharge_[6];

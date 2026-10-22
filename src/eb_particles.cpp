@@ -2,12 +2,13 @@
 
 #include <cmath>
 #include <stdexcept>
+#include <string>
 
 namespace aprl
 {
   RelativisticParticleSI::RelativisticParticleSI()
     : position(0.0), properVelocity(0.0), charge(0.0), mass(0.0),
-      weight(1.0), id(0), sourceId(0)
+      weight(1.0), id(0), sourceId(0), frozen(false)
   {}
 
   void RelativisticBorisPusher::pushMomentum(
@@ -103,7 +104,8 @@ namespace aprl
       Double timeBoxSI,
       Double fieldTimeStep,
       unsigned int substeps,
-      Double* prescribedWorkJ)
+      Double* prescribedWorkJ,
+      bool includeGridFields)
   {
     if (substeps == 0 || !(fieldTimeStep > 0.0) ||
         !std::isfinite(fieldTimeStep))
@@ -111,8 +113,19 @@ namespace aprl
         "Particle subcycling needs positive finite dt and substeps");
     FieldVector<Double> gridElectric(0.0);
     FieldVector<Double> gridMagnetic(0.0);
-    fields.sampleFieldsPosition(particle.position, gridOriginSI,
-                                gridElectric, gridMagnetic);
+    if (includeGridFields)
+      {
+        try
+          {
+            fields.sampleFieldsPosition(particle.position, gridOriginSI,
+                                        gridElectric, gridMagnetic);
+          }
+        catch (const std::out_of_range& error)
+          {
+            throw std::out_of_range(std::string("particle grid-field push: ") +
+                                    error.what());
+          }
+      }
     const Double particleDt = fieldTimeStep /
       static_cast<Double>(substeps);
     Double work = 0.0;

@@ -19,6 +19,12 @@ target_compile_options(aprl_shutdown_watchdog_probe PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>
 )
 
+add_executable(aprl_frozen_plane_scan frozen_plane_scan.cpp)
+target_link_libraries(aprl_frozen_plane_scan PRIVATE direct_eb_core)
+target_compile_options(aprl_frozen_plane_scan PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>
+)
+
 set(APRL_VERIFY_WORK "${CMAKE_CURRENT_BINARY_DIR}/work")
 set(APRL_VERIFY_CARDS "${CMAKE_CURRENT_SOURCE_DIR}/cards")
 foreach(directory
@@ -32,6 +38,7 @@ foreach(directory
 endforeach()
 file(MAKE_DIRECTORY
   "${APRL_VERIFY_WORK}/output-safety"
+  "${APRL_VERIFY_WORK}/frozen-mpi-release"
   "${APRL_VERIFY_WORK}/postprocess/signal"
   "${APRL_VERIFY_WORK}/postprocess/baseline"
   "${APRL_VERIFY_WORK}/postprocess/ballistic")
@@ -60,6 +67,10 @@ configure_file(
 configure_file(
   "${CMAKE_CURRENT_SOURCE_DIR}/check_shutdown_watchdog.cmake.in"
   "${CMAKE_CURRENT_BINARY_DIR}/check_shutdown_watchdog.cmake"
+  @ONLY)
+configure_file(
+  "${APRL_VERIFY_CARDS}/frozen-mpi-release.yaml.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/frozen-mpi-release.yaml"
   @ONLY)
 
 function(aprl_required_test name)
@@ -114,6 +125,31 @@ aprl_required_mpi_test(required.lorentz-elegant
 
 aprl_required_test(required.boris-phase
   $<TARGET_FILE:aprl_core_checks> boris-phase)
+
+add_test(NAME required.frozen-plane.free-drift
+  COMMAND $<TARGET_FILE:aprl_frozen_plane_scan>
+    "${APRL_VERIFY_WORK}/frozen-plane")
+set_tests_properties(required.frozen-plane.free-drift PROPERTIES
+  LABELS "required;functional" TIMEOUT 180)
+
+aprl_required_mpi_test(required.frozen-plane.free-drift-mpi
+  ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_frozen_plane_scan>
+  "${APRL_VERIFY_WORK}/frozen-plane-mpi2" ${MPIEXEC_POSTFLAGS})
+set_tests_properties(required.frozen-plane.free-drift-mpi PROPERTIES
+  TIMEOUT 180)
+
+aprl_required_mpi_test(required.frozen-plane.activation-slab-transfer
+  ${CMAKE_COMMAND}
+  "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
+  "-DAPRL=$<TARGET_FILE:aprl>"
+  "-DMPIEXEC=${MPIEXEC_EXECUTABLE}"
+  "-DMPIEXEC_NUMPROC_FLAG=${MPIEXEC_NUMPROC_FLAG}"
+  "-DCARD=${CMAKE_CURRENT_BINARY_DIR}/frozen-mpi-release.yaml"
+  "-DINPUT=${APRL_VERIFY_WORK}/frozen-mpi-release/particles.h5"
+  -P "${CMAKE_CURRENT_SOURCE_DIR}/check_frozen_mpi_release.cmake")
+set_tests_properties(required.frozen-plane.activation-slab-transfer PROPERTIES
+  TIMEOUT 90)
 
 aprl_required_test(required.longitudinal-layout
   $<TARGET_FILE:aprl_core_checks> longitudinal-layout)
@@ -501,6 +537,7 @@ endif()
 add_custom_target(verify_required
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -L required
   DEPENDS aprl aprl_core_checks aprl_output_checks
+    uniform_lab_plane_bunch_generator
     aprl_shutdown_watchdog_probe energy_ledger_report
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
   USES_TERMINAL
@@ -509,6 +546,7 @@ add_custom_target(verify_required
 add_custom_target(verify_required_no_mpi
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -L required -LE mpi
   DEPENDS aprl aprl_core_checks aprl_output_checks
+    uniform_lab_plane_bunch_generator
   WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
   USES_TERMINAL
   COMMENT "Running required non-MPI APRL verification tests"

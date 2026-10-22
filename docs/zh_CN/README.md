@@ -23,6 +23,7 @@
 - [Cowan-z Maxwell 内核与 CPML 边界](MAXWELL_COWAN_CPML.md)
 - [粒子子步进](PARTICLE_SUBCYCLING.md)
 - [初始粒子自场](INITIAL_SELF_FIELD.md)
+- [固定实验室启动面与三组自由漂移对照](FROZEN_LAB_PLANE_TEST.md)
 - [考虑 CPML 的粒子开放边界](PARTICLE_OPEN_BOUNDARY.md)
 
 ## 输出、探测器与重构

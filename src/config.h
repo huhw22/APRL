@@ -51,6 +51,9 @@ namespace aprl
     unsigned int maximumParticleSubsteps;
     EBMaxwellSolver fieldSolver;
     EBCurrentFilter currentFilter;
+    /* Diagnostic control: keep evolving/depositing fields, but omit their
+     * force on particles. Prescribed device fields remain active. */
+    bool selfFieldFeedback;
     /* Experimental finite-window boundary injection: particles outside the
      * transverse physical region remain ballistic until they enter it. */
     bool ballisticOutsideTransverse;
@@ -142,6 +145,10 @@ namespace aprl
     Double initialCenterZ;
     Double inputPlaneZ;
     bool inputPlaneZSet;
+    bool frozenLabPlaneInjection;
+    bool holdTransverseUntilActivation;
+    Double activationPlaneZ;
+    bool activationPlaneZSet;
 
     BeamReferenceConfig();
   };

@@ -1,0 +1,104 @@
+# 独立 10 µm、50 A 自由漂移启动实验
+
+这里的输入由 APRL 自身生成，**不读取 Elegant 导出**。实验用于比较完整三维冻结漂移与“横向位置保持至启动面”两种启动处理；不放波荡器。生成器在固定实验室输入面产生 HDF5 v4 粒子事件：纵向均匀分布，横向和动量按照旧 `beam.ele` 的 Twiss 参数独立抽样。默认全长 10 µm、电流 50 A、中心动量 600 MeV/c、`emit_x=emit_y=10⁻⁹ m`、`beta_x=4.527431766 m`、`beta_y=4.77124831 m`、`sigma_dp=1.3×10⁻⁴`、随机种子 20261019。约 1.668 pC 由 10,409,720 个电子表示。
+
+## 本地小规模测试
+
+从仓库根目录执行。构建需要与运行时相容的 MPI、HDF5 和 yaml-cpp；若仅单进程且只有串行 HDF5，可在 CMake 配置时显式使用 `-DAPRL_REQUIRE_PARALLEL_HDF5=OFF`。
+
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4 --target aprl uniform_lab_plane_bunch_generator energy_ledger_report
+mkdir -p work/uniform10um
+./build/uniform_lab_plane_bunch_generator --plan --macro-weight-electrons 10
+./build/uniform_lab_plane_bunch_generator \
+  --output work/uniform10um/particles-10um-50A-w10.h5 \
+  --macro-weight-electrons 10 --seed 20261019
+./build/uniform_lab_plane_bunch_generator \
+  --verify work/uniform10um/particles-10um-50A-w10.h5
+```
+
+权重 10 的文件约 1,040,972 行，但 `beam.input.electrons` 仍为 10,409,720；每个宏粒子的物理电荷是 10 个电子。若改动生成器的长度、电流或权重，要从生成器输出/文件属性读取新的 `represented_electrons`，并作为下面的 `--electrons`，不能机械沿用本例数值。
+
+两张历史本机 γ=2 卡 [`pilot-g2-held-w10.yaml`](pilot-g2-held-w10.yaml) 和 [`pilot-g2-ballistic-w10.yaml`](pilot-g2-ballistic-w10.yaml) 曾用于修复前的较长漂移试运行，其固定输出目录已经占用；**不要直接重新运行**。它们说明了带初场、自场反作用、每步能量账、单个场面且不写大粒子探测面的设置。修复后的默认测试用 `g2-short`：束团中心从实验室 z=10 µm 到 z=30 µm，即目标约 20 µm 自由漂移；下面命令会生成全新的卡和输出目录。旧 `g2` 配置仍可作为到 z=100 µm 的长漂移参考。
+
+```bash
+python3 experiments/uniform10um/prepare.py \
+  --input work/uniform10um/particles-10um-50A-w10.h5 \
+  --output-dir work/uniform10um/g2-suite-w10 \
+  --profile g2-short --electrons 10409720
+mkdir -p work/uniform10um/g2-suite-w10/runs/g2-short-held-field
+mpiexec -n 4 ./build/aprl \
+  work/uniform10um/g2-suite-w10/cards/g2-short-held-field.yaml \
+  > work/uniform10um/g2-suite-w10/runs/g2-short-held-field/run.log 2>&1
+```
+
+`prepare.py` 默认写六组卡：`held`/`ballistic` ×（初场开且反作用开、初场关且反作用开、初场开但反作用关）。先运行上面两个“初场开且反作用开”的配对组；需要分离零场启动和轨道反作用时再逐组运行控制组。不要同时盲目提交六个大任务。若只需部分组，使用 `--cases held-field,ballistic-field`。γ=100 权重 10 组可用 `--profile g100` 生成，但在其 `dz=2 µm` 下每场步约对应实验室 397 µm 粒子行程，**不能用于判定 20 µm 启动瞬态**，也不是 γ≈929 的收敛证明。改变输入文件后生成新卡，不要改旧卡对应的运行记录。只有明确要保存每个过面粒子时才加 `--particle-plane`：权重 1 时单面可超过 1 GB/组。
+
+启动原点曾被发现重复加上 `initial_center_z`；修复并重编译之前的数值**一律作废**。修复后权重 1 的 `g2-short` 主配对已在新目录重跑：两组均正常结束，10,409,720 个宏粒子全部过启动面。横向保持/完整三维的场能初值分别为 `1.061901394/1.061898464×10⁻⁹ J`，峰值为 `1.061991436/1.061988506×10⁻⁹ J`；最大单步正增量分别为 `9.004209/9.004167×10⁻¹⁴ J`。在相同计算系时间比较，最大场能差为较大峰值的 `2.759×10⁻⁶`，没有检测到病态增长。权重 10 的重复试验给出相近的差异比例 `2.735×10⁻⁶`。这些只是 **γ=2 的粗步长 pilot**，不是 γ≈929 的验证：`dz=1 µm` 时每个场步对应实验室粒子约 3.732 µm 行程，20 µm 仅约 5.36 次场更新，尚需较细 `dz` 收敛扫描。两组结束时间不同，不能直接把末态场能作相同时间差。冻结/边界模式的 `closure_valid=0`，权重 1 两组能量交换归一化残差警告约 6.50%/6.67%，初始 Poisson 边界约 3.92 RMS；后续仍需初场边界、网格、CPML、孔径和权重扫描。
+
+权重 10 的四组控制卡也已正常跑完，全部粒子过启动面。关闭初场但保留粒子反馈时，两模式从零场增长到约 `3.70/3.94×10⁻¹¹ J`，最大单步正增量约 `2.37/2.41×10⁻¹² J`，明显大于有初场组的约 `9.0×10⁻¹⁴ J`；零场启动故意违反初始 Gauss 约束，**不能把这段增长直接解释成自激不稳定**。保留初场而关掉粒子反作用时，账本报告精度下的场能历程与有反作用组几乎相同，说明这段 γ=2 短漂移内反馈影响尚未分辨出来，而不是证明反馈永远可忽略。零场组原始交换残差警告约 18.5%/19.8%，`closure_valid=0`；控制组也不是严格的能量守恒检验。完整原始输出在本机 `work/uniform10um/corrected-w10/`，不随源码包传输。
+
+还做了一组权重 10、γ=2 的细网格对照：`g2-short-fine` 将 `dz` 从 1 µm 降至 0.5 µm、`nz` 从 256 加至 512、z-CPML 从 12 加至 24 格，保持盒长与 CPML 物理厚度不变。两模式均正常结束且全部粒子激活；横向保持/完整三维的初始场能为 `1.067558505/1.067554745×10⁻⁹ J`，最大单步正增量为 `2.228685/2.228673×10⁻¹⁴ J`，约为粗网格的四分之一。相同时间模式差的最大值占场能峰值 `3.52×10⁻⁶`，粗网格为 `2.73×10⁻⁶`；初始场能绝对值也改变约 0.5%。**这还不是收敛证据**，只是表明粗步长的单步尖峰对步长敏感。若要重现细网格卡，可运行：
+
+```bash
+python3 experiments/uniform10um/prepare.py \
+  --input work/uniform10um/particles-10um-50A-w10.h5 \
+  --output-dir work/uniform10um/g2-fine-repeat \
+  --profile g2-short-fine --electrons 10409720 \
+  --cases held-field,ballistic-field
+```
+
+本机参考细网格结果在 `work/uniform10um/g2-fine-w10/analysis.json`；该目录使用实验时手工改出的 `g2-short` 卡名，新 `g2-short-fine` profile 复现的是其物理配置，并在输出名中显式区分网格。
+
+用已构建的 `energy_ledger_report` 读取完整场能历程，无需 Python `h5py`：
+
+```bash
+python3 experiments/uniform10um/analyze.py \
+  work/uniform10um/g2-suite-w10/runs/g2-short-held-field \
+  work/uniform10um/g2-suite-w10/runs/g2-short-ballistic-field \
+  --json-out work/uniform10um/pilot-summary.json \
+  --csv-out work/uniform10um/pilot-energy.csv
+```
+
+分析器逐条读取已提交的账本记录，给出初值、峰值、末值、最大单步正增量，并在相同计算系时间插值比较两组。CSV 可自行绘图；它不需要载入完整粒子 HDF5。`boundary_source_abs_work_J` 代表边界源活动量级，**不是**外部近场缺失比例；`closure_valid=0` 的原始残差不是严格整束能量守恒证明。
+
+## γ≈929 几何预检与生产限制
+
+固定实验室面输入在高 boost 的 `t_box=0` 伸展约 11.4 mm，而从第一到最后一个粒子过启动面的计算系时间差约 31 ps。因此不能把一个只覆盖微米自由漂移的盒子或几十飞秒的运行当作完整整束启动。曾经拟议的 5.12 mm 纵向网格不足以容纳初始分布。即便增大到预检的 `3072×5 µm = 15.36 mm`，也只验证了初始几何，没有证明整段演化期间粒子、近场和观测面都远离纵向 CPML。
+
+更根本的是时间分辨率：γ≈929、此束能量下，`dz=5 µm` 的 Cowan 步长为 16.6782 fs（计算系），粒子每步约前进 5.7136 mm（实验室系）；目标 20 µm 的自由漂移只占约 0.00350 个 Maxwell 步。即使粒子过探测面的记录可在一步两端之间插值，场源/PIC 仍按 Maxwell 步更新，不能据此称 20 µm 内的自场变化已被解析。粒子子步或扩大 `nz` 都不能代替场的时间分辨率。加上 `ballistic_outside_transverse` 与 `particle_retirement` 在现有配置中互斥，现阶段**没有经验证的 γ929 整束短漂移带场服务器卡**，也不会在本包里给出貌似可运行的生产卡。高 boost 后续必须另行设计可解析短漂移的坐标/时间或诊断方案、完整整束停止条件、纵向因果盒和收敛扫描，不能直接把以下几何卡当成仿真卡。
+
+以下只做准确的初始横向孔径计数，**初场关闭、无反作用、无探测器、无能量账，不能检验场瞬态**。运行器在 APRL 完成几何及初始化日志后发送 SIGINT；最多一个 Maxwell 步，正常受控退出应是状态码 0，日志出现 `Direct E/B run stopped after a complete field step`。不要直接运行这些 16 fs 卡，否则会因未达到物理停止位置而触发预期的 `mesh.duration` 耗尽错误。固定例卡仅适用于本机路径；服务器用生成器重写绝对路径。
+
+```bash
+python3 experiments/uniform10um/geometry_preflight.py \
+  --input work/uniform10um/particles-10um-50A-w10.h5 \
+  --output-dir work/uniform10um/geometry-g929-w10 \
+  --electrons 10409720 --run
+```
+
+修复启动原点重复加 `initial_center_z` 之后，用完整权重 1 输入（10,409,720 宏粒子）作过一次几何预检：横向保持模式 `t_box=0` 物理区外 43,893 个（0.421654%）、全网格外 2,855 个（0.0274263%）；完整三维模式分别为 1,322,041 个（12.7001%）、623,284 个（5.98752%）。原先修复前的高比例已作废。这里的“物理区外”包括横向 CPML 和全网格外；初始 Poisson 可选择一次性考虑仍在 CPML 内的粒子，但全网格外粒子无法进入初场源。这些数值只适用于本次随机输入、±210 µm 物理区半宽和 ±260 µm 全网格半宽，**是初始几何而非带场稳定性验证**。生产配置或源码变化后要重做预检。横向保持本身是非物理近似，启动面的横向电流跃变可能诱发场，必须再看带场对照。
+
+## 服务器移植
+
+若服务器不能直接 `git pull` 当前未提交的开发版本，可只传源码包，不传约 667 MB 的权重 1 HDF5：
+
+```bash
+experiments/uniform10um/package_server.sh
+# 将输出的 tar.gz 传到服务器，在专用目录解压
+tar -xzf aprl-uniform10um-source-YYYYMMDD-HHMMSS.tar.gz
+cd aprl-uniform10um
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build -j4 --target aprl uniform_lab_plane_bunch_generator energy_ledger_report
+mkdir -p work/uniform10um
+./build/uniform_lab_plane_bunch_generator \
+  --output work/uniform10um/particles-10um-50A-w1.h5 \
+  --macro-weight-electrons 1 --seed 20261019
+./build/uniform_lab_plane_bunch_generator \
+  --verify work/uniform10um/particles-10um-50A-w1.h5
+```
+
+权重 1 是 10,409,720 行，文件约 667 MB；服务器上重新生成可避免跨机器搬运大输入。源码包无二进制和 HDF5，服务器必须用其自己的 MPI/HDF5 环境编译。生成器、运行卡、分析器分别使用 `--plan`、`--verify`、独立输出目录，便于给每次运行留可核查的记录。结果归档时请填写 [`REPORT_TEMPLATE.md`](REPORT_TEMPLATE.md)。
+
+服务器上权重 1 的 γ=2、约 20 µm 实验室自由漂移配对提交可参考 [`submit_g2_pair.sbatch`](submit_g2_pair.sbatch)：**从仓库根目录执行** `sbatch experiments/uniform10um/submit_g2_pair.sbatch`。脚本进入 `SLURM_SUBMIT_DIR`（避免 Slurm spool 目录定位错误），默认申请一节点 8 rank，用 `mpiexec -n 8` 顺序跑两个案例，不假设 `srun --mpi` 与已编译 MPI 相容；可在提交环境设 `APRL_MPI_RANKS` 为不超过分配数的整数。先加载与构建 APRL 时完全一致的 MPI/并行 HDF5 模块，再提交。Slurm 的 `slurm-<jobid>.out/.err` 是调度/脚本日志，各组 APRL 日志在各自 `runs/g2-short-*/run.log`，场面和能量账也分别在相应目录。每次以作业 ID 建新目录；若目录已存在就退出，绝不覆盖旧结果。这是模板，不会自行提交任务，也不代表 γ=2 可外推到 γ≈929。

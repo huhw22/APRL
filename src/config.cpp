@@ -124,7 +124,8 @@ namespace aprl
             "field_solver", "current_filter", "cells", "cell_size", "center",
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
-            "resolution", "ballistic_outside_transverse"
+            "resolution", "ballistic_outside_transverse",
+            "self_field_feedback"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
           if (longitudinal)
@@ -165,7 +166,9 @@ namespace aprl
           const YAML::Node reference = beam["reference"];
           if (reference)
             validateMapKeys(reference, "beam.reference", {
-              "initial_center_z", "input_plane_z"
+              "initial_center_z", "input_plane_z",
+              "frozen_lab_plane_injection", "activation_plane_z",
+              "hold_transverse_until_activation"
             });
           const YAML::Node input = beam["input"];
           if (input)
@@ -624,6 +627,7 @@ namespace aprl
       maximumParticleSubsteps(4096),
       fieldSolver(EBMaxwellSolver::CowanZ),
       currentFilter(EBCurrentFilter::None),
+      selfFieldFeedback(true),
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -656,7 +660,10 @@ namespace aprl
   }
 
   BeamReferenceConfig::BeamReferenceConfig()
-    : initialCenterZ(0.0), inputPlaneZ(0.0), inputPlaneZSet(false)
+    : initialCenterZ(0.0), inputPlaneZ(0.0), inputPlaneZSet(false),
+      frozenLabPlaneInjection(false),
+      holdTransverseUntilActivation(false), activationPlaneZ(0.0),
+      activationPlaneZSet(false)
   {}
 
   BeamlineElementExtent::BeamlineElementExtent()
@@ -863,6 +870,9 @@ namespace aprl
     if (mesh["ballistic_outside_transverse"])
       result.mesh.ballisticOutsideTransverse =
         mesh["ballistic_outside_transverse"].as<bool>();
+    if (mesh["self_field_feedback"])
+      result.mesh.selfFieldFeedback =
+        mesh["self_field_feedback"].as<bool>();
     const YAML::Node longitudinal = mesh["longitudinal"];
     if (automaticLongitudinal)
       {
@@ -1098,7 +1108,38 @@ namespace aprl
           result.inputUnits.length;
         result.reference.inputPlaneZSet = true;
       }
-
+    if (reference["frozen_lab_plane_injection"])
+      result.reference.frozenLabPlaneInjection =
+        reference["frozen_lab_plane_injection"].as<bool>();
+    if (reference["hold_transverse_until_activation"])
+      result.reference.holdTransverseUntilActivation =
+        reference["hold_transverse_until_activation"].as<bool>();
+    if (result.reference.holdTransverseUntilActivation &&
+        !result.reference.frozenLabPlaneInjection)
+      throw configError(reference["hold_transverse_until_activation"],
+        "hold_transverse_until_activation requires frozen_lab_plane_injection: true");
+    if (reference["activation_plane_z"])
+      {
+        result.reference.activationPlaneZ = finiteDouble(
+          reference["activation_plane_z"],
+          "particle activation-plane z") * result.inputUnits.length;
+        result.reference.activationPlaneZSet = true;
+      }
+    if (result.reference.frozenLabPlaneInjection &&
+        !result.reference.inputPlaneZSet)
+      throw configError(reference["frozen_lab_plane_injection"],
+        "frozen_lab_plane_injection requires beam.reference.input_plane_z");
+    if (result.reference.activationPlaneZSet &&
+        !result.reference.frozenLabPlaneInjection)
+      throw configError(reference["activation_plane_z"],
+        "activation_plane_z requires frozen_lab_plane_injection: true");
+    if (result.reference.frozenLabPlaneInjection &&
+        !result.reference.activationPlaneZSet)
+      result.reference.activationPlaneZ = result.reference.inputPlaneZ;
+    if (result.reference.activationPlaneZSet &&
+        result.reference.activationPlaneZ > result.reference.inputPlaneZ)
+      throw configError(reference["activation_plane_z"],
+        "activation_plane_z must be at or upstream of input_plane_z");
     const YAML::Node input = required(beam, "input");
     result.beam.type = beamInputType(required(input, "type"));
     result.beam.electrons = finiteDouble(required(input, "electrons"),
@@ -1108,6 +1149,10 @@ namespace aprl
     if (input["position_offset"])
       result.beam.positionOffset = finiteVector3(input["position_offset"],
         "beam position offset", result.inputUnits.length);
+    if (result.reference.frozenLabPlaneInjection &&
+        result.beam.positionOffset[2] != 0.0)
+      throw configError(input["position_offset"],
+        "frozen_lab_plane_injection requires beam.input.position_offset z = 0; shift input_plane_z instead");
 
     if (result.beam.type == BeamInputType::Hdf5)
       {

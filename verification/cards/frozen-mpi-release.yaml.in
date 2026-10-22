@@ -1,0 +1,43 @@
+# Deterministic small synthetic fixed-plane bunch; intentionally no Elegant input.
+# Four 16-cell z slabs place the activation worldline across an MPI interface.
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output:
+  overwrite: true
+  manifest: "@APRL_VERIFY_WORK@/frozen-mpi-release/run-manifest.yaml"
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  ballistic_outside_transverse: true
+  self_field_feedback: true
+  cells: [104, 104, 64]
+  cell_size: [5, 5, 1]
+  center: [0, 0, 0]
+  duration: 100
+  boost_gamma: 2
+  particle_steps_per_undulator_period: 1
+boundary:
+  type: cpml
+  cells: [10, 10, 8]
+  polynomial_order: 3
+  target_reflection: 1.0e-8
+  kappa_max: 8
+  alpha_fraction: 0
+initial_self_field: {enabled: false, model: relativistic-poisson}
+beam:
+  reference:
+    input_plane_z: 0
+    initial_center_z: 10
+    frozen_lab_plane_injection: true
+    activation_plane_z: 0
+    hold_transverse_until_activation: true
+  input:
+    type: hdf5
+    file: "@APRL_VERIFY_WORK@/frozen-mpi-release/particles.h5"
+    electrons: 10410
+    position_offset: [0, 0, 0]
+sources: {incident_waves: [], magnetic_elements: []}
+detectors: {enabled: false}
+stop: {mode: reference-center-z, z: 20}
+trajectory: {enabled: false}
+energy_ledger: {enabled: false}

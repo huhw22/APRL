@@ -154,6 +154,38 @@ target_compile_options(particle_text_to_hdf5 PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
+add_executable(uniform_lab_plane_bunch_generator
+  utilities/uniform_lab_plane_bunch_generator.cpp
+)
+target_include_directories(uniform_lab_plane_bunch_generator PRIVATE
+  ${HDF5_INCLUDE_DIRS}
+)
+target_link_libraries(uniform_lab_plane_bunch_generator PRIVATE
+  MPI::MPI_CXX
+  ${HDF5_LIBRARIES}
+)
+target_compile_options(uniform_lab_plane_bunch_generator PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
+)
+if(BUILD_TESTING)
+  file(MAKE_DIRECTORY
+    "${CMAKE_BINARY_DIR}/verification/work/uniform-generator")
+  set(APRL_UNIFORM_GENERATOR_TEST_FILE
+    "${CMAKE_BINARY_DIR}/verification/work/uniform-generator/particles.h5")
+  add_test(NAME required.uniform-generator.generate
+    COMMAND $<TARGET_FILE:uniform_lab_plane_bunch_generator>
+      --output "${APRL_UNIFORM_GENERATOR_TEST_FILE}"
+      --macro-weight-electrons 1000 --seed 17 --overwrite)
+  set_tests_properties(required.uniform-generator.generate PROPERTIES
+    LABELS "required;functional")
+  add_test(NAME required.uniform-generator.verify
+    COMMAND $<TARGET_FILE:uniform_lab_plane_bunch_generator>
+      --verify "${APRL_UNIFORM_GENERATOR_TEST_FILE}")
+  set_tests_properties(required.uniform-generator.verify PROPERTIES
+    DEPENDS required.uniform-generator.generate
+    LABELS "required;functional")
+endif()
+
 if(APRL_BUILD_SASE_BUNCH_GENERATOR)
   add_executable(sase_bunch_generator
     utilities/sase_bunch_generator.cpp
@@ -264,7 +296,8 @@ target_compile_options(lab_frame_energy_estimate PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
-install(TARGETS aprl particle_text_to_hdf5 undulator_resonance
+install(TARGETS aprl particle_text_to_hdf5
+  uniform_lab_plane_bunch_generator undulator_resonance
   energy_ledger_report lab_frame_energy_estimate
   RUNTIME DESTINATION bin)
 if(APRL_BUILD_SASE_BUNCH_GENERATOR)

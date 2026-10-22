@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 #include <utility>
 
@@ -747,7 +748,17 @@ namespace aprl
             lattice[axis] < -0.5 - 64.0 * std::numeric_limits<Double>::epsilon() ||
             lattice[axis] > static_cast<Double>(sizes[axis]) - 0.5 +
                             64.0 * std::numeric_limits<Double>::epsilon())
-          throw std::out_of_range("E/B interpolation position is outside the grid");
+          {
+            std::ostringstream message;
+            message.precision(17);
+            message << "E/B interpolation position is outside the grid: "
+                    << "axis=" << axis
+                    << ", lattice=" << lattice[axis]
+                    << ", component_size=" << sizes[axis]
+                    << ", position=" << positionSI[axis]
+                    << ", local_origin=" << originSI[axis];
+            throw std::out_of_range(message.str());
+          }
         if (lattice[axis] <= 0.0)
           {
             lower[axis] = 0;

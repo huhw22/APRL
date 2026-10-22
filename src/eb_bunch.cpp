@@ -101,7 +101,7 @@ namespace aprl
         std::ostringstream message;
         message << std::setprecision(16)
           << "The reconstructed laboratory snapshot would back-propagate at "
-             "least one Elegant plane record. Set "
+             "least one HDF5 lab-plane record. Set "
              "beam.reference.initial_center_z to at least "
           << recommendedCenter
           << " m, move input_plane_z upstream, or correct the sign of the "
@@ -135,7 +135,8 @@ namespace aprl
   SIBunchPreprocessor::projectLabPlaneEventsToSnapshot(
       std::vector<RelativisticParticleSI>& particles,
       Double inputPlaneLab, Double referencePositionLab,
-      Double longitudinalOffsetLab, MPI_Comm communicator)
+      Double longitudinalOffsetLab, MPI_Comm communicator,
+      bool holdTransverseUntilActivation)
   {
     if (communicator == MPI_COMM_NULL)
       throw std::invalid_argument(
@@ -229,11 +230,11 @@ namespace aprl
         std::ostringstream message;
         message << std::setprecision(16)
           << "The reconstructed laboratory snapshot would require backward "
-             "propagation of at least one Elegant plane event. Set "
+             "propagation of at least one HDF5 lab-plane event. Set "
              "beam.reference.initial_center_z to at least "
           << static_cast<Double>(minimumCenter)
-          << " m, move input_plane_z upstream, or verify the Elegant t "
-             "column and selected page.";
+          << " m, move input_plane_z upstream, or verify the input "
+             "arrival-time values and selected page.";
         throw std::invalid_argument(message.str());
       }
 
@@ -253,10 +254,13 @@ namespace aprl
           distance = 0.0;
         localMinimum = std::min(localMinimum, distance);
         localMaximum = std::max(localMaximum, distance);
-        particle.position[0] +=
-          particle.properVelocity[0] / particle.properVelocity[2] * distance;
-        particle.position[1] +=
-          particle.properVelocity[1] / particle.properVelocity[2] * distance;
+        if (!holdTransverseUntilActivation)
+          {
+            particle.position[0] +=
+              particle.properVelocity[0] / particle.properVelocity[2] * distance;
+            particle.position[1] +=
+              particle.properVelocity[1] / particle.properVelocity[2] * distance;
+          }
         particle.position[2] = inputPlaneLab + distance -
           referencePositionLab + longitudinalOffsetLab;
       }
@@ -351,10 +355,13 @@ namespace aprl
 
   SIBunchBoostReport SIBunchPreprocessor::boostLabSnapshotToBoxTimeZero(
       std::vector<RelativisticParticleSI>& particles,
-      const BoostFrameTransform& frame, Double snapshotTimeLab)
+      const BoostFrameTransform& frame, Double snapshotTimeLab,
+      bool holdTransverseUntilActivation, Double inputPlaneLab)
   {
-    if (!std::isfinite(snapshotTimeLab))
-      throw std::invalid_argument("Bunch snapshot time must be finite");
+    if (!std::isfinite(snapshotTimeLab) ||
+        (holdTransverseUntilActivation && !std::isfinite(inputPlaneLab)))
+      throw std::invalid_argument(
+        "Bunch snapshot time and held-mode input plane must be finite");
 
     SIBunchBoostReport report;
     report.earliestLabEventTime = std::numeric_limits<Double>::infinity();
@@ -371,35 +378,68 @@ namespace aprl
         FieldVector<Double> betaParticle(0.0);
         betaParticle.mv(1.0 / gammaParticle, particle.properVelocity);
 
-        const Double denominator =
-          1.0 - frame.beta() * betaParticle[2];
-        if (!(denominator > 0.0) || !std::isfinite(denominator))
-          throw std::runtime_error(
-            "Particle does not intersect the requested boosted simultaneity plane");
-
-        const Double eventTimeLab =
-          (frame.labTimeOrigin() +
-           frame.beta() *
-             (particle.position[2] - frame.labZOrigin()) / SI::c -
-           frame.beta() * betaParticle[2] * snapshotTimeLab) /
-          denominator;
-        const Double driftTime = eventTimeLab - snapshotTimeLab;
+        Double eventTimeLab = 0.0;
+        Double driftTime = 0.0;
         FieldVector<Double> eventPosition(particle.position);
-        eventPosition.pmv(SI::c * driftTime, betaParticle);
-
-        Double eventTimeBox = 0.0;
         Double eventZBox = 0.0;
-        frame.labToBox(eventTimeLab, eventPosition[2],
-                       eventTimeBox, eventZBox);
-        const Double timeTolerance = 128.0 *
-          std::numeric_limits<Double>::epsilon() *
-          std::max(1.0, std::abs(eventTimeLab));
-        if (std::abs(eventTimeBox) > timeTolerance)
-          throw std::runtime_error(
-            "Free-drift bunch transform did not reach box time zero");
+        if (holdTransverseUntilActivation)
+          {
+            if (!(betaParticle[2] > 0.0))
+              throw std::invalid_argument(
+                "Held-transverse input requires positive laboratory z velocity");
+            const Double inputTimeLab = snapshotTimeLab +
+              (inputPlaneLab - particle.position[2]) /
+              (SI::c * betaParticle[2]);
+            Double inputTimeBox = 0.0;
+            Double inputZBox = 0.0;
+            frame.labToBox(inputTimeLab, inputPlaneLab,
+                           inputTimeBox, inputZBox);
+            FieldVector<Double> properVelocityBox(0.0);
+            frame.properVelocityLabToBox(
+              properVelocityLab, properVelocityBox);
+            const Double betaHeld = frame.heldLongitudinalBetaZ(
+              properVelocityBox);
+            if (!(frame.beta() + betaHeld > 0.0))
+              throw std::invalid_argument(
+                "Held-transverse pseudo-trajectory does not advance in laboratory z");
+            eventZBox = std::fma(
+              -SI::c * betaHeld, inputTimeBox, inputZBox);
+            eventTimeLab = frame.labTFromBoxZT(eventZBox, 0.0);
+            driftTime = eventTimeLab - snapshotTimeLab;
+          }
+        else
+          {
+            const Double denominator =
+              1.0 - frame.beta() * betaParticle[2];
+            if (!(denominator > 0.0) || !std::isfinite(denominator))
+              throw std::runtime_error(
+                "Particle does not intersect the requested boosted simultaneity plane");
 
-        particle.position[0] = eventPosition[0];
-        particle.position[1] = eventPosition[1];
+            eventTimeLab =
+              (frame.labTimeOrigin() +
+               frame.beta() *
+                 (particle.position[2] - frame.labZOrigin()) / SI::c -
+               frame.beta() * betaParticle[2] * snapshotTimeLab) /
+              denominator;
+            driftTime = eventTimeLab - snapshotTimeLab;
+            eventPosition.pmv(SI::c * driftTime, betaParticle);
+
+            Double eventTimeBox = 0.0;
+            frame.labToBox(eventTimeLab, eventPosition[2],
+                           eventTimeBox, eventZBox);
+            const Double timeTolerance = 128.0 *
+              std::numeric_limits<Double>::epsilon() *
+              std::max(1.0, std::abs(eventTimeLab));
+            if (std::abs(eventTimeBox) > timeTolerance)
+              throw std::runtime_error(
+                "Free-drift bunch transform did not reach box time zero");
+          }
+
+        if (!holdTransverseUntilActivation)
+          {
+            particle.position[0] = eventPosition[0];
+            particle.position[1] = eventPosition[1];
+          }
         particle.position[2] = eventZBox;
         frame.properVelocityLabToBox(
           properVelocityLab, particle.properVelocity);

@@ -37,6 +37,18 @@ namespace aprl
       static Double gammaFromProperVelocity(
           const FieldVector<Double>& properVelocity);
 
+      /* Deliberately non-Lorentz-covariant pre-activation approximation:
+       * ignore transverse proper velocity when converting u_z to beta_z. */
+      static Double longitudinalOnlyBetaZ(
+          const FieldVector<Double>& properVelocity);
+
+      /* Recover laboratory u_z from the full box four-velocity, discard
+       * laboratory transverse momentum, then transform that longitudinal
+       * four-velocity alone. Unlike using the full transformed u'_z, this
+       * frozen speed is independent of laboratory u_x and u_y. */
+      Double heldLongitudinalBetaZ(
+          const FieldVector<Double>& properVelocityBox) const;
+
       /* Longitudinal four-velocity transforms evaluated through light-front
        * components. This avoids subtracting two
        * O(gamma_boost*gamma_beam) terms when the bunch and boost are nearly

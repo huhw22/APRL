@@ -74,6 +74,7 @@ namespace aprl
       Double weight;
       std::uint64_t id;
       std::uint64_t sourceId;
+      unsigned char frozen;
     };
 
     struct TransferPacket
@@ -81,6 +82,10 @@ namespace aprl
       ParticlePacket particle;
       Double segmentStart[3];
       Double segmentStartFraction;
+      Double activationKink[3];
+      Double activationKinkFraction;
+      unsigned char hasActivationKink;
+      unsigned char pendingActivePush;
     };
 
     struct CarrierTransferPacket
@@ -107,6 +112,7 @@ namespace aprl
       packet.weight = particle.weight;
       packet.id = particle.id;
       packet.sourceId = particle.sourceId;
+      packet.frozen = particle.frozen ? 1 : 0;
       return packet;
     }
 
@@ -124,6 +130,7 @@ namespace aprl
       particle.weight = packet.weight;
       particle.id = packet.id;
       particle.sourceId = packet.sourceId;
+      particle.frozen = packet.frozen != 0;
       return particle;
     }
 
@@ -224,7 +231,9 @@ namespace aprl
       configuredStopReached_(false), loopWallStart_(0.0),
       estimatedStepSeconds_(0.0), estimatedMaximumSteps_(0),
       modeledLocalPeakBytes_(0), lostParticles_(0),
-      ballisticBoundaryEntries_(0), boundaryInjectionWorkSamples_(),
+      ballisticBoundaryEntries_(0), frozenPlaneActivations_(0),
+      crossRankActivationPushes_(0),
+      boundaryInjectionWorkSamples_(),
       retirementEntryCount_(0), retirementEntryCharge_(0.0),
       retirementExitCount_(0), retirementExitResidualCharge_(0.0),
       peakRetirementCarriers_(0), stopReason_()
@@ -554,6 +563,34 @@ namespace aprl
         if (!config_.initialSelfField.enabled)
           logRoot(communicator_,
             "WARNING: initial_self_field is disabled; the Maxwell state does not satisfy Gauss's law for the input bunch and startup radiation can contaminate the result.");
+        if (config_.reference.frozenLabPlaneInjection)
+          {
+            std::ostringstream message;
+            message << std::setprecision(10)
+                    << "EXPERIMENTAL frozen lab-plane injection: "
+                       "activation_plane_z="
+                    << config_.reference.activationPlaneZ << " m; ";
+            if (config_.reference.holdTransverseUntilActivation)
+              message << "pre-activation x/y are held at their HDF5 "
+                         "input-plane values and only z advances using "
+                         "u'_z/sqrt(1+u'_z^2). Full transverse momentum "
+                         "starts at the activation plane; the abrupt "
+                         "current change can radiate. ";
+            else
+              message << "HDF5-v4 events are synchronized by full 3-D "
+                         "ballistic motion; particles drift in x/y/z "
+                         "without fields before the activation plane. ";
+            message << "Particles remain Maxwell sources inside the "
+                       "physical aperture. The crossing step is split at "
+                       "the plane and its remainder uses the regular "
+                       "Boris push. Check post-plane orbit and field-energy "
+                       "convergence before production use.";
+            logRoot(communicator_, message.str());
+          }
+        if (config_.reference.frozenLabPlaneInjection &&
+            config_.mesh.ballisticOutsideTransverse)
+          logRoot(communicator_,
+            "WARNING: frozen particles outside the transverse physical aperture remain in the particle list but do not deposit Maxwell current there. This retains the finite-window boundary approximation for those particles.");
       }
   }
 
@@ -891,7 +928,8 @@ namespace aprl
         staticFieldGuardCells,
         config_.initialSelfField.relativeTolerance,
         config_.initialSelfField.maximumIterations, communicator_,
-        includeCpml);
+        includeCpml,
+        config_.reference.holdTransverseUntilActivation, &frame_);
     if (rank_ == 0)
       {
         std::ostringstream message;
@@ -1529,6 +1567,10 @@ namespace aprl
       }
 
     SILabPlaneProjectionReport planeProjection;
+    if (config_.reference.frozenLabPlaneInjection &&
+        !inputReport.laboratoryPlaneTimeCoordinates)
+      throw std::invalid_argument(
+        "beam.reference.frozen_lab_plane_injection requires HDF5 format 4 fixed-plane arrival-time records");
     if (inputReport.laboratoryPlaneCoordinates)
       {
         if (!config_.reference.inputPlaneZSet)
@@ -1539,7 +1581,8 @@ namespace aprl
             SIBunchPreprocessor::projectLabPlaneEventsToSnapshot(
               particles_, config_.reference.inputPlaneZ,
               config_.reference.initialCenterZ,
-              config_.beam.positionOffset[2], communicator_);
+              config_.beam.positionOffset[2], communicator_,
+              config_.reference.holdTransverseUntilActivation);
         else
           planeProjection = SIBunchPreprocessor::projectLabPlaneToSnapshot(
             particles_, config_.reference.inputPlaneZ,
@@ -1548,7 +1591,6 @@ namespace aprl
     else if (config_.reference.inputPlaneZSet && rank_ == 0)
       logRoot(communicator_,
         "WARNING: beam.reference.input_plane_z is ignored because this particle input is a legacy common-time snapshot rather than an HDF5-v3/v4 lab-plane record set.");
-
     initializeFieldDetectorRegions();
     validateBeamlineExclusionRules();
     const bool hasMagneticElements = !config_.magnets.empty();
@@ -1609,7 +1651,7 @@ namespace aprl
                         << minimumCenter / config_.inputUnits.length << ")";
                 if (minimumCenter >= maximumCenter - placementTolerance)
                   message << ". No admissible centre interval remains: move the "
-                             "Elegant plane upstream, move/redefine the magnetic "
+                             "input plane upstream, move/redefine the magnetic "
                              "interaction region downstream, reduce the bunch "
                              "longitudinal span, or refine dz to reduce the "
                              "one-cell safety margin";
@@ -1619,10 +1661,10 @@ namespace aprl
           }
       }
 
-    /* Anchor t_box=0 to the downstream bunch-front event at the reconstructed
-     * lab snapshot.  The remaining particles are synchronized relative to
-     * this event.  Their potentially large lab-time span is not interpreted
-     * as a required physical drift upstream of the input plane. */
+    /* The legacy mode anchors box time zero at the reconstructed front.
+     * Frozen-plane injection instead starts before every input-plane event.
+     * Either way, the large synchronization span is not a real beamline
+     * drift; the frozen mode keeps the input-plane transverse coordinates. */
     if (config_.mesh.ballisticOutsideTransverse)
       {
         unsigned long long localLabOutside = 0;
@@ -1651,18 +1693,170 @@ namespace aprl
         if (globalLabOutside && rank_ == 0)
           {
             std::ostringstream message;
-            message << "WARNING: reconstructed initial lab snapshot has "
+            message << "WARNING: "
+                    << "reconstructed initial lab snapshot has "
                     << globalLabOutside << " particles outside the "
                        "transverse physical aperture; boundary injection "
                        "is enabled, so this is not fatal.";
             logRoot(communicator_, message.str());
           }
       }
-    frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
-      placementReport.headAfterLab, 0.0);
+    Double initialFrameTimeLab = 0.0;
+    Double initialFrameZLab = placementReport.headAfterLab;
+    if (config_.reference.frozenLabPlaneInjection)
+      {
+        Double localEarliestCrossing =
+          std::numeric_limits<Double>::infinity();
+        int localInvalidHeldVelocity = 0;
+        BoostFrameTransform probeFrame;
+        if (config_.reference.holdTransverseUntilActivation)
+          probeFrame.setOriginsFromGamma(
+            config_.mesh.boostGamma, SI::c, 0.0,
+            config_.reference.activationPlaneZ, 0.0);
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            const RelativisticParticleSI& particle = particles_[index];
+            const Double gamma =
+              BoostFrameTransform::gammaFromProperVelocity(
+                particle.properVelocity);
+            const Double betaZ = particle.properVelocity[2] / gamma;
+            /* placeRelativeLabSnapshot() has already translated z into
+             * the absolute laboratory coordinate system. */
+            const Double snapshotZ = particle.position[2];
+            if (config_.reference.holdTransverseUntilActivation)
+              {
+                FieldVector<Double> boxProperVelocity(0.0);
+                probeFrame.properVelocityLabToBox(
+                  particle.properVelocity, boxProperVelocity);
+                const Double betaHeld = probeFrame.heldLongitudinalBetaZ(
+                  boxProperVelocity);
+                const Double labAdvance = probeFrame.beta() + betaHeld;
+                if (!(labAdvance > 0.0) || !std::isfinite(labAdvance))
+                  {
+                    localInvalidHeldVelocity = 1;
+                    continue;
+                  }
+                const Double inputTimeLab =
+                  (config_.reference.inputPlaneZ - snapshotZ) /
+                  (betaZ * SI::c);
+                const Double inputToActivation =
+                  config_.reference.inputPlaneZ -
+                  config_.reference.activationPlaneZ;
+                const Double crossingOriginTime = inputTimeLab -
+                  inputToActivation *
+                  (1.0 + probeFrame.beta() * betaHeld) /
+                  (SI::c * labAdvance);
+                const Double twoCellMargin =
+                  2.0 * config_.mesh.cellSize[2] /
+                  (probeFrame.gamma() * SI::c * labAdvance);
+                localEarliestCrossing = std::min(localEarliestCrossing,
+                  crossingOriginTime - twoCellMargin);
+              }
+            else
+              localEarliestCrossing = std::min(localEarliestCrossing,
+                (config_.reference.activationPlaneZ - snapshotZ) /
+                (betaZ * SI::c));
+          }
+        int invalidHeldVelocity = 0;
+        MPI_Allreduce(&localInvalidHeldVelocity, &invalidHeldVelocity,
+          1, MPI_INT, MPI_MAX, communicator_);
+        if (invalidHeldVelocity)
+          throw std::invalid_argument(
+            "Held-transverse pseudo-trajectory must advance in laboratory z for every particle");
+        Double earliestCrossing = 0.0;
+        MPI_Allreduce(&localEarliestCrossing, &earliestCrossing,
+          1, MPI_DOUBLE, MPI_MIN, communicator_);
+        /* The frame origin is two nominal z-Courant steps before the first
+         * plane crossing. This makes every source frozen at box time zero. */
+        initialFrameTimeLab =
+          config_.reference.holdTransverseUntilActivation ?
+            earliestCrossing :
+            earliestCrossing -
+              2.0 * config_.mesh.cellSize[2] /
+              (config_.mesh.boostGamma * SI::c);
+        initialFrameZLab = config_.reference.activationPlaneZ;
+      }
+    frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c,
+      initialFrameTimeLab, initialFrameZLab, 0.0);
     const SIBunchBoostReport localBoostReport =
       SIBunchPreprocessor::boostLabSnapshotToBoxTimeZero(
-        particles_, frame_);
+        particles_, frame_, 0.0,
+        config_.reference.holdTransverseUntilActivation,
+        config_.reference.inputPlaneZ);
+    if (config_.reference.frozenLabPlaneInjection)
+      {
+        Double physicalLower[2];
+        Double physicalUpper[2];
+        Double meshLower[2];
+        Double meshUpper[2];
+        for (unsigned int axis = 0; axis < 2; ++axis)
+          {
+            meshLower[axis] = config_.mesh.center[axis] -
+              0.5 * config_.mesh.extent[axis];
+            meshUpper[axis] = config_.mesh.center[axis] +
+              0.5 * config_.mesh.extent[axis];
+            physicalLower[axis] = meshLower[axis] +
+              config_.boundary.cpml.cells[axis] *
+              config_.mesh.cellSize[axis];
+            physicalUpper[axis] = meshUpper[axis] -
+              config_.boundary.cpml.cells[axis] *
+              config_.mesh.cellSize[axis];
+          }
+        unsigned long long localOutside[2] = {};
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            bool outsidePhysical = false;
+            bool outsideMesh = false;
+            for (unsigned int axis = 0; axis < 2; ++axis)
+              {
+                const Double coordinate = particles_[index].position[axis];
+                outsidePhysical = outsidePhysical ||
+                  coordinate < physicalLower[axis] ||
+                  coordinate > physicalUpper[axis];
+                outsideMesh = outsideMesh ||
+                  coordinate < meshLower[axis] ||
+                  coordinate > meshUpper[axis];
+              }
+            if (outsidePhysical) ++localOutside[0];
+            if (outsideMesh) ++localOutside[1];
+          }
+        unsigned long long globalOutside[2] = {};
+        MPI_Allreduce(localOutside, globalOutside, 2,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
+        if (globalOutside[0] && rank_ == 0)
+          {
+            std::ostringstream warning;
+            warning << std::setprecision(6)
+                    << "WARNING: frozen-mode boosted t=0 transverse "
+                       "ballistic positions outside the physical aperture: "
+                    << globalOutside[0] << "/" << globalCount << " ("
+                    << 100.0 * static_cast<Double>(globalOutside[0]) /
+                         static_cast<Double>(globalCount)
+                    << "%); outside the full mesh: "
+                    << globalOutside[1] << "/" << globalCount << " ("
+                    << 100.0 * static_cast<Double>(globalOutside[1]) /
+                         static_cast<Double>(globalCount)
+                    << "%). Outside particles cannot be Maxwell sources "
+                       "there; with ballistic_outside_transverse they remain "
+                       "tracked until entry, otherwise normal particle "
+                       "boundary rules apply.";
+            logRoot(communicator_, warning.str());
+          }
+        int localAlreadyPast = 0;
+        for (std::size_t index = 0; index < particles_.size(); ++index)
+          {
+            particles_[index].frozen = true;
+            if (frame_.labZFromBoxZT(particles_[index].position[2], 0.0) >=
+                config_.reference.activationPlaneZ)
+              localAlreadyPast = 1;
+          }
+        int anyAlreadyPast = 0;
+        MPI_Allreduce(&localAlreadyPast, &anyAlreadyPast, 1,
+          MPI_INT, MPI_MAX, communicator_);
+        if (anyAlreadyPast)
+          throw std::runtime_error(
+            "Frozen lab-plane injection requires every particle upstream of the input plane at box time zero");
+      }
     SIBunchBoostReport boostReport;
     const Double localEarliest = particles_.empty() ?
       std::numeric_limits<Double>::infinity() :
@@ -1957,8 +2151,8 @@ namespace aprl
       particles_[index].position[2] += boxTranslation;
     boostedMinimum += boxTranslation;
     boostedMaximum += boxTranslation;
-    frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c, 0.0,
-      placementReport.headAfterLab, boxTranslation);
+    frame_.setOriginsFromGamma(config_.mesh.boostGamma, SI::c,
+      initialFrameTimeLab, initialFrameZLab, boxTranslation);
     referenceCenterBoxZ_ = frame_.boxZFromLabZT(
       config_.reference.initialCenterZ, 0.0);
 
@@ -2140,7 +2334,7 @@ namespace aprl
           {
             std::ostringstream projectionMessage;
             projectionMessage << std::setprecision(10)
-              << "Elegant lab-plane reconstruction (HDF5 v"
+              << "HDF5 lab-plane reconstruction (v"
               << inputReport.fileFormatVersion << "): input_plane_z="
               << planeProjection.inputPlaneLab
               << " m, snapshot_reference_z="
@@ -2189,13 +2383,20 @@ namespace aprl
         logRoot(communicator_, placementMessage.str());
         std::ostringstream boostMessage;
         boostMessage << std::setprecision(10)
-          << "Head-anchored Lorentz synchronization: anchor_lab_z="
-          << placementReport.headAfterLab << " m, virtual lab event times [s]=["
+          << (config_.reference.frozenLabPlaneInjection ?
+                "Frozen-plane Lorentz synchronization: anchor_lab_z=" :
+                "Head-anchored Lorentz synchronization: anchor_lab_z=")
+          << initialFrameZLab << " m, origin_lab_t="
+          << initialFrameTimeLab << " s, virtual lab event times [s]=["
           << boostReport.earliestLabEventTime << " to "
           << boostReport.latestLabEventTime << "], maximum synchronization "
              "span=" << boostReport.maximumAbsoluteDriftTime << " s ("
           << SI::c * boostReport.maximumAbsoluteDriftTime
-          << " light-metres; diagnostic only, not a required physical drift), "
+          << (config_.reference.holdTransverseUntilActivation ?
+                " light-metres; held-transverse pseudo-trajectory), " :
+              config_.reference.frozenLabPlaneInjection ?
+                " light-metres; full 3-D ballistic synchronization), " :
+                " light-metres; diagnostic only, not a required physical drift), ")
           << (config_.mesh.longitudinal.automatic() ?
                 "automatically placed boosted z range [m]=[" :
                 "centred boosted z range [m]=[")
@@ -2836,6 +3037,12 @@ namespace aprl
             "boundary-injection mode. The ledger records both raw and "
             "boundary-source-corrected residuals; neither is an exact "
             "whole-bunch conservation proof.");
+        if (config_.reference.frozenLabPlaneInjection)
+          logRoot(communicator_,
+            "WARNING: energy-ledger closure_valid is false for frozen lab-plane injection; the pre-plane force gate and initial field model are not an exact closed-system energy exchange. Use field-energy and orbit comparisons as convergence diagnostics, not an exact energy-conservation proof.");
+        if (!config_.mesh.selfFieldFeedback)
+          logRoot(communicator_,
+            "WARNING: self_field_feedback is disabled. Maxwell sources and fields remain active, but grid E/B do not act on particles; the energy ledger is diagnostic only and closure_valid is false.");
         if (config_.mesh.ballisticOutsideTransverse &&
             config_.mesh.currentFilter != EBCurrentFilter::None)
           logRoot(communicator_,
@@ -2869,8 +3076,17 @@ namespace aprl
           boundaryInjectionWorkSamples_[index];
         FieldVector<Double> newElectric(0.0);
         FieldVector<Double> ignoredMagnetic(0.0);
-        fields_->sampleFieldsPosition(sample.midpoint, localOriginBox_,
-          newElectric, ignoredMagnetic);
+        try
+          {
+            fields_->sampleFieldsPosition(sample.midpoint, localOriginBox_,
+              newElectric, ignoredMagnetic);
+          }
+        catch (const std::out_of_range& error)
+          {
+            throw std::out_of_range(std::string(
+              "boundary-injection ledger new-field sample: ") +
+              error.what());
+          }
         const long double newDot =
           static_cast<long double>(sample.chargeDisplacement[0]) *
             newElectric[0] +
@@ -3057,7 +3273,9 @@ namespace aprl
     record.boundaryInjectionEntries = globalCounts[3];
     record.closureValid =
       sources_.maxwellIncidentWaveCount() == 0 && globalCounts[2] == 0 &&
-      !config_.mesh.ballisticOutsideTransverse ? 1 : 0;
+      !config_.mesh.ballisticOutsideTransverse &&
+      !config_.reference.frozenLabPlaneInjection &&
+      config_.mesh.selfFieldFeedback ? 1 : 0;
     record.timeBox = timeBoxSI_;
     record.activeRepresentedElectrons = static_cast<Double>(global[2]);
     record.particleKineticActive = static_cast<Double>(global[0]);
@@ -3214,7 +3432,7 @@ namespace aprl
       TrajectoryEvent event,
       ParticleBoundaryFace face)
   {
-    if (!trajectoryWriter_.isOpen()) return;
+    if (!trajectoryWriter_.isOpen() || particle.frozen) return;
     TrajectoryRecord record;
     record.particleId = particle.id;
     record.sourceId = particle.sourceId;
@@ -3717,81 +3935,123 @@ namespace aprl
 
     const auto processActiveSegment =
       [&](RelativisticParticleSI particle,
-          const FieldVector<Double>& segmentStart,
+          FieldVector<Double> segmentStart,
           Double segmentStartFraction,
-          bool allowTransfer)
+          bool allowTransfer,
+          const FieldVector<Double>* activationKink,
+          Double activationKinkFraction,
+          bool pendingActivePush)
     {
-      bool crossLower = false;
-      bool crossUpper = false;
-      const Double interfaceFraction = interfaceCrossing(
-        segmentStart, particle.position, crossLower, crossUpper);
-      const bool crossesInterface = crossLower || crossUpper;
       if (config_.mesh.ballisticOutsideTransverse)
         {
-          if (crossesInterface && !allowTransfer)
-            throw std::runtime_error(
-              "An injected particle crossed more than one MPI interface "
-              "in one field step");
-          const Double localEndFraction = crossesInterface ?
-            interfaceFraction : 1.0;
-          FieldVector<Double> segmentEnd(particle.position);
-          if (crossesInterface)
-            for (unsigned int axis = 0; axis < 3; ++axis)
-              segmentEnd[axis] = segmentStart[axis] +
-                localEndFraction *
-                (particle.position[axis] - segmentStart[axis]);
-          Double first = 0.0;
-          Double last = 1.0;
-          if (clipPhysicalSegment(segmentStart, segmentEnd,
-                                  *particleCPML_, first, last))
+          const unsigned int legCount = activationKink ? 2 : 1;
+          FieldVector<Double> legStart(segmentStart);
+          Double legStartFraction = segmentStartFraction;
+          bool transferred = false;
+          for (unsigned int leg = 0; leg < legCount; ++leg)
             {
-              FieldVector<Double> entry(0.0);
-              FieldVector<Double> exit(0.0);
-              for (unsigned int axis = 0; axis < 3; ++axis)
+              const bool frozenLeg = activationKink && leg == 0;
+              const FieldVector<Double>& legTarget = frozenLeg ?
+                *activationKink : particle.position;
+              const Double legTargetFraction = frozenLeg ?
+                activationKinkFraction : 1.0;
+              bool crossLower = false;
+              bool crossUpper = false;
+              const Double interfaceFraction = interfaceCrossing(
+                legStart, legTarget, crossLower, crossUpper);
+              const bool crossesInterface = crossLower || crossUpper;
+              if (crossesInterface && !allowTransfer)
+                throw std::runtime_error(
+                  "An injected particle crossed more than one MPI interface "
+                  "in one field step");
+              const Double localEndFraction = crossesInterface ?
+                interfaceFraction : 1.0;
+              FieldVector<Double> legEnd(legTarget);
+              if (crossesInterface)
+                for (unsigned int axis = 0; axis < 3; ++axis)
+                  legEnd[axis] = legStart[axis] +
+                    localEndFraction *
+                    (legTarget[axis] - legStart[axis]);
+              Double first = 0.0;
+              Double last = 1.0;
+              if (clipPhysicalSegment(legStart, legEnd,
+                                      *particleCPML_, first, last))
                 {
-                  const Double advance =
-                    segmentEnd[axis] - segmentStart[axis];
-                  entry[axis] = segmentStart[axis] + first * advance;
-                  exit[axis] = segmentStart[axis] + last * advance;
-                }
-              depositor.depositSegment(entry, exit, particle.charge);
-              if (first > 0.0 &&
-                  !particleCPML_->containsPhysical(segmentStart))
-                {
-                  ++ballisticBoundaryEntries_;
-                  if (config_.energyLedger.enabled)
+                  FieldVector<Double> entry(0.0);
+                  FieldVector<Double> exit(0.0);
+                  for (unsigned int axis = 0; axis < 3; ++axis)
                     {
-                      BoundaryInjectionWorkSample sample;
-                      sample.midpoint = entry;
-                      for (unsigned int axis = 0; axis < 3; ++axis)
+                      const Double advance =
+                        legEnd[axis] - legStart[axis];
+                      entry[axis] = legStart[axis] + first * advance;
+                      exit[axis] = legStart[axis] + last * advance;
+                    }
+                  depositor.depositSegment(entry, exit, particle.charge);
+                  if (first > 0.0 &&
+                      !particleCPML_->containsPhysical(legStart))
+                    {
+                      ++ballisticBoundaryEntries_;
+                      if (config_.energyLedger.enabled)
                         {
-                          sample.midpoint[axis] =
-                            0.5 * (entry[axis] + exit[axis]);
-                          sample.chargeDisplacement[axis] =
-                            particle.charge * (exit[axis] - entry[axis]);
+                          BoundaryInjectionWorkSample sample;
+                          sample.midpoint = entry;
+                          for (unsigned int axis = 0; axis < 3; ++axis)
+                            {
+                              sample.midpoint[axis] =
+                                0.5 * (entry[axis] + exit[axis]);
+                              sample.chargeDisplacement[axis] =
+                                particle.charge * (exit[axis] - entry[axis]);
+                            }
+                          FieldVector<Double> oldElectric(0.0);
+                          FieldVector<Double> ignoredMagnetic(0.0);
+                          try
+                            {
+                              fields_->sampleFieldsPosition(
+                                sample.midpoint, localOriginBox_, oldElectric,
+                                ignoredMagnetic);
+                            }
+                          catch (const std::out_of_range& error)
+                            {
+                              throw std::out_of_range(std::string(
+                                "boundary-injection ledger old-field sample: ") +
+                                error.what());
+                            }
+                          sample.oldElectricDot =
+                            sample.chargeDisplacement * oldElectric;
+                          boundaryInjectionWorkSamples_.push_back(sample);
                         }
-                      FieldVector<Double> oldElectric(0.0);
-                      FieldVector<Double> ignoredMagnetic(0.0);
-                      fields_->sampleFieldsPosition(
-                        sample.midpoint, localOriginBox_, oldElectric,
-                        ignoredMagnetic);
-                      sample.oldElectricDot =
-                        sample.chargeDisplacement * oldElectric;
-                      boundaryInjectionWorkSamples_.push_back(sample);
                     }
                 }
+              if (crossesInterface)
+                {
+                  TransferPacket transfer = {};
+                  transfer.particle = packParticle(particle);
+                  transfer.pendingActivePush = pendingActivePush ? 1 : 0;
+                  if (pendingActivePush)
+                    transfer.activationKinkFraction =
+                      activationKinkFraction;
+                  for (unsigned int axis = 0; axis < 3; ++axis)
+                    transfer.segmentStart[axis] = legEnd[axis];
+                  transfer.segmentStartFraction = legStartFraction +
+                    localEndFraction *
+                    (legTargetFraction - legStartFraction);
+                  if (frozenLeg)
+                    {
+                      transfer.hasActivationKink = 1;
+                      transfer.activationKinkFraction =
+                        activationKinkFraction;
+                      for (unsigned int axis = 0; axis < 3; ++axis)
+                        transfer.activationKink[axis] =
+                          (*activationKink)[axis];
+                    }
+                  (crossLower ? sendLower : sendUpper).push_back(transfer);
+                  transferred = true;
+                  break;
+                }
+              legStart = legEnd;
+              legStartFraction = legTargetFraction;
             }
-          if (crossesInterface)
-            {
-              TransferPacket transfer = {};
-              transfer.particle = packParticle(particle);
-              for (unsigned int axis = 0; axis < 3; ++axis)
-                transfer.segmentStart[axis] = segmentEnd[axis];
-              transfer.segmentStartFraction = segmentStartFraction +
-                localEndFraction * (1.0 - segmentStartFraction);
-              (crossLower ? sendLower : sendUpper).push_back(transfer);
-            }
-          else
+          if (!transferred)
             retained.push_back(particle);
           if (config_.mesh.longitudinal.automatic() &&
               (particle.position[2] < particleCPML_->physicalLower(2) ||
@@ -3799,6 +4059,73 @@ namespace aprl
             localAutomaticLongitudinalExit = 1;
           return;
         }
+      if (activationKink)
+        {
+          bool crossLower = false;
+          bool crossUpper = false;
+          const Double interfaceFraction = interfaceCrossing(
+            segmentStart, *activationKink, crossLower, crossUpper);
+          ParticleBoundaryHit cpmlHit;
+          ParticleBoundaryHit outerHit;
+          ParticleBoundaryHit retirementHit;
+          const bool entersCpml = particleCPML_->firstEntry(
+            segmentStart, *activationKink, cpmlHit);
+          const bool exitsOuter = particleBoundary_->firstExit(
+            segmentStart, *activationKink, outerHit);
+          const bool entersRetirement = labPlaneCrossing(
+                segmentStart, *activationKink,
+                segmentStartFraction,
+                config_.particleRetirement.entranceZ, retirementHit);
+          if (entersCpml || exitsOuter || entersRetirement)
+            throw std::runtime_error(
+              "Held-transverse activation crossed a particle boundary "
+              "during the frozen part of a field step; enable "
+              "mesh.ballistic_outside_transverse for boundary injection");
+          if (crossLower || crossUpper)
+            {
+              if (!allowTransfer)
+                throw std::runtime_error(
+                  "A held-transverse frozen segment crossed more than one "
+                  "MPI interface in one field step");
+              FieldVector<Double> interfacePosition(0.0);
+              for (unsigned int axis = 0; axis < 3; ++axis)
+                interfacePosition[axis] = segmentStart[axis] +
+                  interfaceFraction *
+                  ((*activationKink)[axis] - segmentStart[axis]);
+              depositor.depositSegment(segmentStart, interfacePosition,
+                                       particle.charge);
+              TransferPacket transfer = {};
+              transfer.particle = packParticle(particle);
+              transfer.pendingActivePush = pendingActivePush ? 1 : 0;
+              if (pendingActivePush)
+                transfer.activationKinkFraction =
+                  activationKinkFraction;
+              transfer.segmentStartFraction = segmentStartFraction +
+                interfaceFraction *
+                (activationKinkFraction - segmentStartFraction);
+              transfer.hasActivationKink = 1;
+              transfer.activationKinkFraction =
+                activationKinkFraction;
+              for (unsigned int axis = 0; axis < 3; ++axis)
+                {
+                  transfer.segmentStart[axis] =
+                    interfacePosition[axis];
+                  transfer.activationKink[axis] =
+                    (*activationKink)[axis];
+                }
+              (crossLower ? sendLower : sendUpper).push_back(transfer);
+              return;
+            }
+          depositor.depositSegment(segmentStart, *activationKink,
+                                   particle.charge);
+          segmentStart = *activationKink;
+          segmentStartFraction = activationKinkFraction;
+        }
+      bool crossLower = false;
+      bool crossUpper = false;
+      const Double interfaceFraction = interfaceCrossing(
+        segmentStart, particle.position, crossLower, crossUpper);
+      const bool crossesInterface = crossLower || crossUpper;
       ParticleBoundaryHit cpmlHit;
       ParticleBoundaryHit outerHit;
       ParticleBoundaryHit retirementHit;
@@ -3924,6 +4251,9 @@ namespace aprl
         {
           TransferPacket transfer = {};
           transfer.particle = packParticle(particle);
+          transfer.pendingActivePush = pendingActivePush ? 1 : 0;
+          if (pendingActivePush)
+            transfer.activationKinkFraction = activationKinkFraction;
           for (unsigned int axis = 0; axis < 3; ++axis)
             transfer.segmentStart[axis] = segmentEnd[axis];
           transfer.segmentStartFraction = globalEndFraction;
@@ -3938,7 +4268,89 @@ namespace aprl
         RelativisticParticleSI particle = particles_[index];
         const FieldVector<Double> start(particle.position);
         Double prescribedWork = 0.0;
-        if (config_.mesh.ballisticOutsideTransverse &&
+        RelativisticParticleSI activeStart(particle);
+        Double activeStartTime = timeBoxSI_;
+        bool hasActiveSegment = !particle.frozen;
+        bool pendingActivePush = false;
+        if (particle.frozen)
+          {
+            const bool holdTransverse =
+              config_.reference.holdTransverseUntilActivation;
+            const Double betaHeld = holdTransverse ?
+              frame_.heldLongitudinalBetaZ(
+                particle.properVelocity) : 0.0;
+            const Double startLabZ = frame_.labZFromBoxZT(
+              start[2], timeBoxSI_);
+            if (holdTransverse)
+              particle.position[2] += SI::c * globalGeometry_.dt *
+                betaHeld;
+            else
+              RelativisticBorisPusher::pushPosition(
+                particle.position, particle.properVelocity,
+                globalGeometry_.dt);
+            const Double endLabZ = frame_.labZFromBoxZT(
+              particle.position[2], timeBoxSI_ + globalGeometry_.dt);
+            if (endLabZ >= config_.reference.activationPlaneZ)
+              {
+                const Double crossingFraction =
+                  startLabZ >= config_.reference.activationPlaneZ ? 0.0 :
+                  std::max(0.0, std::min(1.0,
+                    (config_.reference.activationPlaneZ - startLabZ) /
+                    (endLabZ - startLabZ)));
+                particle.position = start;
+                if (holdTransverse)
+                  particle.position[2] += SI::c *
+                    crossingFraction * globalGeometry_.dt * betaHeld;
+                else
+                  RelativisticBorisPusher::pushPosition(
+                    particle.position, particle.properVelocity,
+                    crossingFraction * globalGeometry_.dt);
+                particle.frozen = false;
+                ++frozenPlaneActivations_;
+                hasActiveSegment = true;
+                activeStart = particle;
+                activeStartTime = timeBoxSI_ +
+                  crossingFraction * globalGeometry_.dt;
+                if (detectors_ && crossingFraction > 0.0)
+                  detectors_->captureParticleStep(
+                    particles_[index], activeStart,
+                    timeBoxSI_, activeStartTime);
+                const Double remaining =
+                  (1.0 - crossingFraction) * globalGeometry_.dt;
+                if (remaining > 0.0)
+                  {
+                    // The activation point can cross a z-slab interface
+                    // during the frozen part of this field step.  The
+                    // receiving rank must sample its own E/B before the
+                    // active remainder is pushed; the sender's interpolation
+                    // halo does not extend to every possible release point.
+                    const int activationOwner = ownerRank(
+                      activeStart.position[2]);
+                    if (activationOwner >= 0 && activationOwner != rank_)
+                      pendingActivePush = true;
+                    else if (config_.mesh.ballisticOutsideTransverse &&
+                        !particleCPML_->containsPhysical(
+                          activeStart.position))
+                      RelativisticBorisPusher::pushPosition(
+                        particle.position, particle.properVelocity,
+                        remaining);
+                    else
+                      RelativisticBorisPusher::
+                        pushFromGridAndPrescribedLabSubcycled(
+                          particle, *fields_, localOriginBox_, sources_,
+                          frame_, activeStartTime, remaining,
+                          particleSubsteps_,
+                          config_.energyLedger.enabled ?
+                            &prescribedWork : 0,
+                          config_.mesh.selfFieldFeedback);
+                  }
+              }
+            else if (holdTransverse && detectors_)
+              detectors_->captureParticleStep(
+                particles_[index], particle, timeBoxSI_,
+                timeBoxSI_ + globalGeometry_.dt);
+          }
+        else if (config_.mesh.ballisticOutsideTransverse &&
             !particleCPML_->containsPhysical(start))
           RelativisticBorisPusher::pushPosition(
             particle.position, particle.properVelocity,
@@ -3947,30 +4359,73 @@ namespace aprl
           RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
             particle, *fields_, localOriginBox_, sources_, frame_,
             timeBoxSI_, globalGeometry_.dt, particleSubsteps_,
-            config_.energyLedger.enabled ? &prescribedWork : 0);
+            config_.energyLedger.enabled ? &prescribedWork : 0,
+            config_.mesh.selfFieldFeedback);
+
+        const bool hasActivationKink =
+          config_.reference.holdTransverseUntilActivation &&
+          particles_[index].frozen && hasActiveSegment &&
+          activeStartTime > timeBoxSI_ &&
+          activeStartTime < timeBoxSI_ + globalGeometry_.dt;
+        const Double activationKinkFraction =
+          (activeStartTime - timeBoxSI_) / globalGeometry_.dt;
+        const FieldVector<Double>* activationKink =
+          hasActivationKink ? &activeStart.position : 0;
+
+        if (pendingActivePush)
+          {
+            if (activationKinkFraction == 0.0)
+              {
+                // A release event at the start of the step has no frozen
+                // displacement to deposit.  Hand it directly to the owner
+                // instead of attempting a zero-length interface crossing.
+                const int destination = ownerRank(particle.position[2]);
+                if (destination != rank_ - 1 && destination != rank_ + 1)
+                  throw std::runtime_error(
+                    "Cross-rank zero-length activation is not adjacent");
+                TransferPacket transfer = {};
+                transfer.particle = packParticle(particle);
+                for (unsigned int axis = 0; axis < 3; ++axis)
+                  transfer.segmentStart[axis] = start[axis];
+                transfer.pendingActivePush = 1;
+                (destination < rank_ ? sendLower : sendUpper).push_back(
+                  transfer);
+              }
+            else
+              processActiveSegment(particle, start, 0.0, true,
+                activationKink, activationKinkFraction, true);
+            continue;
+          }
 
         if (config_.mesh.ballisticOutsideTransverse)
           {
             if (config_.energyLedger.enabled)
               energyLedgerPrescribedWork_ += prescribedWork;
-            if (detectors_)
+            if (detectors_ && hasActiveSegment &&
+                activeStartTime < timeBoxSI_ + globalGeometry_.dt)
               detectors_->captureParticleStep(
-                particles_[index], particle, timeBoxSI_,
+                activeStart, particle, activeStartTime,
                 timeBoxSI_ + globalGeometry_.dt);
-            processActiveSegment(particle, start, 0.0, true);
+            processActiveSegment(particle, start, 0.0, true,
+              activationKink, activationKinkFraction, false);
             continue;
           }
 
+        const FieldVector<Double>& diagnosticStart =
+          hasActivationKink ? activeStart.position : start;
+        const Double diagnosticStartFraction =
+          hasActivationKink ? activationKinkFraction : 0.0;
         ParticleBoundaryHit diagnosticHit;
         ParticleBoundaryHit cpmlHit;
         ParticleBoundaryHit outerHit;
         ParticleBoundaryHit retirementHit;
         const bool entersCpml = particleCPML_->firstEntry(
-          start, particle.position, cpmlHit);
+          diagnosticStart, particle.position, cpmlHit);
         const bool exitsOuter = particleBoundary_->firstExit(
-          start, particle.position, outerHit);
+          diagnosticStart, particle.position, outerHit);
         const bool entersRetirement = labPlaneCrossing(
-          start, particle.position, 0.0,
+          diagnosticStart, particle.position,
+          diagnosticStartFraction,
           config_.particleRetirement.entranceZ, retirementHit);
         bool hasTerminalEvent = false;
         TrajectoryEvent terminalEvent = TrajectoryEvent::DomainExit;
@@ -4006,7 +4461,9 @@ namespace aprl
           {
             diagnosticEnd.position = diagnosticHit.position;
             diagnosticTime = timeBoxSI_ +
-              diagnosticHit.fraction * globalGeometry_.dt;
+              (diagnosticStartFraction + diagnosticHit.fraction *
+                (1.0 - diagnosticStartFraction)) *
+              globalGeometry_.dt;
             if (config_.energyLedger.enabled)
               {
                 const RelativisticParticleSI& beginning = particles_[index];
@@ -4036,17 +4493,19 @@ namespace aprl
                 ++energyLedgerRemovedMacroparticles_;
               }
           }
-        if (detectors_)
+        if (detectors_ && hasActiveSegment &&
+            activeStartTime < diagnosticTime)
           detectors_->captureParticleStep(
-            particles_[index], diagnosticEnd,
-            timeBoxSI_, diagnosticTime);
+            activeStart, diagnosticEnd,
+            activeStartTime, diagnosticTime);
         if (hasTerminalEvent && config_.trajectory.enabled)
           {
             appendTrajectoryEvent(
               diagnosticEnd, diagnosticTime,
               terminalEvent, diagnosticHit.face);
           }
-        processActiveSegment(particle, start, 0.0, true);
+        processActiveSegment(particle, start, 0.0, true,
+          activationKink, activationKinkFraction, false);
       }
 
     std::vector<TransferPacket> receiveLower;
@@ -4070,8 +4529,70 @@ namespace aprl
           FieldVector<Double> segmentStart(0.0);
           for (unsigned int axis = 0; axis < 3; ++axis)
             segmentStart[axis] = transfer.segmentStart[axis];
+          FieldVector<Double> activationKink(0.0);
+          if (transfer.hasActivationKink)
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              activationKink[axis] = transfer.activationKink[axis];
+          if (!transfer.pendingActivePush)
+            {
+              processActiveSegment(
+                particle, segmentStart, transfer.segmentStartFraction, false,
+                transfer.hasActivationKink ? &activationKink : 0,
+                transfer.activationKinkFraction, false);
+              continue;
+            }
+
+          if (ownerRank(particle.position[2]) != rank_)
+            throw std::runtime_error(
+              "Cross-rank activation packet has no local release point");
+          const std::size_t retainedBefore = retained.size();
+          // Deposit the remainder of the frozen trajectory on this slab.
+          // Its endpoint is the activation event, not a pushed final state.
+          if (transfer.activationKinkFraction > 0.0)
+            {
+              processActiveSegment(
+                particle, segmentStart, transfer.segmentStartFraction, false,
+                transfer.hasActivationKink ? &activationKink : 0,
+                transfer.activationKinkFraction, false);
+              if (retained.size() != retainedBefore + 1)
+                throw std::runtime_error(
+                  "Cross-rank frozen segment did not reach its activation point");
+            }
+          RelativisticParticleSI activeStart(
+            transfer.activationKinkFraction > 0.0 ?
+              retained.back() : particle);
+          if (transfer.activationKinkFraction > 0.0)
+            retained.pop_back();
+          ++crossRankActivationPushes_;
+          RelativisticParticleSI activeEnd(activeStart);
+          const Double activeStartTime = timeBoxSI_ +
+            transfer.activationKinkFraction * globalGeometry_.dt;
+          const Double remaining =
+            (1.0 - transfer.activationKinkFraction) * globalGeometry_.dt;
+          Double prescribedWork = 0.0;
+          if (remaining > 0.0)
+            {
+              if (config_.mesh.ballisticOutsideTransverse &&
+                  !particleCPML_->containsPhysical(activeStart.position))
+                RelativisticBorisPusher::pushPosition(
+                  activeEnd.position, activeEnd.properVelocity, remaining);
+              else
+                RelativisticBorisPusher::
+                  pushFromGridAndPrescribedLabSubcycled(
+                    activeEnd, *fields_, localOriginBox_, sources_, frame_,
+                    activeStartTime, remaining, particleSubsteps_,
+                    config_.energyLedger.enabled ? &prescribedWork : 0,
+                    config_.mesh.selfFieldFeedback);
+            }
+          if (config_.energyLedger.enabled)
+            energyLedgerPrescribedWork_ += prescribedWork;
+          if (detectors_ && remaining > 0.0)
+            detectors_->captureParticleStep(
+              activeStart, activeEnd, activeStartTime,
+              timeBoxSI_ + globalGeometry_.dt);
           processActiveSegment(
-            particle, segmentStart, transfer.segmentStartFraction, false);
+            activeEnd, activeStart.position,
+            transfer.activationKinkFraction, false, 0, 0.0, false);
         }
 
     std::vector<CarrierTransferPacket> receiveCarrierLower;
@@ -4149,6 +4670,30 @@ namespace aprl
 
   void Simulation::reportParticleBoundaryLosses() const
   {
+    if (config_.reference.frozenLabPlaneInjection)
+      {
+        const unsigned long long localFrozen = static_cast<unsigned long long>(
+          std::count_if(particles_.begin(), particles_.end(),
+            [](const RelativisticParticleSI& p) { return p.frozen; }));
+        unsigned long long globalFrozen = 0;
+        unsigned long long globalActivations = 0;
+        unsigned long long globalCrossRankPushes = 0;
+        MPI_Reduce(&localFrozen, &globalFrozen, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+        MPI_Reduce(&frozenPlaneActivations_, &globalActivations, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+        MPI_Reduce(&crossRankActivationPushes_, &globalCrossRankPushes, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
+        if (rank_ == 0)
+          {
+            std::ostringstream message;
+            message << "Frozen lab-plane injection: activations="
+                    << globalActivations << ", cross-rank activation pushes="
+                    << globalCrossRankPushes << ", still frozen="
+                    << globalFrozen << ".";
+            logRoot(communicator_, message.str());
+          }
+      }
     if (config_.mesh.ballisticOutsideTransverse)
       {
         unsigned long long localOutside = 0;

@@ -1,0 +1,62 @@
+# Historical local pilot card; its fixed output path contains a pre-fix run.
+# Generate a fresh post-fix card/output path with prepare.py instead.
+# Independent 10 um / 50 A synthetic HDF5-v4 bunch, not an Elegant export.
+# Small-boost, one-million-macroparticle pilot.  No magnetic elements.
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output:
+  overwrite: false
+  manifest: /data/L_FEL_program/work/uniform10um/g2-held-w10/run-manifest.yaml
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  ballistic_outside_transverse: true
+  self_field_feedback: true
+  cells: [104, 104, 256]
+  cell_size: [5, 5, 1]
+  center: [0, 0, 0]
+  duration: 300
+  boost_gamma: 2
+  particle_steps_per_undulator_period: 1
+boundary:
+  type: cpml
+  cells: [10, 10, 12]
+  polynomial_order: 3
+  target_reflection: 1.0e-8
+  kappa_max: 8
+  alpha_fraction: 0
+initial_self_field:
+  enabled: true
+  model: relativistic-poisson
+  include_transverse_cpml_particles: true
+  relative_tolerance: 1.0e-7
+  maximum_mean_transverse_beta: 0.01
+  maximum_iterations: 10000
+beam:
+  reference:
+    input_plane_z: 0
+    initial_center_z: 10
+    frozen_lab_plane_injection: true
+    activation_plane_z: 0
+    hold_transverse_until_activation: true
+  input:
+    type: hdf5
+    file: /data/L_FEL_program/work/uniform10um/particles-10um-50A-w10.h5
+    electrons: 10409720
+    position_offset: [0, 0, 0]
+sources: {incident_waves: [], magnetic_elements: []}
+detectors:
+  enabled: true
+  directory: /data/L_FEL_program/work/uniform10um/g2-held-w10/detectors
+  field_planes:
+    - {name: near-field, z: 20, rhythm: 5, buffer_samples: 4, compression: 0}
+  particle_planes: []
+stop: {mode: reference-center-z, z: 100}
+trajectory: {enabled: false}
+energy_ledger:
+  enabled: true
+  directory: /data/L_FEL_program/work/uniform10um/g2-held-w10/ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 1
+  buffer_records: 256
+  compression: 0

@@ -84,7 +84,8 @@ namespace aprl
         Double inputPlaneLab,
         Double referencePositionLab,
         Double longitudinalOffsetLab,
-        MPI_Comm communicator);
+        MPI_Comm communicator,
+        bool holdTransverseUntilActivation = false);
 
     /* Input z coordinates are relative to a user-defined laboratory bunch
      * centre. The optional first-interaction coordinate is a magnetic-device
@@ -95,16 +96,17 @@ namespace aprl
         const SIBunchPlacement& placement,
         MPI_Comm communicator);
 
-    /* Map every particle from the common lab snapshot to its event on the
-     * common t_box=0 simultaneity plane, then transform coordinates and
-     * proper velocity.  The caller selects the anchor event through frame's
-     * lab origins; production initialization anchors the downstream bunch
-     * front so the large relativity-of-simultaneity span remains a diagnostic
-     * rather than a fictitious required drift length. */
+    /* Default: full ballistic synchronization to t_box=0. Optional held
+     * transverse mode anchors the pseudo-trajectory at the recorded lab
+     * input-plane event, retains its x/y, and backtracks only z using a
+     * boosted longitudinal speed derived from laboratory u_z alone. This
+     * is deliberately not a Lorentz worldline. */
     static SIBunchBoostReport boostLabSnapshotToBoxTimeZero(
         std::vector<RelativisticParticleSI>& particles,
         const BoostFrameTransform& frame,
-        Double snapshotTimeLab = 0.0);
+        Double snapshotTimeLab = 0.0,
+        bool holdTransverseUntilActivation = false,
+        Double inputPlaneLab = 0.0);
   };
 }
 

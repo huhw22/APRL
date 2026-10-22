@@ -40,6 +40,7 @@
 /simulator
 /particle_text_to_hdf5
 /sase_bunch_generator
+/uniform_lab_plane_bunch_generator
 /elegant_sdds_to_hdf5
 /undulator_resonance
 /energy_ledger_report

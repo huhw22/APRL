@@ -18,6 +18,7 @@ namespace aprl
     Double weight;                      /* dimensionless diagnostic weight */
     std::uint64_t id;                   /* globally unique runtime id */
     std::uint64_t sourceId;             /* optional input-record id */
+    bool frozen;                        /* upstream lab-plane source state */
 
     RelativisticParticleSI();
   };
@@ -70,7 +71,8 @@ namespace aprl
         Double timeBoxSI,
         Double fieldTimeStep,
         unsigned int substeps,
-        Double* prescribedWorkJ = 0);
+        Double* prescribedWorkJ = 0,
+        bool includeGridFields = true);
   };
 }
 

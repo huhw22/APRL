@@ -389,7 +389,9 @@ namespace aprl
 
     void meanVelocity(const std::vector<RelativisticParticleSI>& particles,
                       MPI_Comm communicator, Double& betaZ,
-                      Double& betaTransverse)
+                      Double& betaTransverse,
+                      bool holdTransverseUntilActivation,
+                      const BoostFrameTransform* frame)
     {
       long double local[4] = {};
       for (std::size_t index = 0; index < particles.size(); ++index)
@@ -399,9 +401,13 @@ namespace aprl
             particle.properVelocity);
           const long double weight = static_cast<long double>(particle.mass);
           local[0] += weight;
-          for (unsigned int axis = 0; axis < 3; ++axis)
-            local[axis + 1] += weight * static_cast<long double>(
-              particle.properVelocity[axis] / gamma);
+          if (holdTransverseUntilActivation)
+            local[3] += weight * static_cast<long double>(
+              frame->heldLongitudinalBetaZ(particle.properVelocity));
+          else
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              local[axis + 1] += weight * static_cast<long double>(
+                particle.properVelocity[axis] / gamma);
         }
       long double global[4] = {};
       MPI_Allreduce(local, global, 4, MPI_LONG_DOUBLE, MPI_SUM,
@@ -594,8 +600,13 @@ namespace aprl
       Double relativeTolerance,
       std::size_t maximumIterations,
       MPI_Comm communicator,
-      bool includeTransverseCpmlParticles)
+      bool includeTransverseCpmlParticles,
+      bool holdTransverseUntilActivation,
+      const BoostFrameTransform* frame)
   {
+    if (holdTransverseUntilActivation && !frame)
+      throw std::invalid_argument(
+        "Held-transverse initial field requires the boost frame");
     if (!(relativeTolerance > 0.0) || !(relativeTolerance < 1.0) ||
         !std::isfinite(relativeTolerance) || maximumIterations == 0)
       throw std::invalid_argument(
@@ -655,7 +666,8 @@ namespace aprl
     Double meanBetaZ = 0.0;
     Double meanBetaTransverse = 0.0;
     meanVelocity(particles, communicator, meanBetaZ,
-                 meanBetaTransverse);
+                 meanBetaTransverse,
+                 holdTransverseUntilActivation, frame);
     if (model == InitialSelfFieldModel::RelativisticPoisson &&
         meanBetaTransverse > maximumMeanTransverseBeta)
       {

@@ -86,6 +86,25 @@ namespace aprl
                              ux * ux + uy * uy + uz * uz);
   }
 
+  Double BoostFrameTransform::longitudinalOnlyBetaZ(
+      const FieldVector<Double>& properVelocity)
+  {
+    return properVelocity[2] /
+      std::hypot(1.0, properVelocity[2]);
+  }
+
+  Double BoostFrameTransform::heldLongitudinalBetaZ(
+      const FieldVector<Double>& properVelocityBox) const
+  {
+    FieldVector<Double> laboratory(0.0);
+    properVelocityBoxToLab(properVelocityBox, laboratory);
+    FieldVector<Double> longitudinal(0.0);
+    longitudinal[2] = laboratory[2];
+    FieldVector<Double> transformed(0.0);
+    properVelocityLabToBox(longitudinal, transformed);
+    return longitudinalOnlyBetaZ(transformed);
+  }
+
   namespace
   {
     Double positiveLightFrontComponent(

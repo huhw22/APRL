@@ -434,6 +434,9 @@ beam:
   reference:
     input_plane_z: -2.0
     initial_center_z: -1.8
+    frozen_lab_plane_injection: false  # optional, HDF5 v4 only
+    # activation_plane_z: -2.001  # optional upstream lab plane when frozen
+    # hold_transverse_until_activation: true  # optional approximation; requires frozen mode
 ```
 
 All particle planes, magnetic elements and detector planes use the same
@@ -462,6 +465,65 @@ boosted numerical box. A potentially metre-scale span between the corresponding
 laboratory events is logged only as a relativity-of-simultaneity diagnostic; it
 is not interpreted as a required physical drift and does not move
 `initial_center_z` upstream.
+
+Experimental `frozen_lab_plane_injection: true` starts boosted time before
+the earliest activation-plane crossing. `activation_plane_z` defaults to
+`input_plane_z`. With `hold_transverse_until_activation` omitted or false,
+HDF5 fixed-plane records are synchronized to boosted time zero by full
+three-dimensional ballistic propagation. Before crossing the activation
+plane, particles keep their momentum and advance in x/y/z without field
+forces, while sourcing Maxwell fields inside the physical aperture. The
+crossing field step is split at the plane; the remainder uses the regular
+Boris push. Without field feedback or prescribed fields, the input-plane
+crossing reproduces the HDF5 x/y to numerical precision. The initial
+Poisson solve includes frozen particles subject to the usual finite-mesh/CPML
+source selection. The activation plane must precede the first magnetic
+interaction; `beam.input.position_offset` z must be zero. With frozen
+injection disabled, the existing front-anchored projection remains the
+default. A detector coincident with the activation plane can record its
+crossing event; place other comparison detectors downstream of that plane.
+
+Optional `hold_transverse_until_activation: true` requires frozen injection
+and deliberately replaces the *pre-activation* worldline with a held-transverse
+approximation. From HDF5 synchronization to activation, x/y stay at their
+HDF5 input-plane values. To obtain the held boosted-frame longitudinal speed,
+the full boosted momentum is transformed back to the laboratory, its lab
+transverse components are discarded, and `(0, 0, u_z,lab)` alone is boosted.
+If the resulting component is `u'_{z,hold}`, z advances at
+`c * u'_{z,hold} / sqrt(1 + u'_{z,hold}²)`. Thus equal lab `u_z` gives the
+same frozen speed regardless of transverse momentum. Particle momentum is
+retained, but its transverse components do
+not move the particle until activation. The initial Poisson mean velocity
+uses the same held-source convention (zero transverse velocity and this
+longitudinal velocity). At the activation plane the ordinary three-dimensional
+Boris push resumes with the retained full momentum. The crossing step's
+frozen and active legs are deposited separately, so frozen motion does not
+spuriously source transverse current. Frozen upstream particle-plane
+crossings are recorded. The actual jump in transverse current and
+longitudinal speed is **not** a physical
+Lorentz transformation and can launch artificial radiation; monitor fields
+and repeat aperture, time-step and CPML scans. To reproduce HDF5 x/y exactly
+at the input plane, give `activation_plane_z` the same numeric value as
+`input_plane_z` (or omit `activation_plane_z`).
+An upstream activation plane still has held HDF5 x/y *at activation*, but
+subsequent active drift or fields can change them before the input plane.
+The false default keeps the full three-dimensional ballistic behaviour.
+
+With `mesh.ballistic_outside_transverse: true`, frozen particles outside the
+physical transverse aperture remain tracked but are not Maxwell sources
+until they enter it; the existing finite-window approximation still applies.
+Full three-dimensional ballistic back-propagation can place high-boost
+particles millimetres outside a micrometre-scale transverse mesh. Holding x/y
+can reduce this loss, but neither mode recovers the field sources outside the
+physical aperture. Inspect initial and evolving outside fractions before
+using either approximation.
+
+For a no-self-force control, set `mesh.self_field_feedback: false`. This
+omits grid E/B from the particle force but **does not disable initial fields,
+current deposition, or Maxwell evolution**; prescribed device fields remain
+active. It differs from `initial_self_field.enabled: false`. Frozen injection
+and disabled feedback each set energy-ledger `closure_valid=false`. Validate
+orbits and field-energy histories with time-step, aperture, and CPML scans.
 
 Production input uses HDF5:
 

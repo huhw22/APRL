@@ -1,0 +1,44 @@
+# Geometry-only exact t=0 aperture preflight for the full 10 um / 50 A input.
+# Run with geometry_preflight.py, which sends SIGINT after initialization.
+# Direct execution without that wrapper intentionally exhausts duration.
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: interactive, stop_check_interval_steps: 1, resource_monitor: {enabled: false}}
+output:
+  overwrite: false
+  manifest: /data/L_FEL_program/work/uniform10um/g929-preflight-held-w1/run-manifest.yaml
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  ballistic_outside_transverse: true
+  self_field_feedback: false
+  cells: [104, 104, 3072]
+  cell_size: [5, 5, 5]
+  center: [0, 0, 0]
+  duration: 16
+  boost_gamma: 929.130549
+  particle_steps_per_undulator_period: 1
+boundary:
+  type: cpml
+  cells: [10, 10, 12]
+  polynomial_order: 3
+  target_reflection: 1.0e-8
+  kappa_max: 8
+  alpha_fraction: 0
+initial_self_field: {enabled: false}
+beam:
+  reference:
+    input_plane_z: 0
+    initial_center_z: 10
+    frozen_lab_plane_injection: true
+    activation_plane_z: 0
+    hold_transverse_until_activation: true
+  input:
+    type: hdf5
+    file: /data/L_FEL_program/work/uniform10um/particles-10um-50A-w1.h5
+    electrons: 10409720
+    position_offset: [0, 0, 0]
+sources: {incident_waves: [], magnetic_elements: []}
+detectors: {enabled: false}
+stop: {mode: reference-center-z, z: 100}
+trajectory: {enabled: false}
+energy_ledger: {enabled: false}

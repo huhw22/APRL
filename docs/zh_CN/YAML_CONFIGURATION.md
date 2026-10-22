@@ -216,6 +216,9 @@ beam:
   reference:
     input_plane_z: -2.0
     initial_center_z: -1.8
+    frozen_lab_plane_injection: false  # 可选，仅 HDF5 v4
+    # activation_plane_z: -2.001  # 冻结模式可选的上游实验室启动面
+    # hold_transverse_until_activation: true  # 可选近似，须开启冻结模式
 ```
 
 粒子输入面、磁元件和探测面共享同一绝对实验室 z；不强制任何元件位于零。HDF5-v3/v4 中 `input_plane_z` 是 Elegant 观察面坐标，`initial_center_z` 是直线向前投影后、共同实验室时刻束团参考坐标。v3 正纵向偏移向下游；v4 保存固定面带符号到达时间，并按每粒子自身速度重构。v1/v2 和生成高斯已是共同时间快照，忽略 `input_plane_z`。
@@ -223,6 +226,15 @@ beam:
 v3/v4 要求每个重构粒子位于 `input_plane_z` 或其下游；随后要求束头加一个等效实验室 boost-z 单元仍位于首个磁元件**作用区**入口前。这给出 `initial_center_z` 合法区间；若为空，错误同时报告两端并建议移动 Elegant 面、调整边缘/作用区、缩短束团或细化 `dz`。
 
 Lorentz 变换把计算系时间零锚定到下游束头事件，其他粒子相对同步，整个变换束团再平移到数值盒中心。相应实验室事件之间可能跨米级，只作为相对同时性诊断，不解释为物理入口漂移，也不把 `initial_center_z` 人为移到更上游。
+
+实验性 `frozen_lab_plane_injection: true` 把计算系时间零移到最早的启动面穿越之前。`activation_plane_z` 默认为 `input_plane_z`。不设置 `hold_transverse_until_activation`（或设为 `false`）时，HDF5 输入面事件按原始三维动量自由传播，同步到计算系时间零；启动面之前粒子的 x/y/z 都按直线推进，只有电磁力被关闭。位于物理网格内的粒子仍持续沉积电荷/电流，并参与初始 Poisson 自场。跨越启动面的 Maxwell 时间步在交点拆分，剩余时间使用正常 Boris 推进。无自场反作用、无外加场时，输入面交点应在数值精度内重现 HDF5 的 x/y。初场源仍受有限网格和 CPML 筛选约束。启动面须在首个磁场作用区之前，此模式要求 `beam.input.position_offset` 的 z 分量为零。关闭冻结模式则维持原来的束头锚定同步。与启动面重合的粒子探测面可以记录该处的过面事件；其他比较探测面应放在启动面下游。
+
+可选 `hold_transverse_until_activation: true` 须同时开启冻结模式，它有意把**启动前**的轨迹换成「横向保持」近似。从 HDF5 输入事件同步到计算系时间零起，直至到达启动面，x/y 始终保持 HDF5 输入面上的数值。计算系冻结纵向速度按以下规则取得：先把完整计算系动量反变换到实验室系，舍弃实验室横向分量，再仅将 `(0, 0, u_{z,lab})` 变换到计算系；所得 `u'_{z,hold}` 对应 `v'_{z,hold} = c * u'_{z,hold} / sqrt(1 + u'_{z,hold}²)`。因此相同实验室 `u_z`、不同横向动量的粒子，冻结纵向速度相同。粒子的完整动量仍被保存，但横向动量在启动前不推动 x/y。初始 Poisson 求解采用与这个受限场源一致的平均速度：横向速度为零、纵向为上述速度。到达启动面后，用保留的完整动量恢复正常三维 Boris 推进；跨面的一个时间步按冻结和解冻两段分别沉积电流，启动面前不会伪造横向电流。冻结段穿越的上游粒子探测面也会记录粒子。启动时实际存在的横向电流及纵向速度突变**不是**物理的 Lorentz 轨迹，可能激发人为辐射；必须检查场，并扫描孔径、时间步长与 CPML。若要求在输入面精确重现 HDF5 x/y，应使 `activation_plane_z` 等于 `input_plane_z`（或省略前者）。若启动面在上游，x/y 只在启动面保持 HDF5 值；随后的正常漂移或场作用会使粒子到输入面时与 HDF5 不同。默认 `false` 仍是完整三维直线推进。
+
+如果同时启用 `mesh.ballistic_outside_transverse: true`，位于横向物理区外的冻结粒子仍被追踪，但在进入物理区前不向 Maxwell 网格沉积电流；原有有限窗口近似依然存在。
+完整三维回推在高 boost 下可能使粒子落到横向网格外数毫米。保持 x/y 可以减少这一损失，但两种模式都无法恢复物理区外的场源；正式使用前必须检查初始及随时间变化的框外粒子比例。
+
+无自场反作用的对照可设置 `mesh.self_field_feedback: false`：这只关闭网格 E/B 对粒子的作用，**不关闭初始场、电流沉积或 Maxwell 演化**，外加器件场仍起作用。它与 `initial_self_field.enabled: false` 不同。冻结或关闭反作用时，能量统计的 `closure_valid=false`。正式计算前应扫描时间步长、横向孔径和 CPML，比较轨道与场能量历史。
 
 正式 HDF5 输入：
 

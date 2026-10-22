@@ -8,6 +8,7 @@
 
 #include "eb_field.h"
 #include "eb_particles.h"
+#include "boostframe.h"
 #include "config.h"
 #include "fieldvector.h"
 
@@ -56,7 +57,9 @@ namespace aprl
         Double relativeTolerance,
         std::size_t maximumIterations,
         MPI_Comm communicator,
-        bool includeTransverseCpmlParticles = false);
+        bool includeTransverseCpmlParticles = false,
+        bool holdTransverseUntilActivation = false,
+        const BoostFrameTransform* frame = 0);
   };
 }
 
