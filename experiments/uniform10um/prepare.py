@@ -42,6 +42,7 @@ def card(profile, name, input_file, electrons, output_root,
     particle_entry = ("    - {name: after-20um, z: 20, "
                       "buffer_records: 65536, compression: 0}\n") \
         if particle_plane else ""
+    particle_plane_yaml = particle_entry or "    []\n"
     return f"""# Independent synthetic 10 um, 50 A laboratory-plane event bunch.
 # Profile {profile}; case {name}. No Elegant data and no magnetic elements.
 units: {{length: micrometer, time: femtosecond}}
@@ -93,7 +94,7 @@ detectors:
   field_planes:
     - {{name: near-field, z: 20, rhythm: {field_rhythm}, buffer_samples: 4, compression: 0}}
   particle_planes:
-{particle_entry if particle_entry else '    []\n'}stop: {{mode: reference-center-z, z: {stop_z}}}
+{particle_plane_yaml}stop: {{mode: reference-center-z, z: {stop_z}}}
 trajectory: {{enabled: false}}
 energy_ledger:
   enabled: true
