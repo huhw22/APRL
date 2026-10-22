@@ -37,8 +37,12 @@ def yaml_bool(value):
 
 
 def card(profile, name, input_file, electrons, output_root,
-         particle_plane):
-    gamma, nz, dz, duration, stop_z, field_rhythm, cpml_z = PROFILES[profile]
+         particle_plane, *, xy_cells=104, xy_cpml_cells=10,
+         dz_um=None, z_cpml_cells=None, longitudinal_guard_cells=384,
+         longitudinal_alignment_cells=256):
+    gamma, nz, profile_dz, duration, stop_z, field_rhythm, profile_cpml_z = PROFILES[profile]
+    dz = profile_dz if dz_um is None else dz_um
+    cpml_z = profile_cpml_z if z_cpml_cells is None else z_cpml_cells
     held, initial_field, feedback = CASES[name]
     one_meter = profile == "g929-1m"
     run_dir = (output_root / "runs" / (profile + "-" + name)).resolve()
@@ -50,13 +54,13 @@ def card(profile, name, input_file, electrons, output_root,
         "buffer_records: 65536, compression: 0}\n"
     ) if particle_plane else ""
     particle_plane_yaml = particle_entry or "    []\n"
-    longitudinal_yaml = """  longitudinal:
+    longitudinal_yaml = f"""  longitudinal:
     mode: observation-bounded
-    lower_guard_cells: 384
-    upper_guard_cells: 384
+    lower_guard_cells: {longitudinal_guard_cells}
+    upper_guard_cells: {longitudinal_guard_cells}
     self_field_padding_rms: 4.0
     ballistic_time_safety_factor: 1.1
-    alignment_cells: 256
+    alignment_cells: {longitudinal_alignment_cells}
 """ if one_meter else ""
     stop_yaml = ("stop: {mode: after-last-element}" if one_meter else
                  f"stop: {{mode: reference-center-z, z: {stop_z}}}")
@@ -77,7 +81,7 @@ mesh:
   current_filter: none
   ballistic_outside_transverse: true
   self_field_feedback: {yaml_bool(feedback)}
-  cells: [104, 104, {nz}]
+  cells: [{xy_cells}, {xy_cells}, {nz}]
   cell_size: [5, 5, {dz}]
   center: [0, 0, 0]
   duration: {duration}
@@ -85,7 +89,7 @@ mesh:
   particle_steps_per_undulator_period: 1
 {longitudinal_yaml}boundary:
   type: cpml
-  cells: [10, 10, {cpml_z}]
+  cells: [{xy_cpml_cells}, {xy_cpml_cells}, {cpml_z}]
   polynomial_order: 3
   target_reflection: 1.0e-8
   kappa_max: 8

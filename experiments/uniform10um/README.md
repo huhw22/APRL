@@ -89,6 +89,57 @@ python3 experiments/uniform10um/analyze_particle_plane.py \
 
 在 γ≈929、`dz′=5 µm` 下，单粒子每场步约走 5.71 mm 实验室距离，1 m 约 175 步；整束因固定实验室输入事件的相对论同步跨度，需约 2,040 步。`dz′/γ≈5.38 nm` 是前向光波的实验室等效采样刻度，不是粒子每步行程，且不满足旧 4 m 卡约 1.35 nm 的光波采样要求。这组卡不用于辐射频谱结论。自动盒保证设计的粒子世界管和前向因果路径，不证明末态全空间场或近场边界已收敛；初始 Poisson、横向开边界注入、CPML 和宏粒子权重仍须扫描。轻量几何预检发现 ballistic 模式初始约 5.96% 粒子在整个横向网格外，held 模式约 0.03%；两组初始自场实际纳入的源粒子数因此不同，场差不能只解释为启动面后的轨道动力学差。关闭初场的控制组会跳过 4σ 初场留白，自动网格因而可能改变，不可在未对齐网格的情况下将差异全归于初场。现有冻结/开边界能量账 `closure_valid=0`，其残差只作数量级诊断。
 
+## held 启动的 1 m 网格/边界敏感性测试
+
+这组测试**只比较 held-field 与 held-field**：相同的现有 `particles.h5`、初始自场和粒子反馈，观察面仍在实验室中心后 1 m。它检验保持横向位置这一启动近似对出口总场及粒子末态的数值敏感性，不以 ballistic 启动为“物理真值”。默认新跑三个变体（每个都记录完整的 1 m 粒子面）：
+
+| 变体 | 相对参考卡的唯一目的 | 横向物理半宽 |
+|---|---|---:|
+| `wide` | 104² → 128²，CPML 仍 10 格，检查横向口径 | ±270 µm |
+| `thick-cpml` | 124²、CPML 20 格，物理区宽度不变，只加厚吸收层 | ±210 µm |
+| `fine-z` | `dz′` 5 → 2.5 µm，纵向 CPML/guard/alignment 格数同步加倍 | ±210 µm |
+
+还可用 `--variants base,wide,thick-cpml,long-guard,fine-z` 加跑两组可选控制：`base` 与参考卡相同，用于测量重新编译或 MPI 布局变化造成的重复运行差；`long-guard` 将纵向两端物理保护区从各 384 格加到各 768 格，用于检查纵向边界对末场的影响。它们默认不跑，以免重复花费。`fine-z` 和加宽网格的内存消耗会明显增加，也可先用 `--variants wide` 单独提交试跑，其余变体各用新的 `SUITE` 目录提交。
+
+下例中的 `OLD` 指已有**正常完成的 held-field** 作业根目录，其中有 `particles.h5` 和 `runs/g929-1m-held-field/`；`SUITE` 必须是不存在的新目录。先用 `--plan` 核查绝对路径和资源，再去掉它提交。`NODES=2`、每节点 64 rank 仅示范你之前使用的资源量；新变体可能增加网格内存，先结合启动日志的 `[resource]` 估算确认节点容量。脚本只读取现有 H5，不再生成或复制粒子，不依赖 Slurm spool 工作目录。
+
+```bash
+SRC=/public/home/wfollowm/aprl_dev
+OLD=/absolute/path/to/existing/held-job
+SUITE=/absolute/path/to/new/held-convergence-suite
+NODES=2 TASKS_PER_NODE=64 MPI_RANKS=128 APRL_SRC_DIR="$SRC" \
+  "$SRC/experiments/uniform10um/submit_held_convergence.sh" \
+  --reference "$OLD/runs/g929-1m-held-field" \
+  --input "$OLD/particles.h5" --output-dir "$SUITE" \
+  --electrons 10409720 --plan
+# 确认路径和资源后，原命令去掉最后的 --plan 才会提交。
+```
+
+提交后看 `$SUITE/status.tsv`、`job-status.txt` 和每组 `runs/g929-1m-held-field/run.log`；`complete` 必须同时有正常停止、完整能量账和两个探测器文件存在。文件内部的完整标记会在后处理时再核对。**作业不自动跑 Python 后处理**，以免计算节点缺 `h5py` 时把成功的仿真误报失败。全部完成后，在有 NumPy/h5py 的环境中比较同一固定中心 ±160 µm 区域、共同实验室时间窗的 E/B 和 Poynting：
+
+```bash
+python3 "$SRC/experiments/uniform10um/analyze_held_convergence.py" \
+  --reference "held=$OLD/runs/g929-1m-held-field" \
+  --variant "wide=$SUITE/wide/runs/g929-1m-held-field" \
+  --variant "thick=$SUITE/thick-cpml/runs/g929-1m-held-field" \
+  --variant "fine=$SUITE/fine-z/runs/g929-1m-held-field" \
+  --roi-half-width-um 160 \
+  --json-out "$SUITE/held-field-comparison.json" \
+  --csv-out "$SUITE/held-field-traces.csv"
+```
+
+报告中的 `relative_E/B_spacetime_L2` 和相同时间窗的出口场能流用于判断收敛；`tail_unresolved=true` 表示最后样本尚未衰减（默认阈值为峰值 5%），`after-last-element` 的时间窗可能截掉后续场，累计通量不能据此定论。场面是**未减去粒子近场的总 Maxwell 场**，Poynting 不是纯辐射功率。`U_field` 属于 boosted 系整个物理盒，横向盒大小改变后，绝对值不能直接拿来当共同空间区域的收敛判据；`closure_valid=0` 也仍不是严格能量闭合。`fine-z` 的 E/B 时间交错误差不同，这个测试不能代替目标光子能段的辐射频谱收敛。逐粒子末态差另用 `compare_particle_planes.py` 按 `source_id` 比较；两组相对于无场直线轨迹的 ~10 nm 偏差，不等同于两组之间的差值：
+
+```bash
+python3 "$SRC/experiments/uniform10um/compare_particle_planes.py" \
+  --reference "$OLD/runs/g929-1m-held-field/detectors/after-1m.h5" \
+  --variant "$SUITE/wide/runs/g929-1m-held-field/detectors/after-1m.h5" \
+  --scratch-dir "$SUITE" \
+  --json-out "$SUITE/particle-wide-vs-held.json"
+```
+
+把 `wide` 换成 `thick-cpml`、`fine-z` 再各跑一次。`dxy_um` 是两组逐粒子横向位移差的模；`dr_um` 是两组到轴线距离的差，不是同一量。这个配对器只比较两面都出现的首个下游过面事件，两个文件都缺失的粒子无法由它发现；还应使用上面的 `analyze_particle_plane.py` 核对每组相对于原始 `particles.h5` 的完整性。临时磁盘约需 34 字节/最大 `source_id`（一千万粒子约 350 MB），不会把全部记录载入 RAM。
+
 ## γ≈929 几何预检与生产限制
 
 固定实验室面输入在高 boost 的 `t_box=0` 伸展约 11.4 mm，而从第一到最后一个粒子过启动面的计算系时间差约 31 ps。因此不能把一个只覆盖微米自由漂移的盒子或几十飞秒的运行当作完整整束启动。曾经拟议的 5.12 mm 纵向网格不足以容纳初始分布。即便增大到预检的 `3072×5 µm = 15.36 mm`，也只验证了初始几何，没有证明整段演化期间粒子、近场和观测面都远离纵向 CPML。
