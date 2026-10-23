@@ -30,6 +30,10 @@ seeded-FEL 与 laser-modulation 计算不属于已验证范围。
 - E/B 在交错 Yee 网格上以国际单位制推进。
 - 默认 `cowan-z` 格式消除轴向真空传播的相位误差；标准 Yee 格式用于回归。
 - 粒子使用相对论 Boris 推进；解析磁元件可启用粒子子步进。
+- HDF5-v4 固定实验室面输入可选原有同步、冻结三维直线推进和冻结横向（held）
+  三种启动方式。高 boost 回推使大量粒子落出有限横向网格时，推荐优先测试
+  held；这不是出口场或辐射已收敛的声明，详见
+  [启动方式与适用范围](docs/zh_CN/FROZEN_LAB_PLANE_TEST.md)。
 - 初始粒子自场由分布式 CIC 相对论 Poisson 求解生成，并通过离散 Gauss 约束
   检查。
 - 网格仅由整数单元数和单元尺寸定义；物理尺寸与 MPI 薄层偏移不依赖浮点单元
@@ -37,9 +41,10 @@ seeded-FEL 与 laser-modulation 计算不属于已验证范围。
 - CPML 内表面同时是物理粒子边界。物理轨迹在该处终止，轻量且不输出的载流子
   在吸收层内完成连续电流衰减。
 - 实验选项 `mesh.ballistic_outside_transverse: true` 保留横向物理区外的粒子，
-  使其无场漂移，并在入框后沉积裁剪后的电流轨迹。初始 Poisson 自场仅包含距离
-  物理边界至少一个网格单元的粒子。这是有限窗口近似，不保证全局 Gauss 约束或
-  能量闭合；详见[边界注入限制](docs/PARTICLE_OPEN_BOUNDARY.md)。
+  使其无场漂移，并在入框后沉积裁剪后的电流轨迹。初始 Poisson 自场通常纳入
+  物理区内粒子；可选的一次性求解还可纳入横向 CPML 内粒子。这是有限窗口
+  近似，不保证全局 Gauss 约束或能量闭合；详见
+  [边界注入限制](docs/zh_CN/PARTICLE_OPEN_BOUNDARY.md)。
 
 ## 辐射计算流程
 

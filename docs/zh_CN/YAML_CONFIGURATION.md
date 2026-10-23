@@ -221,6 +221,16 @@ beam:
     # hold_transverse_until_activation: true  # 可选近似，须开启冻结模式
 ```
 
+启动方式可按下表选择；`initial_self_field.enabled` 与 `mesh.self_field_feedback` 是独立开关，不改变这三种启动轨迹的定义：
+
+| 方式 | `frozen_lab_plane_injection` | `hold_transverse_until_activation` | 启动前轨迹 |
+|---|---:|---:|---|
+| 原有束头锚定（默认） | `false` | 省略或 `false` | 原有共同时间束团同步。 |
+| 冻结三维（ballistic） | `true` | 省略或 `false` | 完整三维动量的无场力直线传播。 |
+| 冻结横向（held） | `true` | `true` | x/y 保持输入面值，z 由实验室纵向速度推进。 |
+
+对高 boost 的 HDF5 固定实验室面输入，如果完整三维回推把大量粒子移出有限横向网格，推荐优先测试 held，并令启动面与输入面重合；它减少该类工况的初始出框，现有自由漂移测试也未见持续场能量失控增长，但不是普遍物理真值，也不表示出口场/辐射已经收敛。原有默认值不变。运行 manifest 的 `resolved_beam_reference.startup_mode` 会记录解析后的 `front-anchored`、`ballistic` 或 `held`；这是**输出元数据，不是输入 YAML 键**。参见[自由漂移对照](FROZEN_LAB_PLANE_TEST.md)。
+
 粒子输入面、磁元件和探测面共享同一绝对实验室 z；不强制任何元件位于零。HDF5-v3/v4 中 `input_plane_z` 是 Elegant 观察面坐标，`initial_center_z` 是直线向前投影后、共同实验室时刻束团参考坐标。v3 正纵向偏移向下游；v4 保存固定面带符号到达时间，并按每粒子自身速度重构。v1/v2 和生成高斯已是共同时间快照，忽略 `input_plane_z`。
 
 v3/v4 要求每个重构粒子位于 `input_plane_z` 或其下游；随后要求束头加一个等效实验室 boost-z 单元仍位于首个磁元件**作用区**入口前。这给出 `initial_center_z` 合法区间；若为空，错误同时报告两端并建议移动 Elegant 面、调整边缘/作用区、缩短束团或细化 `dz`。

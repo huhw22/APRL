@@ -1,6 +1,18 @@
 # 固定实验室启动面：自由漂移对照
 
-`beam.reference.frozen_lab_plane_injection: true` 是实验性 HDF5-v4 输入模式。可选的 `activation_plane_z` 默认为 `input_plane_z`。默认仍以完整三维直线运动把输入面事件同步到计算系时间零；启动面前 x/y/z 都按原动量推进，只关闭电磁力，位于物理区内时仍作为 Maxwell 源。粒子跨过实验室固定启动面的时间步在交点拆开，剩余部分恢复正常 Boris 推进。
+## 启动方式选择
+
+HDF5-v4 固定实验室面输入有以下三种启动方式；`initial_self_field.enabled` 和 `mesh.self_field_feedback` 是与启动方式正交的物理/诊断开关，不是另外两种启动方式。没有显式设置时仍使用原有的束头锚定方式，不改变现有输入卡的默认行为。
+
+| 方式 | `frozen_lab_plane_injection` | `hold_transverse_until_activation` | 启动前轨迹与适用情形 |
+|---|---:|---:|---|
+| 原有束头锚定 | `false` | 省略或 `false` | 重构共同时间束团，再做原有同步；保留旧卡语义。 |
+| 冻结三维（ballistic） | `true` | 省略或 `false` | 按完整三维动量直线传播至启动面，不受网格场力；用作保持原始直线轨迹的对照。 |
+| 冻结横向（held） | `true` | `true` | 启动前固定 HDF5 输入面的 x/y，仅按实验室纵向速度推进 z；适合高 boost 回推使大量粒子落到有限横向网格外的工况。 |
+
+对这种高 boost、有限横向孔径的固定实验室面束团，**推荐先选 held**，并将 `activation_plane_z` 设为 `input_plane_z`，以保持输入面 x/y。现有 10 µm、50 A、约 1041 万粒子的 1 m 自由漂移测试中，held 显著减少初始出框，三项网格/CPML 扰动后的出口粒子位置差 RMS 均小于 1 nm，盒内总场能量也未持续失控增长；详见[实验记录](../../experiments/uniform10um/README.md)。这是针对该类数值几何的推荐，**不是**一般物理精确性、出口场或辐射收敛的证明。需要原始三维直线轨道作为参照时仍应跑 ballistic 对照。运行 manifest 的 `resolved_beam_reference.startup_mode` 记录解析后的方式；它不是可填写的输入 YAML 键。
+
+`beam.reference.frozen_lab_plane_injection: true` 是实验性 HDF5-v4 输入模式。可选的 `activation_plane_z` 默认为 `input_plane_z`。在冻结模式中不启用 held 时，以完整三维直线运动把输入面事件同步到计算系时间零；启动面前 x/y/z 都按原动量推进，只关闭电磁力，位于物理区内时仍作为 Maxwell 源。粒子跨过实验室固定启动面的时间步在交点拆开，剩余部分恢复正常 Boris 推进。
 
 新增的可选 `beam.reference.hold_transverse_until_activation: true` 必须与冻结模式一起使用。它在同步及冻结传播中把 x/y 保持为 HDF5 输入面值。冻结纵向速度由实验室 `u_z` 单独决定：把完整动量反变换回实验室，令横向分量为零，再把 `(0, 0, u_{z,lab})` 变换到计算系，按 `v'_{z,hold} = c * u'_{z,hold} / sqrt(1 + u'_{z,hold}²)` 推进 z。相同实验室 `u_z`、不同横向动量给出相同冻结纵向速度。初始 Poisson 的平均速度也采用这一保持模式的场源约定（横向为零、纵向用上述速度）。启动面之后恢复保存的完整三维动量和正常 Boris 推进；过面的一个时间步分段沉积，冻结段不会被错误地当作横向电流，上游粒子探测面会记录冻结运动。因此这是减轻高 boost 回推造成的横向出框的**非物理近似**，启动处实际的横向电流与纵向速度会突然改变，可能产生人为辐射。若需在输入面精确保持 HDF5 x/y，启动面应等于输入面；若设在上游，解冻后的传播可以在到达输入面之前改变 x/y。
 

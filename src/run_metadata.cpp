@@ -26,6 +26,12 @@ namespace aprl
 {
   namespace
   {
+    const char* startupModeName(const BeamReferenceConfig& reference)
+    {
+      if (!reference.frozenLabPlaneInjection) return "front-anchored";
+      return reference.holdTransverseUntilActivation ? "held" : "ballistic";
+    }
+
     bool pathExists(const std::string& path)
     {
       struct stat status;
@@ -193,6 +199,8 @@ namespace aprl
                    << config.initialSelfField.maximumMeanTransverseBeta
                    << "\n"
                    << "resolved_beam_reference:\n"
+                   << "  startup_mode: "
+                   << startupModeName(config.reference) << "\n"
                    << "  input_plane_z_m: "
                    << config.reference.inputPlaneZ << "\n"
                    << "  frozen_lab_plane_injection: "

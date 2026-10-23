@@ -7,6 +7,23 @@ The repeatable lightweight pre-run gate is now registered with CTest; see
 [TESTING.md](TESTING.md). The historical studies below remain numerical
 evidence and are not silently converted into universal pass/fail tolerances.
 
+## Fixed-plane startup sensitivity
+
+The HDF5-v4 startup regression checks legacy, frozen full-3D ballistic, and
+frozen held-transverse modes, including single- and two-rank release-current
+continuity. In a separate 10 µm, 50 A, 10,409,720-particle, 1 m high-boost
+drift, held startup reduced the initial population outside the transverse
+mesh from 5.98752% (ballistic) to 0.0274263%. Three held-only aperture,
+CPML, and longitudinal-step variations changed the matched outlet transverse
+particle positions by 0.576, 0.051, and 0.036 nm RMS, respectively. Stored
+field energy showed no sustained runaway. These are grounds to prefer held
+as a starting approximation for this finite-aperture geometry, not proof of
+the physical startup worldline: the raw outlet E/B spacetime differences
+were 11%–23%, and power at the end of the approximately 35 fs observation
+window was still 81%–87% of its peak. The recorded flux is neither a complete
+transmitted-energy integral nor near-field-subtracted radiation. See the
+[reproducible drift study](../experiments/uniform10um/README.md).
+
 ## Two-plane orbit validation
 
 An eight-macroparticle, ten-period, `gamma=2`, `K=0.1` regression run was

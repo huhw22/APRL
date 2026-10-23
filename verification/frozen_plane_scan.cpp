@@ -620,6 +620,17 @@ namespace
         return;
       }
 
+    std::ifstream manifest((directory + "/run-manifest.yaml").c_str());
+    check(static_cast<bool>(manifest), "Frozen-plane run manifest is missing");
+    const std::string manifestText(
+      (std::istreambuf_iterator<char>(manifest)),
+      std::istreambuf_iterator<char>());
+    const std::string startupMode = !frozen ? "front-anchored" :
+      holdTransverse ? "held" : "ballistic";
+    check(manifestText.find("resolved_beam_reference:\n  startup_mode: " +
+      startupMode + "\n") != std::string::npos,
+      "Frozen-plane run manifest has the wrong startup mode");
+
     if (holdTransverse)
       {
         const std::vector<DetectorRecord> upstream = readDetector(

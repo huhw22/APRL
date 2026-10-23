@@ -7,6 +7,9 @@ input card, its FNV-1a configuration digest, the source revision (including a
 description, MPI implementation and rank count, particle-input identity, and
 the resolved shutdown-watchdog state and timeout (including defaults omitted
 from the input card).
+The resolved beam-reference section also names the selected startup behavior
+as `startup_mode: front-anchored`, `ballistic`, or `held`; this is manifest
+metadata, not a separate input-card option.
 For a large HDF5 particle file the identity uses path, byte size and mtime; it
 does not reread and hash the entire file at startup.
 

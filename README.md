@@ -36,6 +36,12 @@ require that boundary source are outside the validated scope.
   propagation direction; the standard Yee update is retained for regression.
 - Relativistic particles use a Boris pusher with optional subcycling for
   analytical magnetic devices.
+- HDF5-v4 fixed-lab-plane input offers legacy synchronization, frozen
+  three-dimensional ballistic startup, and frozen held-transverse startup.
+  For high-boost input where back-projection puts many particles outside a
+  finite transverse mesh, held is the recommended tested starting choice,
+  not a claim of radiation convergence; see the
+  [startup configuration](docs/YAML_CONFIGURATION.md#beam-reference-and-input).
 - Initial particle self-fields are obtained from a distributed CIC
   relativistic-Poisson solve that enforces the discrete Gauss constraint.
 - Integer cell counts and physical cell sizes define the mesh. Physical
@@ -47,7 +53,8 @@ require that boundary source are outside the validated scope.
 - Experimental `mesh.ballistic_outside_transverse: true` retains particles
   outside the transverse aperture as field-free ballistic particles and
   injects their clipped current trajectories on re-entry. The initial Poisson
-  source includes only particles at least one cell inside the physical region.
+  source normally uses particles inside the physical region; an optional
+  one-time solve also includes particles inside the transverse CPML.
   This finite-window approximation does not guarantee global Gauss/energy
   closure; see [boundary-injection limits](docs/PARTICLE_OPEN_BOUNDARY.md).
 

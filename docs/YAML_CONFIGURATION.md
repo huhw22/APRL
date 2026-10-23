@@ -439,6 +439,27 @@ beam:
     # hold_transverse_until_activation: true  # optional approximation; requires frozen mode
 ```
 
+The startup worldline is selected by these two YAML booleans.
+`initial_self_field.enabled` and `mesh.self_field_feedback` are independent
+controls, not additional startup modes:
+
+| Mode | `frozen_lab_plane_injection` | `hold_transverse_until_activation` | Pre-activation worldline |
+|---|---:|---:|---|
+| Legacy front-anchored (default) | `false` | omitted or `false` | Existing common-time bunch synchronization. |
+| Frozen 3D (ballistic) | `true` | omitted or `false` | Full-momentum, force-free straight motion. |
+| Frozen transverse (held) | `true` | `true` | HDF5-plane x/y held; z follows the laboratory longitudinal velocity. |
+
+For high-boost HDF5 fixed-lab-plane input whose three-dimensional
+back-projection puts many particles outside a finite transverse mesh,
+prefer testing held startup with the activation plane at the input plane.
+It reduced initial out-of-mesh fractions in the tested free-drift case,
+whose field-energy history showed no sustained runaway, but is not a general
+physical truth or a claim that outlet fields or radiation have converged.
+The legacy default is unchanged; retain a ballistic control when the original
+straight worldline matters. The run manifest records the resolved choice as
+`resolved_beam_reference.startup_mode` (`front-anchored`, `ballistic`, or
+`held`); this is output metadata, **not** an accepted input key.
+
 All particle planes, magnetic elements and detector planes use the same
 absolute laboratory z coordinate. No element is forced to lie at zero.
 For production HDF5-v3/v4 input, `input_plane_z` is the Elegant observation-plane
