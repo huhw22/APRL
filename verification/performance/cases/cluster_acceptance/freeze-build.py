@@ -24,6 +24,14 @@ def digest(path):
     return value.hexdigest()
 
 
+def node_local(path):
+    return path.parts[1] in ("usr", "lib", "lib64", "bin", "sbin", "etc")
+
+
+def strict_mpi(path):
+    return path.name.startswith(("libmpi", "libopen-rte", "libopen-pal", "libpmix")) or path.name == "mpirun"
+
+
 def main():
     workspace = Path(sys.argv[1]).resolve()
     prepared = workspace / "tests/cluster_acceptance"
@@ -32,13 +40,14 @@ def main():
     if record_path.exists() or manifest_path.exists():
         raise SystemExit("Existing campaign manifest: preserve it; use a new prepared campaign for rebuilding.")
     paths = {workspace / "cluster.env"}
-    record = {"created_utc": datetime.now(timezone.utc).isoformat(), "host": platform.node(),
+    record = {"format": "aprl-cluster-build-v2",
+              "created_utc": datetime.now(timezone.utc).isoformat(), "host": platform.node(),
               "workspace": str(workspace), "builds": {}, "executables": {},
               "cmake": output("cmake", "--version"), "compiler": output("/usr/bin/g++", "--version"),
               "mpi": output("/usr/bin/mpirun", "--version"),
               "mpi_wrapper": output("/usr/bin/mpic++", "--showme"),
               "python": sys.executable,
-              "status": "compiled and statically checked; no Slurm job submitted or scientific test run"}
+              "status": "prepared artifacts only; consult separate Slurm results for runtime validation"}
     prefix = Path(os.environ["APRL_DEPENDENCY_PREFIX"]).resolve()
     record["dependency_prefix"] = str(prefix)
     paths.add(prefix / "share/aprl/runtime-env.sh")
@@ -49,6 +58,12 @@ def main():
             raise SystemExit(f"Missing tool: {name}")
         record["tools"][name] = str(Path(selected).absolute())
         paths.add(Path(selected).absolute())
+    record["tool_versions"] = {}
+    for name in ("srun", "scontrol", "mpirun"):
+        version = output(record["tools"][name], "--version")
+        record["tool_versions"][name] = next(
+            line for line in version.splitlines()
+            if line.startswith("slurm ") or line.startswith("mpirun (Open MPI) "))
     import h5py
     import numpy
     record["python_libraries"] = {"numpy": numpy.__version__, "h5py": h5py.__version__,
@@ -103,7 +118,15 @@ def main():
     tracked = subprocess.check_output(["git", "-C", str(source), "ls-files", "-z", "--",
                                        "verification", "src", "utilities", "postprocess", "CMakeLists.txt"])
     paths.update(source / os.fsdecode(p) for p in tracked.split(b"\0") if p)
-    paths.update(p for p in prepared.iterdir() if p.is_file())
+    # Freeze only installed versioned templates, never historical Slurm logs.
+    templates = source / "verification/performance/cases/cluster_acceptance"
+    for template in templates.iterdir():
+        if not template.is_file():
+            continue
+        installed = prepared / template.name
+        if not installed.is_file() or digest(installed) != digest(template):
+            raise SystemExit(f"Prepared template differs from source: {installed}")
+        paths.add(installed)
     input_path = workspace / "inputs/elegant-particles.h5"
     stat = input_path.stat()
     with h5py.File(input_path, "r") as file:
@@ -113,6 +136,15 @@ def main():
                                    "note": "metadata inspected read-only; not used by the small SASE harness"}
     if digest(workspace / "build/candidate/aprl") != digest(workspace / "build/verification/aprl"):
         raise SystemExit("Verification APRL differs from candidate: review before freezing.")
+    # Shared experiment artifacts and the MPI stack must remain identical.
+    # Node-local Slurm/OS builds may differ; audit them on the executing node
+    # and check dependency/ABI compatibility before launching any computation.
+    node_paths = {p for p in paths if node_local(p) and not strict_mpi(p)}
+    record["node_local_files"] = {
+        str(p): {"sha256": digest(p), "realpath": str(p.resolve())}
+        for p in sorted(node_paths)}
+    paths.difference_update(node_paths)
+    record["strict_files"] = {str(p): digest(p) for p in sorted(paths)}
     with record_path.open("x") as stream:
         json.dump(record, stream, indent=2)
         stream.write("\n")

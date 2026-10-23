@@ -22,27 +22,10 @@ init_run() {
   printf 'Result directory: %s\n' "$run_dir"
   printf '%s\n' "$stage" > "$run_dir/STAGE"
   cp "$prepared/manifest.sha256" "$prepared/build-record.json" "$run_dir/"
+  { date -u --iso-8601=seconds; hostname; } > "$run_dir/preflight-host.txt"
   sha256sum --check --quiet "$run_dir/manifest.sha256" || fail 'Prepared artifacts changed; rebuild/review before running.'
-  "$PYTHON_BIN" - "$run_dir/build-record.json" <<'PY'
-import json, os, re, shutil, subprocess, sys
-from pathlib import Path
-record = json.loads(Path(sys.argv[1]).read_text())
-if str(Path(os.environ['APRL_DEPENDENCY_PREFIX']).resolve()) != record['dependency_prefix']:
-    raise SystemExit('Dependency prefix differs from the prepared build')
-if Path(sys.executable).resolve() != Path(record['python']).resolve():
-    raise SystemExit('Python differs from the prepared analysis environment')
-for name, expected in record['tools'].items():
-    actual = shutil.which(name)
-    if actual is None or Path(actual).absolute() != Path(expected):
-        raise SystemExit(f'Tool selection changed: {name}: {actual} != {expected}')
-def library_paths(text):
-    return sorted(re.findall(r'(?:=>\s+|^\s*)(/\S+)', text, re.MULTILINE))
-for executable, details in record['executables'].items():
-    actual = subprocess.check_output(['ldd', executable], text=True, stderr=subprocess.STDOUT)
-    if 'not found' in actual or library_paths(actual) != library_paths(details['ldd']):
-        raise SystemExit(f'Dynamic library resolution changed: {executable}')
-print('Prepared tools and dynamic library paths verified')
-PY
+  "$PYTHON_BIN" "$prepared/check-runtime.py" \
+    "$run_dir/build-record.json" "$run_dir/runtime-audit.json"
   export OMP_NUM_THREADS=1 OMP_DYNAMIC=FALSE OMP_PLACES=cores OMP_PROC_BIND=close
   export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
   export APRL_PROFILE_INTERVAL=0
