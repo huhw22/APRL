@@ -57,7 +57,7 @@ def prepare(root, binary):
         "output": {"overwrite": False, "manifest": str(case / "run-manifest.yaml")},
         "mesh": {"field_solver": "cowan-z", "current_filter": "none",
             "ballistic_outside_transverse": False, "self_field_feedback": True,
-            "cells": [16, 16, 1024], "cell_size": [2, 2, .5], "center": [0, 0, 0],
+            "cells": [16, 16, 4096], "cell_size": [2, 2, .5], "center": [0, 0, 0],
             "duration": 2500, "boost_gamma": 2,
             "particle_steps_per_undulator_period": 4},
         "boundary": {"type": "cpml", "cells": [3, 3, 8], "polynomial_order": 3,
