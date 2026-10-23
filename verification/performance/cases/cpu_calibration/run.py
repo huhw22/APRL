@@ -58,7 +58,7 @@ def launch(binary, ranks, threads, directory):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--case', choices=('balanced', 'field-heavy', 'particle-heavy', 'holdout'), required=True)
-    parser.add_argument('--mode', choices=('pilot', 'matrix'), required=True)
+    parser.add_argument('--mode', choices=('pilot', 'pair', 'matrix'), required=True)
     parser.add_argument('--repeats', type=int, default=3)
     args = parser.parse_args()
     if platform.node() != 'gnode1' or os.environ.get('APRL_ALLOW_UNSCHEDULED_CPU_TESTS') != '1':
@@ -84,11 +84,17 @@ def main():
     root = Path(tempfile.mkdtemp(prefix=f'{args.case}-{args.mode}-gnode1-{datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")}-', dir=root_parent))
     card_hash = hashlib.sha256(payload).hexdigest()
     (root / 'case.yaml').write_bytes(payload)
-    rows = ([('baseline', 16, 1, 1), ('candidate', 16, 1, 1)] if args.mode == 'pilot'
-            else [(label, ranks, threads, rep)
-                  for ranks, threads in LAYOUTS
-                  for label, count in (('baseline', 1), ('candidate', args.repeats))
-                  for rep in range(1, count + 1)])
+    if args.mode == 'pilot':
+        rows = [('baseline', 16, 1, 1), ('candidate', 16, 1, 1)]
+    elif args.mode == 'pair':
+        rows = [(label, 16, 1, rep)
+                for rep in range(1, args.repeats + 1)
+                for label in ('baseline', 'candidate')]
+    else:
+        rows = [(label, ranks, threads, rep)
+                for ranks, threads in LAYOUTS
+                for label, count in (('baseline', 1), ('candidate', args.repeats))
+                for rep in range(1, count + 1)]
     report = {'status': 'running', 'pass': False, 'host': platform.node(),
               'case_name': args.case, 'mode': args.mode, 'card_sha256': card_hash,
               'case': {k: v for k, v in case.items() if k != 'physical_card'},

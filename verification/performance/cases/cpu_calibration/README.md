@@ -16,14 +16,17 @@ must have complete HDF5 outputs, all generated particles at the detector,
 zero losses, valid energy closure, and strict bitwise equality against the
 same-rank baseline. Profiling is disabled for throughput measurements.
 
-Run `tests/cpu_calibration/run.sh --case balanced --mode pilot` first. After
-the pilot passes, use `--mode matrix --repeats 3` on each of balanced,
-field-heavy, particle-heavy and holdout. Every run has a 180-second limit and
-the entire command holds an exclusive workspace lock. New results are always
-placed in unique `results/cpu_calibration` directories. The lock cannot
-reserve host resources against other users; record load and inspect spread.
+The balanced pilot passed. The subsequent layout matrices for balanced,
+field-heavy and particle-heavy passed, but the user then narrowed the task.
+Every run has a 180-second limit and the command holds an exclusive workspace
+lock. New results are always placed in unique `results/cpu_calibration`
+directories. The lock cannot reserve host resources against other users;
+record load and inspect spread.
 
-Fit a hardware-specific rule using only the three training cards and validate
-the layout selection on the holdout. Do not transfer its coefficients to the
-128-core EPYC 7742 nodes or extrapolate to more nodes. If fit or rank choice
-fails the holdout, report the measured decision table instead.
+The user narrowed the next measurement to a single old/new version comparison
+at identical rank and thread counts. Use `--mode pair --case particle-heavy
+--repeats 5` for five paired baseline/candidate runs at 16 MPI ranks and one
+thread each. Report separate total and loop wall-time medians and the complete
+repeat range. The previous layout and holdout matrix is no longer in scope;
+an in-progress holdout run was stopped on request and must not be used as a
+completed calibration.
