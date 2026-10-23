@@ -153,7 +153,9 @@ def scan_plane(path, group_name, reference, entry, n_expected, retarded_origin,
                         or not np.array_equal(reference["charge"][ids], batch["charge_C"])
                         or not np.array_equal(reference["mass"][ids], batch["mass_kg"])):
                     raise ValueError(f"ID-matched source identity or represented weights changed: {path}")
-                loss = (reference["gamma"][ids] - gamma) * mass_per_electron * C * C / QE / 1e3
+                # Match the profile pass's operation order at histogram endpoints.
+                rest_eV = mass_per_electron * C * C / QE
+                loss = (reference["gamma"][ids] - gamma) * rest_eV / 1e3
             seen[ids] = True
             tau = (batch["time_s"] - z / C) - retarded_origin
             s_um = C * tau * 1e6  # positive toward later arrivals (tail)
@@ -245,6 +247,8 @@ def profiles_plane(path, group_name, summary, reference, origin, gamma_anchor,
         if ehi-elo < 1e-10:
             elo, ehi = elo-1e-6, ehi+1e-6
         loss_edges = np.linspace(elo, ehi, 202)
+        loss_edges[0] = np.nextafter(loss_edges[0], -np.inf)
+        loss_edges[-1] = np.nextafter(loss_edges[-1], np.inf)
         loss_hist = np.zeros(201)
         phase_t_edges = np.linspace(tmin, tmax if tmax>tmin else tmin+slice_dt, 161)
         glo, ghi = summary["gamma_min"], summary["gamma_max"]
@@ -281,6 +285,8 @@ def profiles_plane(path, group_name, summary, reference, origin, gamma_anchor,
             phase_hist += np.histogram2d(tau, gamma, bins=(phase_t_edges, phase_g_edges), weights=w)[0]
         if wavelength_local == wavelength_entry:
             exact_local[:] = exact_entry
+        if not np.isclose(loss_hist.sum(), summary["represented_electrons"], rtol=1e-12, atol=0):
+            raise ValueError("Energy-loss histogram does not cover the entire represented population")
         occupied = sw>0
         mean = np.full(nslice, np.nan)
         sigma = np.full(nslice, np.nan)

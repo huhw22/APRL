@@ -77,6 +77,22 @@ still requires review of the generated quality checks, summaries and figures.
 When no exclusive node is available, preserve the queued job and report its ID and
 reason instead of waiting or moving the workload to an unauthorized host.
 
+After the full job finishes, `review_results.py --job-dir <derived/job-...>
+--output-dir <new-review-directory>` verifies aggregate moments and charge using
+only compact NPZ/JSON products, records histogram coverage, and builds annotated
+figures and a Chinese readout. The historical detector interpolates boosted
+momentum across full Maxwell steps before transforming to lab; internal-plane
+energy and spread can therefore suffer a downward energy bias even in a static
+lab magnetic field. This is a source-supported mechanism, not a post-hoc correction.
+Keep the original field/particle products and the reviewed interpretation distinct.
+
+The first full analysis at script revision `74ef494` omitted two endpoint records
+from the 1 m energy-loss histogram due to floating-point operation ordering; exact
+means, spreads and ID-matched loss sums are unaffected. Later script revisions use
+the same energy expression in both passes, outward-rounded histogram endpoints,
+and a histogram-charge check. Preserve and report the original histogram deficit
+instead of guessing which bin should receive the two records.
+
 Physical definitions are grounded in the historical HDF5 schema, recorded input card,
 and APRL detector/ledger source. The planar resonance convention is also described in
 [DESY's first-operation paper](https://flash.desy.de/sites2009/site_vuvfel/content/e403/e1646/e949/infoboxContent969/first_op_32nm.pdf).
