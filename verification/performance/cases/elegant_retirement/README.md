@@ -43,3 +43,14 @@ completion-check.json only certifies a configured stop and complete output
 transactions. Particle accounting, detector-window coverage and radiation
 interpretation still require subsequent review. For this request, confirm normal
 startup and leave the long job running until the user asks to inspect it.
+
+For the user's subsequent 0.3 m replacement, compact-geometry.sbatch runs
+compact_geometry.py and the complete-input geometry check using one CPU on an
+exclusive node. The detector is retirement exit plus the original gamma times
+full transverse diagonal clearance plus two lab-equivalent z cells: one required
+by the original guard, one numerical margin. The old 7.5 m detector and 50 m
+stop floor are not retained. The existing 100 fs tail and 20 fs dynamics allowance
+are retained, so moving the plane does not silently trim the recorded pulse.
+Reuse the successful 18254 functional/binding preflight; no second long run or
+new physics scan is required. Preserve the cancelled 2 m run in its old directory
+and prepare the replacement in a new directory.
