@@ -115,8 +115,10 @@ __pycache__/
 # ---------------------------------------------------------------------------
 # Development-only experiments intentionally kept outside the product tree.
 # Formal tests belong in verification/; shipped tools belong in utilities/
-# or postprocess/. Do not force-add these directories wholesale.
+# or postprocess/. Keep experiment packages local and transfer them separately;
+# do not force-add these directories wholesale.
 # ---------------------------------------------------------------------------
+/experiments/
 /tests/
 /test/
 /tools/

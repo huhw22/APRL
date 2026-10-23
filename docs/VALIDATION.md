@@ -22,7 +22,8 @@ the physical startup worldline: the raw outlet E/B spacetime differences
 were 11%–23%, and power at the end of the approximately 35 fs observation
 window was still 81%–87% of its peak. The recorded flux is neither a complete
 transmitted-energy integral nor near-field-subtracted radiation. See the
-[reproducible drift study](../experiments/uniform10um/README.md).
+independent `uniform10um` experiment package for reproduction; that local
+package is deliberately not distributed with the APRL source repository.
 
 ## Two-plane orbit validation
 

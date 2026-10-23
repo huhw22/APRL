@@ -10,7 +10,7 @@ HDF5-v4 固定实验室面输入有以下三种启动方式；`initial_self_fiel
 | 冻结三维（ballistic） | `true` | 省略或 `false` | 按完整三维动量直线传播至启动面，不受网格场力；用作保持原始直线轨迹的对照。 |
 | 冻结横向（held） | `true` | `true` | 启动前固定 HDF5 输入面的 x/y，仅按实验室纵向速度推进 z；适合高 boost 回推使大量粒子落到有限横向网格外的工况。 |
 
-对这种高 boost、有限横向孔径的固定实验室面束团，**推荐先选 held**，并将 `activation_plane_z` 设为 `input_plane_z`，以保持输入面 x/y。现有 10 µm、50 A、约 1041 万粒子的 1 m 自由漂移测试中，held 显著减少初始出框，三项网格/CPML 扰动后的出口粒子位置差 RMS 均小于 1 nm，盒内总场能量也未持续失控增长；详见[实验记录](../../experiments/uniform10um/README.md)。这是针对该类数值几何的推荐，**不是**一般物理精确性、出口场或辐射收敛的证明。需要原始三维直线轨道作为参照时仍应跑 ballistic 对照。运行 manifest 的 `resolved_beam_reference.startup_mode` 记录解析后的方式；它不是可填写的输入 YAML 键。
+对这种高 boost、有限横向孔径的固定实验室面束团，**推荐先选 held**，并将 `activation_plane_z` 设为 `input_plane_z`，以保持输入面 x/y。现有 10 µm、50 A、约 1041 万粒子的 1 m 自由漂移测试中，held 显著减少初始出框，三项网格/CPML 扰动后的出口粒子位置差 RMS 均小于 1 nm，盒内总场能量也未持续失控增长。复现实验包仅在本地保留，不随 APRL 源码仓库发布。这是针对该类数值几何的推荐，**不是**一般物理精确性、出口场或辐射收敛的证明。需要原始三维直线轨道作为参照时仍应跑 ballistic 对照。运行 manifest 的 `resolved_beam_reference.startup_mode` 记录解析后的方式；它不是可填写的输入 YAML 键。
 
 `beam.reference.frozen_lab_plane_injection: true` 是实验性 HDF5-v4 输入模式。可选的 `activation_plane_z` 默认为 `input_plane_z`。在冻结模式中不启用 held 时，以完整三维直线运动把输入面事件同步到计算系时间零；启动面前 x/y/z 都按原动量推进，只关闭电磁力，位于物理区内时仍作为 Maxwell 源。粒子跨过实验室固定启动面的时间步在交点拆开，剩余部分恢复正常 Boris 推进。
 
