@@ -1,0 +1,65 @@
+# Independent generic self-consistent Gaussian beam benchmark: field-heavy.
+# Freeze this card across executables, repeats and layouts; no external particle file.
+units: {length: micrometer, time: femtosecond}
+runtime:
+  mode: throughput
+  resource_monitor: {enabled: true, calibration_steps: 5, progress_interval_steps: 100}
+output: {overwrite: false, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  self_field_feedback: true
+  cells: [48, 48, 256]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 80.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 16
+boundary:
+  type: cpml
+  cells: [4, 4, 4]
+  polynomial_order: 3.0
+  target_reflection: 1.0e-8
+  kappa_max: 8.0
+  alpha_fraction: 0.0
+initial_self_field:
+  enabled: true
+  model: relativistic-poisson
+  relative_tolerance: 1.0e-9
+  maximum_iterations: 5000
+beam:
+  reference: {initial_center_z: -5.0}
+  input:
+    type: generated-gaussian
+    electrons: 100000.0
+    macroparticles: 16384
+    gamma: 2.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.0]
+    sigma_position: [1.0, 1.0, 0.5]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 20261023
+sources:
+  incident_waves: []
+  magnetic_elements: []
+detectors:
+  enabled: true
+  directory: detectors
+  field_planes:
+    - name: field
+      z: 0.0
+      rhythm: 1.0
+      buffer_samples: 8
+      compression: 0
+      particle_background: {enabled: false}
+  particle_planes:
+    - {name: particles, z: 0.0, buffer_records: 4096, compression: 0}
+stop: {mode: reference-center-z, z: 10.0}
+trajectory: {enabled: false}
+energy_ledger:
+  enabled: true
+  directory: ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 10
+  buffer_records: 256
+  compression: 0
