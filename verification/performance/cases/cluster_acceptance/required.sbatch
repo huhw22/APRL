@@ -2,6 +2,8 @@
 #SBATCH --job-name=aprl-required
 #SBATCH --partition=ssmb
 #SBATCH --nodes=1
+#SBATCH --exclusive
+# Reserve the whole 128-CPU node; the regression steps use at most eight CPUs.
 #SBATCH --ntasks=4
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=16G

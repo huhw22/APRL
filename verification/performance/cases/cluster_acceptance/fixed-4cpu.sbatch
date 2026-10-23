@@ -2,6 +2,8 @@
 #SBATCH --job-name=aprl-fixed4
 #SBATCH --partition=ssmb
 #SBATCH --nodes=1
+#SBATCH --exclusive
+# Reserve the whole 128-CPU node; each measured candidate step uses four CPUs.
 #SBATCH --mem=8G
 #SBATCH --time=00:30:00
 #SBATCH --output=aprl-fixed4-%j.out
@@ -26,8 +28,8 @@ threads="${SLURM_CPUS_PER_TASK:-0}"
 (( ranks * threads == 4 )) || {
   echo 'ERROR: fixed-4cpu accepts only 4x1, 2x2, or 1x4.' >&2; exit 2;
 }
-printf 'candidate_layout=%sx%s\ncandidate_cpu_budget=4\nbaseline_control_layout=%sx1\n' \
-  "$ranks" "$threads" "$ranks" > "$run_dir/layout.txt"
+printf 'candidate_layout=%sx%s\ncandidate_step_cpus=4\nbaseline_control_layout=%sx1\nexclusive_node=true\nallocated_cpus_per_node=%s\n' \
+  "$ranks" "$threads" "$ranks" "${SLURM_JOB_CPUS_PER_NODE:-unknown}" > "$run_dir/layout.txt"
 
 # The same-rank one-thread baseline is a correctness control. Only baseline
 # 4x1 is a four-CPU performance reference across the three candidate layouts.

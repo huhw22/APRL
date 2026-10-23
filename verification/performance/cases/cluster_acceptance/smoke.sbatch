@@ -2,6 +2,8 @@
 #SBATCH --job-name=aprl-smoke
 #SBATCH --partition=ssmb
 #SBATCH --nodes=1
+#SBATCH --exclusive
+# Reserve the whole 128-CPU node; exact job steps retain the small test layouts.
 #SBATCH --ntasks=2
 #SBATCH --cpus-per-task=2
 #SBATCH --mem=8G

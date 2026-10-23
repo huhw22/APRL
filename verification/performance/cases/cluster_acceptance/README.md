@@ -5,6 +5,10 @@
 `tests/cluster_acceptance/`。每个作业在 `results/cluster_acceptance/` 下新建独立目录。
 作业输出会打印完整目录；成功时才创建 `PASS`，不能仅凭 Slurm 退出码或文件存在验收。
 
+按用户的集群使用方式，三种脚本均使用 `--exclusive` 独占一个 128 CPU 节点。
+这是作业申请额度；各 `srun --exact` 步骤仍显式使用本阶段的 MPI/线程布局。
+小规模检查完成即结束作业并释放节点。内存仍按阶段申请 8/16 GiB。
+
 ## 当前准备状态
 
 - 基线计算程序来自 `7a8ff35f5784df8868f24efe56f24132e4c5e678`。
@@ -27,7 +31,8 @@ sbatch --chdir="$APRL_WORKSPACE/tests/cluster_acceptance" \
   "$APRL_WORKSPACE/tests/cluster_acceptance/smoke.sbatch"
 ```
 
-资源为单节点 2 tasks × 2 CPU、8 GiB 内存，30 分钟。逐 rank、逐线程检查实际 CPU/物理核绑定，
+作业独占一个 128 CPU 节点、申请 8 GiB 内存，限时 30 分钟；检查步骤最多使用
+2 tasks × 2 CPU。逐 rank、逐线程检查实际 CPU/物理核绑定，
 随后运行原有小型 SASE-style harness：1/2 ranks × 1/2 threads，1 次重复，profile=16。
 它使用原有 2560 条记录、19 步的独立集成工况；没有改变真实 ELEGANT/SASE 的物理卡。
 检查物理终点、HDF5 完整提交、有限值、粒子守恒和同 rank 逐位一致；已有跨 rank 差异另列。
@@ -45,7 +50,8 @@ sbatch --chdir="$APRL_WORKSPACE/tests/cluster_acceptance" \
   "$APRL_WORKSPACE/tests/cluster_acceptance/required.sbatch"
 ```
 
-单节点 4 tasks × 2 CPU、16 GiB 内存，45 分钟。先检查 4×2 绑定，再在分配的 CPU 上串行调度全部
+作业独占一个 128 CPU 节点、申请 16 GiB 内存，限时 45 分钟；回归步骤最多使用
+4 tasks × 2 CPU。先检查 4×2 绑定，再在探针得到的 CPU 上串行调度全部
 70 项 required（包含候选 held 4 ranks × 1/2 threads），追加基线 4×1 的 held 对照。
 三次 held 使用同一原始卡和 10410 粒子输入；检查两个粒子探测面、完整输出、
 40 µm 物理终点、粒子唯一记录与守恒，不缩短过程、不降低精度。
@@ -63,7 +69,8 @@ CTest 的输出路径在配置时写入构建目录，故脚本通过 `.cluster-
 export APRL_REQUIRED_RESULT=/绝对路径/第二阶段实际结果目录
 ```
 
-下面是三种独立手动提交方式，每次 4 CPU、8 GiB 内存，profile=0，每组重复 3 次。建议一次提交一组，
+下面是三种独立手动提交方式，每份作业独占一个 128 CPU 节点、申请 8 GiB 内存，
+被测候选步骤固定使用 4 CPU，profile=0，每组重复 3 次。建议一次提交一组，
 审阅后再提交下一组；不要用 ranks 与 threads 的笛卡尔积替代它们。
 
 ```bash
@@ -80,6 +87,8 @@ sbatch --ntasks=1 --cpus-per-task=4 --chdir="$APRL_WORKSPACE/tests/cluster_accep
 并去除输入文件绝对路径差异后比较物理卡。跨作业节点可能不同，应记录节点并考虑噪声，
 需要严格同节点时在用户提交参数中明确同一节点。
 该短工况用于验证测量流程，不能据此宣称生产 SASE/ELEGANT 加速。
+整节点实际计算性能测试将在一致性检查通过后使用真实工况设计，目标固定 128 CPU，
+比较 128×1、64×2、32×4；不能把当前短工况直接改成 128 ranks，因为其网格仅支持最多 64 ranks。
 
 ## 构建和记录
 
