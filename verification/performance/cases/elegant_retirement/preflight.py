@@ -81,7 +81,7 @@ def prepare(root, binary):
                 "retirement_frequency_protection": {"enabled": True,
                     "minimum_photon_energy_eV": 50, "cycles": 2}}],
             "particle_planes": [{"name": name, "z": z, "buffer_records": 512,
-                "compression": 0} for name, z in (("activation", 0), ("retirement-entry", 20))]},
+                "compression": 0} for name, z in (("activation", 0), ("retirement-entry", 18))]},
         "stop": {"mode": "reference-center-z", "z": 1000},
         "trajectory": {"enabled": False},
         "energy_ledger": {"enabled": True, "directory": str(case / "ledger"),
@@ -121,8 +121,14 @@ def check(root, binary):
         raise ValueError("Missing configured reference stop")
     retired = re.search(r"Experimental particle retirement: entries=(\d+).*?completed=(\d+), residual Q at taper exit=([^ ]+)", log)
     activated = re.search(r"Frozen lab-plane injection: activations=(\d+).*?still frozen=(\d+)", log)
-    if not retired or tuple(map(int, retired.group(1, 2))) != (N, N) or float(retired.group(3)) != 0:
-        raise ValueError("Not all retirement carriers completed with zero residual charge")
+    # C2 polynomial evaluation at the exit can retain arithmetic roundoff.
+    # Bound it by 64 binary64 eps times the represented charge, not by a
+    # physical charge-loss tolerance; keep the measured residual in the report.
+    residual_bound = 64 * np.finfo(float).eps * N * 1.602176634e-19
+    residual_charge = float(retired.group(3)) if retired else float("nan")
+    if (not retired or tuple(map(int, retired.group(1, 2))) != (N, N)
+            or not np.isfinite(residual_charge) or abs(residual_charge) > residual_bound):
+        raise ValueError("Retirement cohort or exit-charge roundoff check failed")
     if not activated or tuple(map(int, activated.groups())) != (N, 0):
         raise ValueError("Held injection did not activate the full cohort")
     manifest = yaml.safe_load((case / "run-manifest.yaml").read_text())
@@ -142,7 +148,7 @@ def check(root, binary):
         raise ValueError("Held activation did not preserve input-plane transverse position")
     a = plane_records["retirement-entry"]
     beta_z = a["proper_velocity"][:, 2] / np.sqrt(1 + (a["proper_velocity"]**2).sum(axis=1))
-    last_carrier_lab_time = float(np.max(a["time_s"] + 10e-6 / (C * beta_z)))
+    last_carrier_lab_time = float(np.max(a["time_s"] + 12e-6 / (C * beta_z)))
     fields, time, attrs = read_complete(case / "detectors/post-retirement-field.h5", "field_plane")
     if not np.all(np.diff(time) > 0) or len(time) != len(fields):
         raise ValueError("Invalid field time axis")
@@ -157,7 +163,9 @@ def check(root, binary):
     if not len(empty) or int(ledger[-1]["removed_macroparticles"]) != N or len(ledger) - empty[0] < 20:
         raise ValueError("Field stepping did not continue after all real particles retired")
     report = {"pass": True, "functional_only": True, "particles": N,
-        "retirement_entries": N, "completed_carriers": N, "residual_exit_charge_C": 0,
+        "retirement_entries": N, "completed_carriers": N,
+        "residual_exit_charge_C": residual_charge,
+        "exit_charge_arithmetic_roundoff_bound_C": residual_bound,
         "activation_xy_max_error_m": activation_error,
         "field_samples_after_last_carrier_plus_20fs": after,
         "last_carrier_lab_time_s_estimated_from_entry": last_carrier_lab_time,
