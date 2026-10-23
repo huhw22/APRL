@@ -526,6 +526,7 @@ namespace aprl
       FieldVector<Double>& electricBox,
       FieldVector<Double>& magneticBox) const
   {
+    if (prescribedLabWaves_.empty() && prescribedLabMagnets_.empty()) return;
     SIFieldValue external;
     samplePrescribedBox(positionBox, timeBox, frame, external);
     electricBox += external.electric;

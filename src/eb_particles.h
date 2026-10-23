@@ -19,6 +19,7 @@ namespace aprl
     std::uint64_t id;                   /* globally unique runtime id */
     std::uint64_t sourceId;             /* optional input-record id */
     bool frozen;                        /* upstream lab-plane source state */
+    Double frozenBetaZ;                 /* cached held speed; valid while frozen */
 
     RelativisticParticleSI();
   };

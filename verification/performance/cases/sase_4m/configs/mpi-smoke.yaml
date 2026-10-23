@@ -1,0 +1,55 @@
+# Tiny 256-rank run that also proves the selected APRL supports automatic z
+# and can collectively read an external APRL HDF5-v2 particle snapshot.
+units: {length: micrometer, time: femtosecond}
+runtime:
+  mode: throughput
+  resource_monitor: {enabled: false}
+  # The batch wrapper keeps the srun and outer timeouts strictly above this.
+  shutdown_watchdog:
+    enabled: true
+    timeout_seconds: 120
+    finalize_timeout_seconds: 60
+output: {overwrite: true, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  cells: [12, 12, auto]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 12.0
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 1
+  longitudinal:
+    mode: observation-bounded
+    lower_guard_cells: 4
+    upper_guard_cells: 8
+    self_field_padding_rms: 0.0
+    ballistic_time_safety_factor: 1.1
+    # At least four z cells per rank keep each four-cell endpoint CPML local.
+    alignment_cells: 1024
+boundary:
+  type: cpml
+  cells: [2, 2, 4]
+  polynomial_order: 3.0
+  target_reflection: 1.0e-8
+  kappa_max: 8.0
+  alpha_fraction: 0.0
+initial_self_field:
+  enabled: true
+  model: relativistic-poisson
+  relative_tolerance: 1.0e-6
+  maximum_iterations: 2000
+beam:
+  reference: {initial_center_z: -0.5}
+  input:
+    type: hdf5
+    file: input.h5
+    electrons: 64.0
+sources: {incident_waves: [], magnetic_elements: []}
+detectors:
+  enabled: true
+  directory: detectors
+  particle_planes:
+    - {name: particles, z: 0.5, buffer_records: 16, compression: 0}
+stop: {mode: after-last-element}
+trajectory: {enabled: false}

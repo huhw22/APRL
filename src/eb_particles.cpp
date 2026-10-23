@@ -8,7 +8,7 @@ namespace aprl
 {
   RelativisticParticleSI::RelativisticParticleSI()
     : position(0.0), properVelocity(0.0), charge(0.0), mass(0.0),
-      weight(1.0), id(0), sourceId(0), frozen(false)
+      weight(1.0), id(0), sourceId(0), frozen(false), frozenBetaZ(0.0)
   {}
 
   void RelativisticBorisPusher::pushMomentum(

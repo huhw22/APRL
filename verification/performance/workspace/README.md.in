@@ -1,0 +1,16 @@
+# APRL 集群工作区
+
+新 Codex 会话请打开本目录整体，先阅读 [交接说明](HANDOFF.md)、[目录布局](WORKSPACE_LAYOUT.md) 和 [约束](AGENTS.md)。准确提交与数据链接记录见 `DELIVERY.json`。
+
+- 源码：`source/aprl`；固定基线：`source/aprl-baseline`。
+- 测试：`tests/performance`、`tests/elegant_4m`、`tests/sase_4m`。
+- 编译：`build`；新结果：`results` 及工况自己的 `runs`。
+- 环境：在 bash 中 `source ./cluster.env`。
+
+只准备编译、不提交作业：
+
+```bash
+bash ./tests/performance/prepare-and-submit.sh --prepare-only
+```
+
+交付并不表示已编译或已完成服务器测试；请按交接说明推进。

@@ -5,6 +5,7 @@
 #include <mpi.h>
 
 #include "config.h"
+#include "compute_threads.h"
 #include "runtime_control.h"
 #include "runtime_util.h"
 #include "shutdown_watchdog.h"
@@ -40,6 +41,7 @@ int main(int argc, char** argv)
   const double start = MPI_Wtime();
   try
     {
+      aprl::configureComputeThreads(providedThreadLevel);
       aprl::SimulationConfig config =
         aprl::YamlConfigLoader::loadFile(argv[1]);
       aprl::configureShutdownWatchdog(
@@ -53,6 +55,10 @@ int main(int argc, char** argv)
 
       aprl::logRoot(MPI_COMM_WORLD,
         "APRL — Accelerator Particles and Radiation in Lorentz Frames");
+      aprl::logRoot(MPI_COMM_WORLD,
+        "Compute threads per MPI rank: " +
+        std::to_string(aprl::computeThreadCount()) +
+        "; MPI and HDF5 calls stay on the initialization thread.");
       aprl::logRoot(MPI_COMM_WORLD,
         std::string("Shutdown watchdog: enabled=") +
         (config.runtime.shutdownWatchdogEnabled ? "true" : "false") +

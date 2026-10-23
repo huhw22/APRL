@@ -44,6 +44,10 @@ namespace aprl
         const BoostFrameTransform& frame);
 
     std::size_t memoryBytes() const;
+    /* Time spent inside MPI communication calls, including completion waits.
+     * Packing and overlapped field computation are excluded. Read differences
+     * between samples to obtain an interval's communication time. */
+    Double communicationSeconds() const;
 
   private:
     void verifyGeometry(const EBFieldGrid& fields) const;
@@ -55,7 +59,8 @@ namespace aprl
                  std::size_t haloOffset);
     void exchangeFilterPlanes(const EBFieldGrid& fields);
     void exchangeElectricPlanes(const EBFieldGrid& fields);
-    void exchangeMagneticPlanes(const EBFieldGrid& fields);
+    void beginMagneticExchange(const EBFieldGrid& fields,
+                               MPI_Request requests[4]);
     void updateLowerInterface(EBFieldGrid& fields);
     void updateUpperInterface(EBFieldGrid& fields);
     void packMagneticPlane(const EBFieldGrid& fields, std::size_t k,
@@ -69,6 +74,7 @@ namespace aprl
     int size_;
     int lowerRank_;
     int upperRank_;
+    Double communicationSeconds_;
 
     std::vector<Double> lowerMagnetic_;
     std::vector<Double> upperMagnetic_;

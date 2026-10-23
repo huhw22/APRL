@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <climits>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace aprl
@@ -19,6 +20,61 @@ namespace aprl
     const int FILTER_UPPER = 330;
     const int FILTER_LOWER = 331;
 
+    void requireSuccessfulTransfer(int status, MPI_Comm communicator)
+    {
+      if (status == MPI_SUCCESS) return;
+      // A failed post/completion can leave buffers owned by MPI. Do not unwind
+      // and release them when an application installed MPI_ERRORS_RETURN.
+      MPI_Abort(communicator, status);
+      std::abort();
+    }
+
+    class CommunicationTimer
+    {
+    public:
+      explicit CommunicationTimer(Double& elapsed)
+        : elapsed_(elapsed), start_(MPI_Wtime()) {}
+      ~CommunicationTimer() { elapsed_ += MPI_Wtime() - start_; }
+
+    private:
+      Double& elapsed_;
+      Double start_;
+    };
+
+    /* The field update can throw. Finish every posted transfer on either path
+     * before its member buffers can be reused or destroyed. MPI stays on the
+     * calling thread, as required by MPI_THREAD_FUNNELED. */
+    class PendingMagneticExchange
+    {
+    public:
+      PendingMagneticExchange(Double& elapsed, MPI_Comm communicator)
+        : elapsed_(elapsed), communicator_(communicator)
+      {
+        for (unsigned int index = 0; index < 4; ++index)
+          requests[index] = MPI_REQUEST_NULL;
+      }
+      ~PendingMagneticExchange() { wait(); }
+
+      void wait()
+      {
+        bool pending = false;
+        for (unsigned int index = 0; index < 4; ++index)
+          pending = pending || requests[index] != MPI_REQUEST_NULL;
+        if (!pending) return;
+        CommunicationTimer timer(elapsed_);
+        requireSuccessfulTransfer(
+          MPI_Waitall(4, requests, MPI_STATUSES_IGNORE), communicator_);
+      }
+
+      MPI_Request requests[4];
+
+    private:
+      PendingMagneticExchange(const PendingMagneticExchange&) = delete;
+      PendingMagneticExchange& operator=(const PendingMagneticExchange&) = delete;
+      Double& elapsed_;
+      MPI_Comm communicator_;
+    };
+
     Double compensatedBilinear(Double minusTwo, Double minusOne,
                                Double centre, Double plusOne,
                                Double plusTwo)
@@ -31,6 +87,7 @@ namespace aprl
   EBZSlabHaloExchange::EBZSlabHaloExchange(MPI_Comm communicator)
     : communicator_(communicator), rank_(0), size_(1),
       lowerRank_(MPI_PROC_NULL), upperRank_(MPI_PROC_NULL),
+      communicationSeconds_(0.0),
       lowerMagnetic_(), upperMagnetic_(), sendLowerMagnetic_(),
       sendUpperMagnetic_(), receiveLowerPlane_(), receiveUpperPlane_(),
       filterLine_(), sendLowerFilter_(), sendUpperFilter_(),
@@ -50,6 +107,8 @@ namespace aprl
   int EBZSlabHaloExchange::size() const { return size_; }
   int EBZSlabHaloExchange::lowerRank() const { return lowerRank_; }
   int EBZSlabHaloExchange::upperRank() const { return upperRank_; }
+  Double EBZSlabHaloExchange::communicationSeconds() const
+  { return communicationSeconds_; }
 
   void EBZSlabHaloExchange::installPhysicalBoundaryMask(
       EBFieldGrid& fields) const
@@ -108,8 +167,12 @@ namespace aprl
       }
 
     synchronizeAndFilterCurrent(fields, filter);
-    exchangeMagneticPlanes(fields);
+    PendingMagneticExchange exchange(communicationSeconds_, communicator_);
+    beginMagneticExchange(fields, exchange.requests);
+    /* The internal E update and its boundary operator only read local B.
+     * Neighbour B values are needed solely by the interface updates below. */
     fields.advanceElectric();
+    exchange.wait();
     if (lowerRank_ != MPI_PROC_NULL) updateLowerInterface(fields);
     if (upperRank_ != MPI_PROC_NULL) updateUpperInterface(fields);
   }
@@ -220,6 +283,7 @@ namespace aprl
         offset += 2 * planeValues;
       }
 
+    CommunicationTimer timer(communicationSeconds_);
     MPI_Sendrecv(sendUpperFilter_.data(), static_cast<int>(values), MPI_DOUBLE,
                  upperRank_, FILTER_UPPER,
                  receiveLowerFilter_.data(), static_cast<int>(values),
@@ -330,15 +394,20 @@ namespace aprl
     Double* upperPlane = component.data() +
                          (component.nz() - 1) * planeValues;
 
-    MPI_Sendrecv(upperPlane, static_cast<int>(planeValues), MPI_DOUBLE,
-                 upperRank_, tagUpper,
-                 receiveLowerPlane_.data(), static_cast<int>(planeValues), MPI_DOUBLE,
-                 lowerRank_, tagUpper, communicator_, MPI_STATUS_IGNORE);
+    {
+      CommunicationTimer timer(communicationSeconds_);
+      MPI_Sendrecv(upperPlane, static_cast<int>(planeValues), MPI_DOUBLE,
+                   upperRank_, tagUpper,
+                   receiveLowerPlane_.data(), static_cast<int>(planeValues),
+                   MPI_DOUBLE, lowerRank_, tagUpper,
+                   communicator_, MPI_STATUS_IGNORE);
 
-    MPI_Sendrecv(lowerPlane, static_cast<int>(planeValues), MPI_DOUBLE,
-                 lowerRank_, tagLower,
-                 receiveUpperPlane_.data(), static_cast<int>(planeValues), MPI_DOUBLE,
-                 upperRank_, tagLower, communicator_, MPI_STATUS_IGNORE);
+      MPI_Sendrecv(lowerPlane, static_cast<int>(planeValues), MPI_DOUBLE,
+                   lowerRank_, tagLower,
+                   receiveUpperPlane_.data(), static_cast<int>(planeValues),
+                   MPI_DOUBLE, upperRank_, tagLower,
+                   communicator_, MPI_STATUS_IGNORE);
+    }
 
     if (lowerRank_ != MPI_PROC_NULL)
       for (std::size_t value = 0; value < planeValues; ++value)
@@ -348,8 +417,8 @@ namespace aprl
         upperPlane[value] += receiveUpperPlane_[value];
   }
 
-  void EBZSlabHaloExchange::exchangeMagneticPlanes(
-      const EBFieldGrid& fields)
+  void EBZSlabHaloExchange::beginMagneticExchange(
+      const EBFieldGrid& fields, MPI_Request requests[4])
   {
     const std::size_t planeValues = fields.bx().nx() * fields.bx().ny() +
                                     fields.by().nx() * fields.by().ny();
@@ -363,16 +432,23 @@ namespace aprl
     packMagneticPlane(fields, fields.geometry().nz - 1,
                       sendUpperMagnetic_);
 
-    MPI_Sendrecv(sendUpperMagnetic_.data(), static_cast<int>(planeValues),
-                 MPI_DOUBLE, upperRank_, MAGNETIC_UPPER,
-                 lowerMagnetic_.data(), static_cast<int>(planeValues),
-                 MPI_DOUBLE, lowerRank_, MAGNETIC_UPPER,
-                 communicator_, MPI_STATUS_IGNORE);
-    MPI_Sendrecv(sendLowerMagnetic_.data(), static_cast<int>(planeValues),
-                 MPI_DOUBLE, lowerRank_, MAGNETIC_LOWER,
-                 upperMagnetic_.data(), static_cast<int>(planeValues),
-                 MPI_DOUBLE, upperRank_, MAGNETIC_LOWER,
-                 communicator_, MPI_STATUS_IGNORE);
+    CommunicationTimer timer(communicationSeconds_);
+    requireSuccessfulTransfer(MPI_Irecv(
+              lowerMagnetic_.data(), static_cast<int>(planeValues),
+              MPI_DOUBLE, lowerRank_, MAGNETIC_UPPER,
+              communicator_, &requests[0]), communicator_);
+    requireSuccessfulTransfer(MPI_Irecv(
+              upperMagnetic_.data(), static_cast<int>(planeValues),
+              MPI_DOUBLE, upperRank_, MAGNETIC_LOWER,
+              communicator_, &requests[1]), communicator_);
+    requireSuccessfulTransfer(MPI_Isend(
+              sendUpperMagnetic_.data(), static_cast<int>(planeValues),
+              MPI_DOUBLE, upperRank_, MAGNETIC_UPPER,
+              communicator_, &requests[2]), communicator_);
+    requireSuccessfulTransfer(MPI_Isend(
+              sendLowerMagnetic_.data(), static_cast<int>(planeValues),
+              MPI_DOUBLE, lowerRank_, MAGNETIC_LOWER,
+              communicator_, &requests[3]), communicator_);
   }
 
   void EBZSlabHaloExchange::exchangeElectricPlanes(
@@ -394,6 +470,7 @@ namespace aprl
     packElectricPlane(fields, cells - 1, cells - 1,
                       sendUpperElectric_);
 
+    CommunicationTimer timer(communicationSeconds_);
     MPI_Sendrecv(sendUpperElectric_.data(), static_cast<int>(planeValues),
                  MPI_DOUBLE, upperRank_, ELECTRIC_UPPER,
                  lowerElectric_.data(), static_cast<int>(planeValues),

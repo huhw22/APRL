@@ -1240,11 +1240,13 @@ namespace aprl
         externalBackground_(externalBackground),
         hasReferencePlanes_(false), hasValidationPlanes_(false),
         fieldRuntime_(config.fieldPlanes.size()), localCrossingEvents_(),
+        crossingCounts_(), receivedCrossingEvents_(), fieldSample_(),
         fieldWriters_(), particleWriters_(), referenceWriters_(),
         validationEntries_(), validationStats_()
     {
       MPI_Comm_rank(communicator_, &rank_);
       MPI_Comm_size(communicator_, &size_);
+      if (rank_ == 0) crossingCounts_.resize(static_cast<std::size_t>(size_));
       if (!config_.enabled())
         throw std::invalid_argument(
           "LabDetectorManager requires at least one detector plane");
@@ -1420,15 +1422,10 @@ namespace aprl
       if (config_.particlePlanes.empty() && !hasReferencePlanes_) return;
       const unsigned long long localCount =
         static_cast<unsigned long long>(localCrossingEvents_.size());
-      unsigned long long globalCount = 0;
-      MPI_Allreduce(&localCount, &globalCount, 1, MPI_UNSIGNED_LONG_LONG,
-                    MPI_SUM, communicator_);
-      if (globalCount == 0) return;
-
-      std::vector<unsigned long long> counts;
-      if (rank_ == 0) counts.resize(static_cast<std::size_t>(size_));
+      // Every sender already knows whether it has records. One gather handles
+      // both empty and populated steps without a preceding all-rank reduction.
       MPI_Gather(&localCount, 1, MPI_UNSIGNED_LONG_LONG,
-        rank_ == 0 ? &counts[0] : NULL, 1, MPI_UNSIGNED_LONG_LONG,
+        rank_ == 0 ? crossingCounts_.data() : NULL, 1, MPI_UNSIGNED_LONG_LONG,
         0, communicator_);
 
       const std::size_t maximumChunk = std::max<std::size_t>(1,
@@ -1438,20 +1435,19 @@ namespace aprl
       if (rank_ == 0)
         {
           dispatch(localCrossingEvents_);
-          std::vector<PlaneCrossingWire> receive;
           for (int source = 1; source < size_; ++source)
             {
-              unsigned long long remaining = counts[source];
+              unsigned long long remaining = crossingCounts_[source];
               while (remaining > 0)
                 {
                   const std::size_t chunk = static_cast<std::size_t>(
                     std::min<unsigned long long>(remaining, maximumChunk));
-                  receive.resize(chunk);
-                  MPI_Recv(&receive[0], checkedByteCount(chunk,
+                  receivedCrossingEvents_.resize(chunk);
+                  MPI_Recv(receivedCrossingEvents_.data(), checkedByteCount(chunk,
                     sizeof(PlaneCrossingWire), "Detector crossing receive"),
                     MPI_BYTE, source, CROSSING_EVENT_TAG,
                     communicator_, MPI_STATUS_IGNORE);
-                  dispatch(receive);
+                  dispatch(receivedCrossingEvents_);
                   remaining -= static_cast<unsigned long long>(chunk);
                 }
             }
@@ -1494,26 +1490,25 @@ namespace aprl
               timeLab < runtime.nextTimeLab - tolerance)
             continue;
 
-          std::vector<FieldPointRecord> sample;
           if (rank_ == owner)
-            samplePlane(localFields, boxZ, plane.z, timeLab, sample);
+            samplePlane(localFields, boxZ, plane.z, timeLab, fieldSample_);
           const std::size_t points = globalGeometry_.nx * globalGeometry_.ny;
           if (owner != 0)
             {
               const int bytes = checkedByteCount(points,
                 sizeof(FieldPointRecord), "Field detector plane");
               if (rank_ == owner)
-                MPI_Send(&sample[0], bytes, MPI_BYTE, 0,
+                MPI_Send(fieldSample_.data(), bytes, MPI_BYTE, 0,
                          FIELD_SAMPLE_TAG, communicator_);
               else if (rank_ == 0)
                 {
-                  sample.resize(points);
-                  MPI_Recv(&sample[0], bytes, MPI_BYTE, owner,
+                  fieldSample_.resize(points);
+                  MPI_Recv(fieldSample_.data(), bytes, MPI_BYTE, owner,
                     FIELD_SAMPLE_TAG, communicator_, MPI_STATUS_IGNORE);
                 }
             }
           if (rank_ == 0)
-            fieldWriters_[detector]->append(timeLab, sample);
+            fieldWriters_[detector]->append(timeLab, fieldSample_);
 
           if (!runtime.sampled)
             {
@@ -1780,6 +1775,9 @@ namespace aprl
     bool hasValidationPlanes_;
     std::vector<FieldPlaneRuntime> fieldRuntime_;
     std::vector<PlaneCrossingWire> localCrossingEvents_;
+    std::vector<unsigned long long> crossingCounts_;
+    std::vector<PlaneCrossingWire> receivedCrossingEvents_;
+    std::vector<FieldPointRecord> fieldSample_;
     std::vector<std::unique_ptr<FieldPlaneWriter> > fieldWriters_;
     std::vector<std::unique_ptr<ParticlePlaneWriter> > particleWriters_;
     std::vector<std::unique_ptr<ParticlePlaneWriter> > referenceWriters_;

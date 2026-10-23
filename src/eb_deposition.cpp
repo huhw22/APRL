@@ -301,19 +301,25 @@ namespace aprl
     const Double currentZ = chargeCoulomb * (z1 - z0) * g.dz *
                             inverseVolumeTime;
 
-    for (unsigned int c = 0; c < 2; ++c)
+    // Exact-zero components contribute nothing. In held startup the two
+    // transverse currents are exactly zero; retain the identical longitudinal
+    // formula and never threshold small, nonzero currents.
+    if (currentX != 0.0)
+      for (unsigned int c = 0; c < 2; ++c)
+        for (unsigned int b = 0; b < 2; ++b)
+          fields_.jx()(i, j + b, k + c) += currentX * integratedProduct(
+            shape(b, y0), shape(b, y1), shape(c, z0), shape(c, z1));
+
+    if (currentY != 0.0)
+      for (unsigned int c = 0; c < 2; ++c)
+        for (unsigned int a = 0; a < 2; ++a)
+          fields_.jy()(i + a, j, k + c) += currentY * integratedProduct(
+            shape(a, x0), shape(a, x1), shape(c, z0), shape(c, z1));
+
+    if (currentZ != 0.0)
       for (unsigned int b = 0; b < 2; ++b)
-        fields_.jx()(i, j + b, k + c) += currentX * integratedProduct(
-          shape(b, y0), shape(b, y1), shape(c, z0), shape(c, z1));
-
-    for (unsigned int c = 0; c < 2; ++c)
-      for (unsigned int a = 0; a < 2; ++a)
-        fields_.jy()(i + a, j, k + c) += currentY * integratedProduct(
-          shape(a, x0), shape(a, x1), shape(c, z0), shape(c, z1));
-
-    for (unsigned int b = 0; b < 2; ++b)
-      for (unsigned int a = 0; a < 2; ++a)
-        fields_.jz()(i + a, j + b, k) += currentZ * integratedProduct(
-          shape(a, x0), shape(a, x1), shape(b, y0), shape(b, y1));
+        for (unsigned int a = 0; a < 2; ++a)
+          fields_.jz()(i + a, j + b, k) += currentZ * integratedProduct(
+            shape(a, x0), shape(a, x1), shape(b, y0), shape(b, y1));
   }
 }

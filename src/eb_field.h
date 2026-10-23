@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <stdexcept>
 #include <vector>
 
 #include "boostframe.h"
@@ -97,21 +98,31 @@ namespace aprl
     void resize(std::size_t nx, std::size_t ny, std::size_t nz);
     void fill(Double value);
 
-    Double& operator()(std::size_t i, std::size_t j, std::size_t k);
+    Double& operator()(std::size_t i, std::size_t j, std::size_t k)
+    { return values_[index(i, j, k)]; }
     const Double& operator()(std::size_t i, std::size_t j,
-                             std::size_t k) const;
+                             std::size_t k) const
+    { return values_[index(i, j, k)]; }
 
-    std::size_t nx() const;
-    std::size_t ny() const;
-    std::size_t nz() const;
-    std::size_t size() const;
+    std::size_t nx() const { return nx_; }
+    std::size_t ny() const { return ny_; }
+    std::size_t nz() const { return nz_; }
+    std::size_t size() const { return values_.size(); }
     std::size_t bytes() const;
 
-    Double* data();
-    const Double* data() const;
+    Double* data() { return values_.empty() ? 0 : &values_[0]; }
+    const Double* data() const
+    { return values_.empty() ? 0 : &values_[0]; }
 
   private:
-    std::size_t index(std::size_t i, std::size_t j, std::size_t k) const;
+    std::size_t index(std::size_t i, std::size_t j, std::size_t k) const
+    {
+#ifdef DIRECT_EB_BOUNDS_CHECK
+      if (i >= nx_ || j >= ny_ || k >= nz_)
+        throw std::out_of_range("Yee component index is outside the lattice");
+#endif
+      return (k * ny_ + j) * nx_ + i;
+    }
 
     std::size_t nx_;
     std::size_t ny_;

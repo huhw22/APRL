@@ -1,0 +1,13 @@
+# APRL 集群工作区约束
+
+此工作区服务于 APRL 的纯计算性能优化。先读取 `HANDOFF.md`、`WORKSPACE_LAYOUT.md` 和 `cluster.env`，确认当前机器、路径、Git HEAD 和实际可用资源。
+
+- 用户主要使用 ELEGANT 粒子输入，主要测试参考 SASE。不得为加速改变物理模型、粒子数/权重、网格、边界、粒子子步、反馈、初场精度、物理终点、诊断或输出频率。
+- 候选源码仅在 `source/aprl` 修改并提交；`source/aprl-baseline` 是固定基线，不修改。编译在 `build/`，实验在 `tests/`，新结果在 `results/` 或工况自身 `runs/`。
+- 版本化实验模板在 `source/aprl/verification/performance/cases`；测试区验证后的脚本改进要回写模板并提交，不能只留在未跟踪的工作副本。
+- 旧 `/public/home/wfollowm/aprl_dev` 和 `/public/home/wfollowm/APRL_Project` 留作历史依据。不要因 Git 有备份就删除未提交修改、输入或结果。不得改写输入链接的目标，也不得在作业运行中移动其目录。
+- 编译基线和候选使用同一 MPI/并行 HDF5 工具链，明确新旧程序与生成器的绝对路径，并记录版本、哈希和线程绑定。
+- 计算作业通过 Slurm 提交到计算节点；先完成小型正确性和绑定检查，再设计固定 CPU 预算的较大测试。不能直接用生产脚本默认资源批量启动大作业。
+- profiling 用于定位，关闭 profiling 的重复运行用于吞吐；区分固定 rank 加线程与固定 CPU 预算比较。保留旧版已有的跨 rank 差异，不调整容差掩盖问题。
+- 不擅自修改 MPI 网络、UCX 或系统级配置。远端 Codex 已由账号用户服务管理，保持服务配置。
+- 没有实测就不能宣称集群加速。交付说明中的本机结果不代表当前服务器已通过验证。

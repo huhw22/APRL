@@ -31,6 +31,10 @@ option(APRL_BUILD_SASE_BUNCH_GENERATOR
   "Build the standalone SASE shot-noise bunch generator" ON)
 option(APRL_PORTABLE_INSTALL
   "Use relative install RPATHs for libraries bundled beside APRL" OFF)
+option(APRL_ENABLE_OPENMP
+  "Enable optional compute threading (runtime default remains one thread)" ON)
+option(DIRECT_EB_BOUNDS_CHECK
+  "Check Yee lattice indices consistently in the core and its consumers" OFF)
 
 if(APRL_PORTABLE_INSTALL)
   if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -51,6 +55,12 @@ set(HDF5_PREFER_PARALLEL TRUE)
 find_package(HDF5 1.10 REQUIRED COMPONENTS C)
 find_package(yaml-cpp 0.6 REQUIRED)
 find_package(Threads REQUIRED)
+if(APRL_ENABLE_OPENMP)
+  find_package(OpenMP QUIET COMPONENTS CXX)
+  if(NOT OpenMP_CXX_FOUND)
+    message(STATUS "OpenMP unavailable: APRL accepts one compute thread only")
+  endif()
+endif()
 find_package(ZLIB QUIET)
 find_package(LibLZMA QUIET)
 find_package(GSL QUIET)
@@ -91,6 +101,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 set(DIRECT_EB_SOURCES
   src/boostframe.cpp
+  src/compute_threads.cpp
   src/config.cpp
   src/eb_bunch.cpp
   src/eb_cpml.cpp
@@ -129,6 +140,14 @@ target_link_libraries(direct_eb_core
     ${APRL_YAML_CPP_TARGET}
   PRIVATE Threads::Threads
 )
+if(APRL_ENABLE_OPENMP AND OpenMP_CXX_FOUND)
+  target_link_libraries(direct_eb_core PUBLIC OpenMP::OpenMP_CXX)
+  target_compile_definitions(direct_eb_core PUBLIC APRL_HAS_OPENMP=1)
+endif()
+if(DIRECT_EB_BOUNDS_CHECK)
+  # Accessors are inline: every translation unit must use the same definition.
+  target_compile_definitions(direct_eb_core PUBLIC DIRECT_EB_BOUNDS_CHECK=1)
+endif()
 target_compile_definitions(direct_eb_core
   PUBLIC OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX
   PRIVATE

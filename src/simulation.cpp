@@ -4,6 +4,9 @@
 #include <climits>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cerrno>
+#include <exception>
 #include <iomanip>
 #include <limits>
 #include <sstream>
@@ -11,6 +14,7 @@
 #include <sys/stat.h>
 
 #include "particle_initializer.h"
+#include "compute_threads.h"
 #include "runtime_control.h"
 #include "runtime_util.h"
 #include "shutdown_watchdog.h"
@@ -75,6 +79,7 @@ namespace aprl
       std::uint64_t id;
       std::uint64_t sourceId;
       unsigned char frozen;
+      Double frozenBetaZ;
     };
 
     struct TransferPacket
@@ -113,6 +118,7 @@ namespace aprl
       packet.id = particle.id;
       packet.sourceId = particle.sourceId;
       packet.frozen = particle.frozen ? 1 : 0;
+      packet.frozenBetaZ = particle.frozenBetaZ;
       return packet;
     }
 
@@ -131,6 +137,7 @@ namespace aprl
       particle.id = packet.id;
       particle.sourceId = packet.sourceId;
       particle.frozen = packet.frozen != 0;
+      particle.frozenBetaZ = packet.frozenBetaZ;
       return particle;
     }
 
@@ -178,29 +185,59 @@ namespace aprl
                          int destination, int source,
                          int countTag, int dataTag,
                          MPI_Comm communicator,
-                         std::vector<Packet>& receive)
+                         std::vector<Packet>& receive,
+                         Double* communicationSeconds = NULL)
     {
       if (send.size() > static_cast<std::size_t>(INT_MAX))
         throw std::overflow_error("Too many particles cross one MPI interface");
       const int sendCount = static_cast<int>(send.size());
       int receiveCount = 0;
+      Double start = communicationSeconds ? MPI_Wtime() : 0.0;
       MPI_Sendrecv(&sendCount, 1, MPI_INT, destination, countTag,
                    &receiveCount, 1, MPI_INT, source, countTag,
                    communicator, MPI_STATUS_IGNORE);
+      if (communicationSeconds) *communicationSeconds += MPI_Wtime() - start;
       if (receiveCount < 0)
         throw std::runtime_error("Negative MPI particle transfer count");
       receive.resize(static_cast<std::size_t>(receiveCount));
       const int sendBytes = checkedBytes(send.size(), sizeof(Packet));
       const int receiveBytes = checkedBytes(receive.size(),
                                             sizeof(Packet));
+      start = communicationSeconds ? MPI_Wtime() : 0.0;
       MPI_Sendrecv(send.empty() ? NULL : &send[0], sendBytes, MPI_BYTE,
                    destination, dataTag,
                    receive.empty() ? NULL : &receive[0], receiveBytes,
                    MPI_BYTE, source, dataTag, communicator,
                    MPI_STATUS_IGNORE);
+      if (communicationSeconds) *communicationSeconds += MPI_Wtime() - start;
     }
 
   }
+
+  /* Reuse storage across field steps. Particle preparation is bounded to a
+   * small batch so enabling threads does not duplicate the whole bunch. */
+  struct Simulation::ParticleWorkspace
+  {
+    enum { PreparationBatchCapacity = 2048 };
+    struct Prepared
+    {
+      RelativisticParticleSI particle;
+      RelativisticParticleSI activeStart;
+      Double prescribedWork;
+      Double activeStartTime;
+      bool hasActiveSegment;
+      bool pendingActivePush;
+      bool captureFrozenSegment;
+    };
+    std::vector<RelativisticParticleSI> retained;
+    std::vector<ParticleCPMLCarrier> retainedCarriers, retainedRetirementCarriers;
+    std::vector<TransferPacket> sendLower, sendUpper, receiveLower, receiveUpper;
+    std::vector<CarrierTransferPacket> sendCarrierLower, sendCarrierUpper;
+    std::vector<CarrierTransferPacket> receiveCarrierLower, receiveCarrierUpper;
+    std::vector<CarrierTransferPacket> sendRetirementLower, sendRetirementUpper;
+    std::vector<CarrierTransferPacket> receiveRetirementLower, receiveRetirementUpper;
+    std::vector<Prepared> prepared;
+  };
 
   Simulation::Simulation(const SimulationConfig& config,
                          MPI_Comm communicator)
@@ -212,7 +249,8 @@ namespace aprl
       globalGeometry_(), localGeometry_(), localZOffset_(0),
       globalOriginBox_(0.0), localOriginBox_(0.0),
       referenceCenterBoxZ_(0.0), frame_(), sources_(),
-      fields_(), halo_(), incident_(), particles_(), particleCPML_(),
+      fields_(), halo_(), incident_(), particles_(),
+      particleWorkspace_(new ParticleWorkspace()), particleCPML_(),
       pmlCarriers_(), retirementCarriers_(), particleBoundary_(), detectors_(),
       trajectoryWriter_(), energyLedgerWriter_(), lastEnergyLedgerRecord_(),
       trajectoryRhythmSI_(0.0), nextTrajectorySampleTime_(0.0),
@@ -230,7 +268,9 @@ namespace aprl
       totalTimeBoxSI_(0.0), step_(0), interrupted_(false),
       configuredStopReached_(false), loopWallStart_(0.0),
       estimatedStepSeconds_(0.0), estimatedMaximumSteps_(0),
-      modeledLocalPeakBytes_(0), lostParticles_(0),
+      modeledLocalPeakBytes_(0), performanceInterval_(0),
+      performanceLastStep_(0), performanceWallStart_(0.0),
+      localLostParticles_(0), lostParticles_(0),
       ballisticBoundaryEntries_(0), frozenPlaneActivations_(0),
       crossRankActivationPushes_(0),
       boundaryInjectionWorkSamples_(),
@@ -242,6 +282,33 @@ namespace aprl
       throw std::invalid_argument("E/B solver communicator cannot be null");
     MPI_Comm_rank(communicator_, &rank_);
     MPI_Comm_size(communicator_, &size_);
+    std::fill(performanceSeconds_,
+              performanceSeconds_ + PerformanceStageCount, 0.0);
+    // This runtime-only switch never changes the simulation or output cadence.
+    const char* interval = std::getenv("APRL_PROFILE_INTERVAL");
+    unsigned long long requestedInterval = 0;
+    int invalidInterval = 0;
+    if (interval && *interval)
+      {
+        char* end = NULL;
+        errno = 0;
+        requestedInterval = std::strtoull(interval, &end, 10);
+        invalidInterval = interval[0] < '0' || interval[0] > '9' ||
+          errno == ERANGE || !end || *end != '\0' ||
+          requestedInterval > std::numeric_limits<std::size_t>::max();
+      }
+    int anyInvalidInterval = 0;
+    MPI_Allreduce(&invalidInterval, &anyInvalidInterval, 1, MPI_INT, MPI_MAX,
+                  communicator_);
+    unsigned long long minimumInterval = 0, maximumInterval = 0;
+    MPI_Allreduce(&requestedInterval, &minimumInterval, 1,
+      MPI_UNSIGNED_LONG_LONG, MPI_MIN, communicator_);
+    MPI_Allreduce(&requestedInterval, &maximumInterval, 1,
+      MPI_UNSIGNED_LONG_LONG, MPI_MAX, communicator_);
+    if (anyInvalidInterval || minimumInterval != maximumInterval)
+      throw std::invalid_argument(
+        "APRL_PROFILE_INTERVAL must be the same non-negative integer on all ranks");
+    performanceInterval_ = static_cast<std::size_t>(requestedInterval);
     for (std::size_t face = 0; face < 6; ++face)
       {
         energyLedgerPreviousPower_[face] = 0.0L;
@@ -256,9 +323,27 @@ namespace aprl
     peakPmlCarriers_ = 0;
   }
 
+  Simulation::~Simulation() = default;
+
   void Simulation::solve()
   {
+    const Double initializationStart = performanceNow();
     initialize();
+    if (performanceInterval_)
+      {
+        const Double elapsed = MPI_Wtime() - initializationStart;
+        Double maximum = 0.0, sum = 0.0;
+        MPI_Reduce(&elapsed, &maximum, 1, MPI_DOUBLE, MPI_MAX, 0, communicator_);
+        MPI_Reduce(&elapsed, &sum, 1, MPI_DOUBLE, MPI_SUM, 0, communicator_);
+        if (rank_ == 0)
+          {
+            std::ostringstream message;
+            message << std::setprecision(10)
+                    << "[performance] phase=initialization mean_s=" << sum / size_
+                    << " max_s=" << maximum;
+            logRoot(communicator_, message.str());
+          }
+      }
     if (config_.trajectory.enabled)
       sampleTrajectory();
     if (detectors_)
@@ -266,26 +351,41 @@ namespace aprl
     if (config_.energyLedger.enabled)
       sampleEnergyLedger(true);
     loopWallStart_ = MPI_Wtime();
+    performanceWallStart_ = loopWallStart_;
 
     while (timeBoxSI_ < totalTimeBoxSI_)
       {
-        if ((step_ % config_.runtime.stopCheckIntervalSteps == 0) &&
-            synchronizedStopRequested())
-          break;
+        Double stageStart = performanceNow();
+        const bool requestedStop =
+          (step_ % config_.runtime.stopCheckIntervalSteps == 0) &&
+          synchronizedStopRequested();
+        performanceSeconds_[ControlStage] += performanceNow() - stageStart;
+        if (requestedStop) break;
 
+        stageStart = performanceNow();
+        Double communicationStart = halo_->communicationSeconds();
         fields_->clearCurrent();
         particleBoundary_->beginStep();
         halo_->advanceMagnetic(*fields_);
         if (incident_)
           incident_->correctAfterMagneticUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
+        performanceSeconds_[FieldStage] += performanceNow() - stageStart;
+        performanceSeconds_[FieldCommunicationStage] +=
+          halo_->communicationSeconds() - communicationStart;
 
         pushDepositAndMigrate();
+        stageStart = performanceNow();
+        communicationStart = halo_->communicationSeconds();
         halo_->advanceElectric(*fields_, config_.mesh.currentFilter);
         if (incident_)
           incident_->correctAfterElectricUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
+        performanceSeconds_[FieldStage] += performanceNow() - stageStart;
+        performanceSeconds_[FieldCommunicationStage] +=
+          halo_->communicationSeconds() - communicationStart;
 
+        stageStart = performanceNow();
         if (config_.energyLedger.enabled)
           {
             finalizeBoundaryInjectionWorkStep();
@@ -305,12 +405,19 @@ namespace aprl
             config_.runtime.resourceProgressIntervalSteps > 0 &&
             step_ % config_.runtime.resourceProgressIntervalSteps == 0)
           reportResourceProgress("progress");
-        if (configuredStopReached())
+        performanceSeconds_[DiagnosticsStage] += performanceNow() - stageStart;
+        stageStart = performanceNow();
+        const bool reached = configuredStopReached();
+        performanceSeconds_[ControlStage] += performanceNow() - stageStart;
+        reportPerformance();
+        if (reached)
           {
             configuredStopReached_ = true;
             break;
           }
       }
+
+    reportPerformance(true);
 
     logTeardownTrace("final-stop-sync-enter");
     armShutdownWatchdog("final-stop-sync");
@@ -1144,6 +1251,8 @@ namespace aprl
     modeled += 3.0L * static_cast<long double>(particles_.size()) *
       static_cast<long double>(std::max(
         sizeof(RelativisticParticleSI), sizeof(TransferPacket)));
+    modeled += static_cast<long double>(ParticleWorkspace::PreparationBatchCapacity) *
+      sizeof(ParticleWorkspace::Prepared);
     if (config_.mesh.ballisticOutsideTransverse &&
         config_.energyLedger.enabled)
       modeled += static_cast<long double>(particles_.size()) *
@@ -1846,6 +1955,9 @@ namespace aprl
         for (std::size_t index = 0; index < particles_.size(); ++index)
           {
             particles_[index].frozen = true;
+            if (config_.reference.holdTransverseUntilActivation)
+              particles_[index].frozenBetaZ = frame_.heldLongitudinalBetaZ(
+                particles_[index].properVelocity);
             if (frame_.labZFromBoxZT(particles_[index].position[2], 0.0) >=
                 config_.reference.activationPlaneZ)
               localAlreadyPast = 1;
@@ -3573,18 +3685,29 @@ namespace aprl
   void Simulation::pushDepositAndMigrate()
   {
     ChargeConservingCurrentDepositor depositor(*fields_, localOriginBox_);
-    std::vector<RelativisticParticleSI> retained;
+    ParticleWorkspace& workspace = *particleWorkspace_;
+    std::vector<RelativisticParticleSI>& retained = workspace.retained;
+    retained.clear();
     retained.reserve(particles_.size());
-    std::vector<ParticleCPMLCarrier> retainedCarriers;
+    std::vector<ParticleCPMLCarrier>& retainedCarriers = workspace.retainedCarriers;
+    retainedCarriers.clear();
     retainedCarriers.reserve(pmlCarriers_.size());
-    std::vector<ParticleCPMLCarrier> retainedRetirementCarriers;
+    std::vector<ParticleCPMLCarrier>& retainedRetirementCarriers =
+      workspace.retainedRetirementCarriers;
+    retainedRetirementCarriers.clear();
     retainedRetirementCarriers.reserve(retirementCarriers_.size());
-    std::vector<TransferPacket> sendLower;
-    std::vector<TransferPacket> sendUpper;
-    std::vector<CarrierTransferPacket> sendCarrierLower;
-    std::vector<CarrierTransferPacket> sendCarrierUpper;
-    std::vector<CarrierTransferPacket> sendRetirementLower;
-    std::vector<CarrierTransferPacket> sendRetirementUpper;
+    std::vector<TransferPacket>& sendLower = workspace.sendLower;
+    std::vector<TransferPacket>& sendUpper = workspace.sendUpper;
+    std::vector<CarrierTransferPacket>& sendCarrierLower = workspace.sendCarrierLower;
+    std::vector<CarrierTransferPacket>& sendCarrierUpper = workspace.sendCarrierUpper;
+    std::vector<CarrierTransferPacket>& sendRetirementLower = workspace.sendRetirementLower;
+    std::vector<CarrierTransferPacket>& sendRetirementUpper = workspace.sendRetirementUpper;
+    sendLower.clear(); sendUpper.clear();
+    sendCarrierLower.clear(); sendCarrierUpper.clear();
+    sendRetirementLower.clear(); sendRetirementUpper.clear();
+    Double* communicationSeconds = performanceInterval_ ?
+      &performanceSeconds_[ParticleCommunicationStage] : NULL;
+    Double depositionStart = performanceNow();
     const Double lowerZ = localOriginBox_[2];
     const Double upperZ = std::fma(
       static_cast<Double>(localZOffset_ + localGeometry_.nz),
@@ -4263,22 +4386,29 @@ namespace aprl
         retained.push_back(particle);
     };
 
-    for (std::size_t index = 0; index < particles_.size(); ++index)
+    const auto prepareParticle = [&](std::size_t index,
+                                     ParticleWorkspace::Prepared& result)
       {
-        RelativisticParticleSI particle = particles_[index];
+        result.particle = particles_[index];
+        RelativisticParticleSI& particle = result.particle;
         const FieldVector<Double> start(particle.position);
-        Double prescribedWork = 0.0;
-        RelativisticParticleSI activeStart(particle);
-        Double activeStartTime = timeBoxSI_;
-        bool hasActiveSegment = !particle.frozen;
-        bool pendingActivePush = false;
+        result.prescribedWork = 0.0;
+        result.activeStart = particle;
+        result.activeStartTime = timeBoxSI_;
+        result.hasActiveSegment = !particle.frozen;
+        result.pendingActivePush = false;
+        result.captureFrozenSegment = false;
+        Double& prescribedWork = result.prescribedWork;
+        RelativisticParticleSI& activeStart = result.activeStart;
+        Double& activeStartTime = result.activeStartTime;
+        bool& hasActiveSegment = result.hasActiveSegment;
+        bool& pendingActivePush = result.pendingActivePush;
         if (particle.frozen)
           {
             const bool holdTransverse =
               config_.reference.holdTransverseUntilActivation;
             const Double betaHeld = holdTransverse ?
-              frame_.heldLongitudinalBetaZ(
-                particle.properVelocity) : 0.0;
+              particle.frozenBetaZ : 0.0;
             const Double startLabZ = frame_.labZFromBoxZT(
               start[2], timeBoxSI_);
             if (holdTransverse)
@@ -4306,15 +4436,11 @@ namespace aprl
                     particle.position, particle.properVelocity,
                     crossingFraction * globalGeometry_.dt);
                 particle.frozen = false;
-                ++frozenPlaneActivations_;
                 hasActiveSegment = true;
                 activeStart = particle;
                 activeStartTime = timeBoxSI_ +
                   crossingFraction * globalGeometry_.dt;
-                if (detectors_ && crossingFraction > 0.0)
-                  detectors_->captureParticleStep(
-                    particles_[index], activeStart,
-                    timeBoxSI_, activeStartTime);
+                result.captureFrozenSegment = crossingFraction > 0.0;
                 const Double remaining =
                   (1.0 - crossingFraction) * globalGeometry_.dt;
                 if (remaining > 0.0)
@@ -4345,10 +4471,8 @@ namespace aprl
                           config_.mesh.selfFieldFeedback);
                   }
               }
-            else if (holdTransverse && detectors_)
-              detectors_->captureParticleStep(
-                particles_[index], particle, timeBoxSI_,
-                timeBoxSI_ + globalGeometry_.dt);
+            else if (holdTransverse)
+              result.captureFrozenSegment = true;
           }
         else if (config_.mesh.ballisticOutsideTransverse &&
             !particleCPML_->containsPhysical(start))
@@ -4362,160 +4486,232 @@ namespace aprl
             config_.energyLedger.enabled ? &prescribedWork : 0,
             config_.mesh.selfFieldFeedback);
 
-        const bool hasActivationKink =
-          config_.reference.holdTransverseUntilActivation &&
-          particles_[index].frozen && hasActiveSegment &&
-          activeStartTime > timeBoxSI_ &&
-          activeStartTime < timeBoxSI_ + globalGeometry_.dt;
-        const Double activationKinkFraction =
-          (activeStartTime - timeBoxSI_) / globalGeometry_.dt;
-        const FieldVector<Double>* activationKink =
-          hasActivationKink ? &activeStart.position : 0;
+      };
 
-        if (pendingActivePush)
+    performanceSeconds_[ParticleDepositStage] += performanceNow() - depositionStart;
+    // Only preparation reads E/B and modifies independent particle copies.
+    // Deposit, boundary accounting, detector events and migration packing keep
+    // their original order, including release events crossing MPI interfaces.
+    const std::size_t batchCapacity = std::min<std::size_t>(
+      ParticleWorkspace::PreparationBatchCapacity, particles_.size());
+    workspace.prepared.resize(batchCapacity);
+    for (std::size_t batch = 0; batch < particles_.size(); batch += batchCapacity)
+      {
+        const std::ptrdiff_t count = static_cast<std::ptrdiff_t>(
+          std::min(batchCapacity, particles_.size() - batch));
+        const Double preparationStart = performanceNow();
+        if (computeThreadCount() == 1 || count < 32)
           {
-            if (activationKinkFraction == 0.0)
-              {
-                // A release event at the start of the step has no frozen
-                // displacement to deposit.  Hand it directly to the owner
-                // instead of attempting a zero-length interface crossing.
-                const int destination = ownerRank(particle.position[2]);
-                if (destination != rank_ - 1 && destination != rank_ + 1)
-                  throw std::runtime_error(
-                    "Cross-rank zero-length activation is not adjacent");
-                TransferPacket transfer = {};
-                transfer.particle = packParticle(particle);
-                for (unsigned int axis = 0; axis < 3; ++axis)
-                  transfer.segmentStart[axis] = start[axis];
-                transfer.pendingActivePush = 1;
-                (destination < rank_ ? sendLower : sendUpper).push_back(
-                  transfer);
-              }
-            else
-              processActiveSegment(particle, start, 0.0, true,
-                activationKink, activationKinkFraction, true);
-            continue;
+            for (std::ptrdiff_t offset = 0; offset < count; ++offset)
+              prepareParticle(batch + static_cast<std::size_t>(offset),
+                workspace.prepared[static_cast<std::size_t>(offset)]);
           }
-
-        if (config_.mesh.ballisticOutsideTransverse)
+        else
           {
+            std::exception_ptr preparationError;
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel for schedule(static) num_threads(computeThreadCount())
+#endif
+            for (std::ptrdiff_t offset = 0; offset < count; ++offset)
+              {
+                try
+                  {
+                    prepareParticle(batch + static_cast<std::size_t>(offset),
+                      workspace.prepared[static_cast<std::size_t>(offset)]);
+                  }
+                catch (...)
+                  {
+#ifdef APRL_HAS_OPENMP
+#pragma omp critical(aprl_particle_prepare_error)
+#endif
+                    {
+                      if (!preparationError)
+                        preparationError = std::current_exception();
+                    }
+                  }
+              }
+            if (preparationError) std::rethrow_exception(preparationError);
+          }
+        performanceSeconds_[ParticlePrepareStage] += performanceNow() - preparationStart;
+        depositionStart = performanceNow();
+        for (std::ptrdiff_t offset = 0; offset < count; ++offset)
+          {
+            const std::size_t index = batch + static_cast<std::size_t>(offset);
+            ParticleWorkspace::Prepared& result =
+              workspace.prepared[static_cast<std::size_t>(offset)];
+            RelativisticParticleSI& particle = result.particle;
+            const FieldVector<Double> start(particles_[index].position);
+            const Double prescribedWork = result.prescribedWork;
+            const RelativisticParticleSI& activeStart = result.activeStart;
+            const Double activeStartTime = result.activeStartTime;
+            const bool hasActiveSegment = result.hasActiveSegment;
+            const bool pendingActivePush = result.pendingActivePush;
+            if (particles_[index].frozen && hasActiveSegment)
+              ++frozenPlaneActivations_;
+            if (detectors_ && result.captureFrozenSegment)
+              detectors_->captureParticleStep(particles_[index],
+                hasActiveSegment ? activeStart : particle, timeBoxSI_,
+                hasActiveSegment ? activeStartTime : timeBoxSI_ + globalGeometry_.dt);
+
+            const bool hasActivationKink =
+              config_.reference.holdTransverseUntilActivation &&
+              particles_[index].frozen && hasActiveSegment &&
+              activeStartTime > timeBoxSI_ &&
+              activeStartTime < timeBoxSI_ + globalGeometry_.dt;
+            const Double activationKinkFraction =
+              (activeStartTime - timeBoxSI_) / globalGeometry_.dt;
+            const FieldVector<Double>* activationKink =
+              hasActivationKink ? &activeStart.position : 0;
+
+            if (pendingActivePush)
+              {
+                if (activationKinkFraction == 0.0)
+                  {
+                    // A release event at the start of the step has no frozen
+                    // displacement to deposit.  Hand it directly to the owner
+                    // instead of attempting a zero-length interface crossing.
+                    const int destination = ownerRank(particle.position[2]);
+                    if (destination != rank_ - 1 && destination != rank_ + 1)
+                      throw std::runtime_error(
+                        "Cross-rank zero-length activation is not adjacent");
+                    TransferPacket transfer = {};
+                    transfer.particle = packParticle(particle);
+                    for (unsigned int axis = 0; axis < 3; ++axis)
+                      transfer.segmentStart[axis] = start[axis];
+                    transfer.pendingActivePush = 1;
+                    (destination < rank_ ? sendLower : sendUpper).push_back(
+                      transfer);
+                  }
+                else
+                  processActiveSegment(particle, start, 0.0, true,
+                    activationKink, activationKinkFraction, true);
+                continue;
+              }
+
+            if (config_.mesh.ballisticOutsideTransverse)
+              {
+                if (config_.energyLedger.enabled)
+                  energyLedgerPrescribedWork_ += prescribedWork;
+                if (detectors_ && hasActiveSegment &&
+                    activeStartTime < timeBoxSI_ + globalGeometry_.dt)
+                  detectors_->captureParticleStep(
+                    activeStart, particle, activeStartTime,
+                    timeBoxSI_ + globalGeometry_.dt);
+                processActiveSegment(particle, start, 0.0, true,
+                  activationKink, activationKinkFraction, false);
+                continue;
+              }
+
+            const FieldVector<Double>& diagnosticStart =
+              hasActivationKink ? activeStart.position : start;
+            const Double diagnosticStartFraction =
+              hasActivationKink ? activationKinkFraction : 0.0;
+            ParticleBoundaryHit diagnosticHit;
+            ParticleBoundaryHit cpmlHit;
+            ParticleBoundaryHit outerHit;
+            ParticleBoundaryHit retirementHit;
+            const bool entersCpml = particleCPML_->firstEntry(
+              diagnosticStart, particle.position, cpmlHit);
+            const bool exitsOuter = particleBoundary_->firstExit(
+              diagnosticStart, particle.position, outerHit);
+            const bool entersRetirement = labPlaneCrossing(
+              diagnosticStart, particle.position,
+              diagnosticStartFraction,
+              config_.particleRetirement.entranceZ, retirementHit);
+            bool hasTerminalEvent = false;
+            TrajectoryEvent terminalEvent = TrajectoryEvent::DomainExit;
+            Double terminalFraction = 1.0;
+            const auto selectTerminal = [&](
+                bool present, const ParticleBoundaryHit& hit,
+                TrajectoryEvent event)
+            {
+              if (present &&
+                  hit.fraction <= terminalFraction + crossingTolerance)
+                {
+                  hasTerminalEvent = true;
+                  terminalFraction = hit.fraction;
+                  diagnosticHit = hit;
+                  terminalEvent = event;
+                }
+            };
+            selectTerminal(exitsOuter, outerHit,
+                           TrajectoryEvent::DomainExit);
+            selectTerminal(entersCpml, cpmlHit,
+                           TrajectoryEvent::CpmlEntry);
+            selectTerminal(entersRetirement, retirementHit,
+                           TrajectoryEvent::RetirementEntry);
             if (config_.energyLedger.enabled)
-              energyLedgerPrescribedWork_ += prescribedWork;
+              energyLedgerPrescribedWork_ +=
+                static_cast<long double>(prescribedWork) *
+                static_cast<long double>(hasTerminalEvent ?
+                  terminalFraction : 1.0);
+
+            RelativisticParticleSI diagnosticEnd(particle);
+            Double diagnosticTime = timeBoxSI_ + globalGeometry_.dt;
+            if (hasTerminalEvent)
+              {
+                diagnosticEnd.position = diagnosticHit.position;
+                diagnosticTime = timeBoxSI_ +
+                  (diagnosticStartFraction + diagnosticHit.fraction *
+                    (1.0 - diagnosticStartFraction)) *
+                  globalGeometry_.dt;
+                if (config_.energyLedger.enabled)
+                  {
+                    const RelativisticParticleSI& beginning = particles_[index];
+                    const Double gammaBeginning =
+                      BoostFrameTransform::gammaFromProperVelocity(
+                        beginning.properVelocity);
+                    const Double gammaEnd =
+                      BoostFrameTransform::gammaFromProperVelocity(
+                        particle.properVelocity);
+                    const long double mass =
+                      static_cast<long double>(particle.mass);
+                    const long double c = static_cast<long double>(SI::c);
+                    const long double rest = mass * c * c;
+                    const long double kineticBeginning = rest *
+                      static_cast<long double>(beginning.properVelocity.norm2()) /
+                      static_cast<long double>(gammaBeginning + 1.0);
+                    const long double kineticEnd = rest *
+                      static_cast<long double>(particle.properVelocity.norm2()) /
+                      static_cast<long double>(gammaEnd + 1.0);
+                    const long double fraction = static_cast<long double>(
+                      diagnosticHit.fraction);
+                    energyLedgerRemovedKinetic_ += kineticBeginning + fraction *
+                      (kineticEnd - kineticBeginning);
+                    energyLedgerRemovedTotal_ += rest *
+                      (static_cast<long double>(gammaBeginning) + fraction *
+                       static_cast<long double>(gammaEnd - gammaBeginning));
+                    ++energyLedgerRemovedMacroparticles_;
+                  }
+              }
             if (detectors_ && hasActiveSegment &&
-                activeStartTime < timeBoxSI_ + globalGeometry_.dt)
+                activeStartTime < diagnosticTime)
               detectors_->captureParticleStep(
-                activeStart, particle, activeStartTime,
-                timeBoxSI_ + globalGeometry_.dt);
+                activeStart, diagnosticEnd,
+                activeStartTime, diagnosticTime);
+            if (hasTerminalEvent && config_.trajectory.enabled)
+              {
+                appendTrajectoryEvent(
+                  diagnosticEnd, diagnosticTime,
+                  terminalEvent, diagnosticHit.face);
+              }
             processActiveSegment(particle, start, 0.0, true,
               activationKink, activationKinkFraction, false);
-            continue;
           }
 
-        const FieldVector<Double>& diagnosticStart =
-          hasActivationKink ? activeStart.position : start;
-        const Double diagnosticStartFraction =
-          hasActivationKink ? activationKinkFraction : 0.0;
-        ParticleBoundaryHit diagnosticHit;
-        ParticleBoundaryHit cpmlHit;
-        ParticleBoundaryHit outerHit;
-        ParticleBoundaryHit retirementHit;
-        const bool entersCpml = particleCPML_->firstEntry(
-          diagnosticStart, particle.position, cpmlHit);
-        const bool exitsOuter = particleBoundary_->firstExit(
-          diagnosticStart, particle.position, outerHit);
-        const bool entersRetirement = labPlaneCrossing(
-          diagnosticStart, particle.position,
-          diagnosticStartFraction,
-          config_.particleRetirement.entranceZ, retirementHit);
-        bool hasTerminalEvent = false;
-        TrajectoryEvent terminalEvent = TrajectoryEvent::DomainExit;
-        Double terminalFraction = 1.0;
-        const auto selectTerminal = [&](
-            bool present, const ParticleBoundaryHit& hit,
-            TrajectoryEvent event)
-        {
-          if (present &&
-              hit.fraction <= terminalFraction + crossingTolerance)
-            {
-              hasTerminalEvent = true;
-              terminalFraction = hit.fraction;
-              diagnosticHit = hit;
-              terminalEvent = event;
-            }
-        };
-        selectTerminal(exitsOuter, outerHit,
-                       TrajectoryEvent::DomainExit);
-        selectTerminal(entersCpml, cpmlHit,
-                       TrajectoryEvent::CpmlEntry);
-        selectTerminal(entersRetirement, retirementHit,
-                       TrajectoryEvent::RetirementEntry);
-        if (config_.energyLedger.enabled)
-          energyLedgerPrescribedWork_ +=
-            static_cast<long double>(prescribedWork) *
-            static_cast<long double>(hasTerminalEvent ?
-              terminalFraction : 1.0);
-
-        RelativisticParticleSI diagnosticEnd(particle);
-        Double diagnosticTime = timeBoxSI_ + globalGeometry_.dt;
-        if (hasTerminalEvent)
-          {
-            diagnosticEnd.position = diagnosticHit.position;
-            diagnosticTime = timeBoxSI_ +
-              (diagnosticStartFraction + diagnosticHit.fraction *
-                (1.0 - diagnosticStartFraction)) *
-              globalGeometry_.dt;
-            if (config_.energyLedger.enabled)
-              {
-                const RelativisticParticleSI& beginning = particles_[index];
-                const Double gammaBeginning =
-                  BoostFrameTransform::gammaFromProperVelocity(
-                    beginning.properVelocity);
-                const Double gammaEnd =
-                  BoostFrameTransform::gammaFromProperVelocity(
-                    particle.properVelocity);
-                const long double mass =
-                  static_cast<long double>(particle.mass);
-                const long double c = static_cast<long double>(SI::c);
-                const long double rest = mass * c * c;
-                const long double kineticBeginning = rest *
-                  static_cast<long double>(beginning.properVelocity.norm2()) /
-                  static_cast<long double>(gammaBeginning + 1.0);
-                const long double kineticEnd = rest *
-                  static_cast<long double>(particle.properVelocity.norm2()) /
-                  static_cast<long double>(gammaEnd + 1.0);
-                const long double fraction = static_cast<long double>(
-                  diagnosticHit.fraction);
-                energyLedgerRemovedKinetic_ += kineticBeginning + fraction *
-                  (kineticEnd - kineticBeginning);
-                energyLedgerRemovedTotal_ += rest *
-                  (static_cast<long double>(gammaBeginning) + fraction *
-                   static_cast<long double>(gammaEnd - gammaBeginning));
-                ++energyLedgerRemovedMacroparticles_;
-              }
-          }
-        if (detectors_ && hasActiveSegment &&
-            activeStartTime < diagnosticTime)
-          detectors_->captureParticleStep(
-            activeStart, diagnosticEnd,
-            activeStartTime, diagnosticTime);
-        if (hasTerminalEvent && config_.trajectory.enabled)
-          {
-            appendTrajectoryEvent(
-              diagnosticEnd, diagnosticTime,
-              terminalEvent, diagnosticHit.face);
-          }
-        processActiveSegment(particle, start, 0.0, true,
-          activationKink, activationKinkFraction, false);
+        performanceSeconds_[ParticleDepositStage] += performanceNow() - depositionStart;
       }
 
-    std::vector<TransferPacket> receiveLower;
-    std::vector<TransferPacket> receiveUpper;
+    const Double migrationStart = performanceNow();
+    std::vector<TransferPacket>& receiveLower = workspace.receiveLower;
+    std::vector<TransferPacket>& receiveUpper = workspace.receiveUpper;
+
     exchangePackets(sendUpper, halo_->upperRank(), halo_->lowerRank(),
       TRANSFER_UPPER_COUNT, TRANSFER_UPPER_DATA,
-      communicator_, receiveLower);
+      communicator_, receiveLower, communicationSeconds);
     exchangePackets(sendLower, halo_->lowerRank(), halo_->upperRank(),
       TRANSFER_LOWER_COUNT, TRANSFER_LOWER_DATA,
-      communicator_, receiveUpper);
+      communicator_, receiveUpper, communicationSeconds);
 
     const std::vector<TransferPacket>* received[2] = {
       &receiveLower, &receiveUpper
@@ -4595,16 +4791,16 @@ namespace aprl
             transfer.activationKinkFraction, false, 0, 0.0, false);
         }
 
-    std::vector<CarrierTransferPacket> receiveCarrierLower;
-    std::vector<CarrierTransferPacket> receiveCarrierUpper;
+    std::vector<CarrierTransferPacket>& receiveCarrierLower = workspace.receiveCarrierLower;
+    std::vector<CarrierTransferPacket>& receiveCarrierUpper = workspace.receiveCarrierUpper;
     exchangePackets(sendCarrierUpper,
       halo_->upperRank(), halo_->lowerRank(),
       CARRIER_UPPER_COUNT, CARRIER_UPPER_DATA,
-      communicator_, receiveCarrierLower);
+      communicator_, receiveCarrierLower, communicationSeconds);
     exchangePackets(sendCarrierLower,
       halo_->lowerRank(), halo_->upperRank(),
       CARRIER_LOWER_COUNT, CARRIER_LOWER_DATA,
-      communicator_, receiveCarrierUpper);
+      communicator_, receiveCarrierUpper, communicationSeconds);
     const std::vector<CarrierTransferPacket>* receivedCarriers[2] = {
       &receiveCarrierLower, &receiveCarrierUpper
     };
@@ -4622,16 +4818,20 @@ namespace aprl
             carrier, segmentStart, transfer.segmentStartFraction, false);
         }
 
-    std::vector<CarrierTransferPacket> receiveRetirementLower;
-    std::vector<CarrierTransferPacket> receiveRetirementUpper;
-    exchangePackets(sendRetirementUpper,
-      halo_->upperRank(), halo_->lowerRank(),
-      RETIREMENT_UPPER_COUNT, RETIREMENT_UPPER_DATA,
-      communicator_, receiveRetirementLower);
-    exchangePackets(sendRetirementLower,
-      halo_->lowerRank(), halo_->upperRank(),
-      RETIREMENT_LOWER_COUNT, RETIREMENT_LOWER_DATA,
-      communicator_, receiveRetirementUpper);
+    std::vector<CarrierTransferPacket>& receiveRetirementLower = workspace.receiveRetirementLower;
+    std::vector<CarrierTransferPacket>& receiveRetirementUpper = workspace.receiveRetirementUpper;
+    receiveRetirementLower.clear(); receiveRetirementUpper.clear();
+    if (config_.particleRetirement.enabled)
+      {
+        exchangePackets(sendRetirementUpper,
+          halo_->upperRank(), halo_->lowerRank(),
+          RETIREMENT_UPPER_COUNT, RETIREMENT_UPPER_DATA,
+          communicator_, receiveRetirementLower, communicationSeconds);
+        exchangePackets(sendRetirementLower,
+          halo_->lowerRank(), halo_->upperRank(),
+          RETIREMENT_LOWER_COUNT, RETIREMENT_LOWER_DATA,
+          communicator_, receiveRetirementUpper, communicationSeconds);
+      }
     const std::vector<CarrierTransferPacket>* receivedRetirement[2] = {
       &receiveRetirementLower, &receiveRetirementUpper
     };
@@ -4654,18 +4854,24 @@ namespace aprl
     peakPmlCarriers_ = std::max(peakPmlCarriers_, pmlCarriers_.size());
     peakRetirementCarriers_ = std::max(
       peakRetirementCarriers_, retirementCarriers_.size());
-    unsigned long long globalLost = 0;
-    MPI_Allreduce(&localLost, &globalLost, 1, MPI_UNSIGNED_LONG_LONG,
-                  MPI_SUM, communicator_);
-    lostParticles_ += globalLost;
+    localLostParticles_ += localLost;
     int globalAutomaticLongitudinalExit = 0;
-    MPI_Allreduce(&localAutomaticLongitudinalExit,
-                  &globalAutomaticLongitudinalExit, 1, MPI_INT, MPI_MAX,
-                  communicator_);
+    if (config_.mesh.longitudinal.automatic())
+      {
+        const Double communicationStart = performanceNow();
+        MPI_Allreduce(&localAutomaticLongitudinalExit,
+                      &globalAutomaticLongitudinalExit, 1, MPI_INT, MPI_MAX,
+                      communicator_);
+        performanceSeconds_[ParticleCommunicationStage] +=
+          performanceNow() - communicationStart;
+      }
     if (globalAutomaticLongitudinalExit)
       throw std::runtime_error(
         "An active particle or retirement-current carrier entered a longitudinal CPML in automatic observation-bounded mode. The ballistic envelope underestimated the evolved orbit; increase mesh.longitudinal.ballistic_time_safety_factor or the longitudinal guard cells. This run is not physically complete.");
+    performanceSeconds_[ParticleMigrationStage] += performanceNow() - migrationStart;
+    const Double diagnosticStart = performanceNow();
     if (detectors_) detectors_->collectParticleCrossings();
+    performanceSeconds_[DiagnosticsStage] += performanceNow() - diagnosticStart;
   }
 
   void Simulation::reportParticleBoundaryLosses() const
@@ -4809,6 +5015,79 @@ namespace aprl
       }
   }
 
+  Double Simulation::performanceNow() const
+  {
+    return performanceInterval_ ? MPI_Wtime() : 0.0;
+  }
+
+  void Simulation::reportPerformance(bool final)
+  {
+    if (!performanceInterval_ || step_ == performanceLastStep_ ||
+        (!final && step_ % performanceInterval_ != 0)) return;
+    const Double localWall = MPI_Wtime() - performanceWallStart_;
+    Double wall = 0.0;
+    Double sums[PerformanceStageCount] = {};
+    struct ValueRank { Double value; int rank; };
+    ValueRank localMax[PerformanceStageCount], maxima[PerformanceStageCount];
+    for (int stage = 0; stage < PerformanceStageCount; ++stage)
+      {
+        localMax[stage].value = performanceSeconds_[stage];
+        localMax[stage].rank = rank_;
+      }
+    MPI_Reduce(&localWall, &wall, 1, MPI_DOUBLE, MPI_MAX, 0, communicator_);
+    MPI_Reduce(performanceSeconds_, sums, PerformanceStageCount,
+               MPI_DOUBLE, MPI_SUM, 0, communicator_);
+    MPI_Reduce(localMax, maxima, PerformanceStageCount,
+               MPI_DOUBLE_INT, MPI_MAXLOC, 0, communicator_);
+    unsigned long long localCounts[3] = {
+      static_cast<unsigned long long>(particles_.size()), 0, 0
+    };
+    for (std::size_t index = 0; index < particles_.size(); ++index)
+      ++localCounts[particles_[index].frozen ? 2 : 1];
+    unsigned long long minimumCounts[3] = {}, maximumCounts[3] = {}, sumCounts[3] = {};
+    MPI_Reduce(localCounts, minimumCounts, 3, MPI_UNSIGNED_LONG_LONG,
+               MPI_MIN, 0, communicator_);
+    MPI_Reduce(localCounts, maximumCounts, 3, MPI_UNSIGNED_LONG_LONG,
+               MPI_MAX, 0, communicator_);
+    MPI_Reduce(localCounts, sumCounts, 3, MPI_UNSIGNED_LONG_LONG,
+               MPI_SUM, 0, communicator_);
+    if (rank_ == 0)
+      {
+        static const char* names[PerformanceStageCount] = {
+          "field_total", "particle_prepare", "particle_deposit", "particle_migration_total",
+          "diagnostics", "control", "field_communication", "particle_communication"
+        };
+        for (int stage = 0; stage < PerformanceStageCount; ++stage)
+          {
+            std::ostringstream message;
+            message << std::setprecision(10)
+              << "[performance] phase=" << (final ? "final" : "interval")
+              << " step=" << step_ << " steps=" << step_ - performanceLastStep_
+              << " elapsed_s=" << wall << " stage=" << names[stage]
+              << " mean_s=" << sums[stage] / size_
+              << " max_s=" << maxima[stage].value
+              << " max_rank=" << maxima[stage].rank;
+            logRoot(communicator_, message.str());
+          }
+        std::ostringstream message;
+        message << "[performance] phase=workload step=" << step_
+          << " ranks=" << size_ << " threads=" << computeThreadCount()
+          << " particles_total=" << sumCounts[0]
+          << " particles_min=" << minimumCounts[0] << " particles_max=" << maximumCounts[0]
+          << " active_total=" << sumCounts[1]
+          << " active_min=" << minimumCounts[1] << " active_max=" << maximumCounts[1]
+          << " frozen_total=" << sumCounts[2]
+          << " frozen_min=" << minimumCounts[2] << " frozen_max=" << maximumCounts[2];
+        logRoot(communicator_, message.str());
+      }
+    // Exclude reporting and root's log flush from the following interval on
+    // every rank. Profiling itself still adds overhead to whole-run wall time.
+    MPI_Barrier(communicator_);
+    std::fill(performanceSeconds_, performanceSeconds_ + PerformanceStageCount, 0.0);
+    performanceLastStep_ = step_;
+    performanceWallStart_ = MPI_Wtime();
+  }
+
   bool Simulation::synchronizedStopRequested()
   {
     if (!config_.runtime.interactive()) return false;
@@ -4821,12 +5100,6 @@ namespace aprl
 
   bool Simulation::configuredStopReached()
   {
-    const unsigned long long localCount =
-      static_cast<unsigned long long>(particles_.size());
-    unsigned long long globalCount = 0;
-    MPI_Allreduce(&localCount, &globalCount, 1, MPI_UNSIGNED_LONG_LONG,
-                  MPI_SUM, communicator_);
-
     if (config_.stop.mode == StopMode::ReferenceCenterZ)
       {
         const Double referenceZ = frame_.labZFromBoxZT(
@@ -4836,6 +5109,8 @@ namespace aprl
           std::max(1.0, std::max(std::abs(referenceZ),
                                  std::abs(config_.stop.referenceZ)));
         if (referenceZ < config_.stop.referenceZ - tolerance) return false;
+        MPI_Allreduce(&localLostParticles_, &lostParticles_, 1,
+          MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
         std::ostringstream message;
         message << "boost reference centre reached lab z=" << referenceZ
                 << " m (target " << config_.stop.referenceZ << " m)";
@@ -4858,12 +5133,24 @@ namespace aprl
           std::max(1.0, std::max(std::abs(eventZLab),
                                  std::abs(interactionExit)));
         if (eventZLab <= interactionExit + tolerance)
-          localNotPast = 1;
+          {
+            localNotPast = 1;
+            break;
+          }
       }
     int globalNotPast = 0;
     MPI_Allreduce(&localNotPast, &globalNotPast, 1, MPI_INT, MPI_MAX,
                   communicator_);
     if (globalNotPast) return false;
+
+    const unsigned long long localCounts[2] = {
+      static_cast<unsigned long long>(particles_.size()), localLostParticles_
+    };
+    unsigned long long globalCounts[2] = {};
+    MPI_Allreduce(localCounts, globalCounts, 2, MPI_UNSIGNED_LONG_LONG,
+                  MPI_SUM, communicator_);
+    const unsigned long long globalCount = globalCounts[0];
+    lostParticles_ = globalCounts[1];
 
     std::ostringstream message;
     if (globalCount == 0)

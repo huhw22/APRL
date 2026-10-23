@@ -1,4 +1,5 @@
 #include "eb_cpml.h"
+#include "compute_threads.h"
 
 #include <algorithm>
 #include <cmath>
@@ -142,34 +143,52 @@ namespace aprl
                          const std::size_t end[3],
                          Operation operation)
     {
-      for (std::size_t ordinal = 0;
-           ordinal < profile.activeIndices.size(); ++ordinal)
+      // Divide whole rows between workers.  In particular, assigning the
+      // thin x layers to different workers would make them repeatedly write
+      // adjacent cache lines of the same field row.
+      if (profile.axis == 0)
         {
-          const std::size_t coordinate = profile.activeIndices[ordinal];
-          if (coordinate < begin[profile.axis] ||
-              coordinate >= end[profile.axis])
-            continue;
-          if (profile.axis == 0)
-            {
-              const std::size_t i = coordinate;
-              for (std::size_t k = begin[2]; k < end[2]; ++k)
-                for (std::size_t j = begin[1]; j < end[1]; ++j)
-                  operation(i, j, k);
-            }
-          else if (profile.axis == 1)
-            {
-              const std::size_t j = coordinate;
-              for (std::size_t k = begin[2]; k < end[2]; ++k)
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel for collapse(2) if(computeThreadCount() > 1) num_threads(computeThreadCount()) schedule(static)
+#endif
+          for (std::size_t k = begin[2]; k < end[2]; ++k)
+            for (std::size_t j = begin[1]; j < end[1]; ++j)
+              for (std::size_t ordinal = 0;
+                   ordinal < profile.activeIndices.size(); ++ordinal)
+                {
+                  const std::size_t i = profile.activeIndices[ordinal];
+                  if (i >= begin[0] && i < end[0]) operation(i, j, k);
+                }
+        }
+      else if (profile.axis == 1)
+        {
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel for collapse(2) if(computeThreadCount() > 1) num_threads(computeThreadCount()) schedule(static)
+#endif
+          for (std::size_t k = begin[2]; k < end[2]; ++k)
+            for (std::size_t ordinal = 0;
+                 ordinal < profile.activeIndices.size(); ++ordinal)
+              {
+                const std::size_t j = profile.activeIndices[ordinal];
+                if (j < begin[1] || j >= end[1]) continue;
                 for (std::size_t i = begin[0]; i < end[0]; ++i)
                   operation(i, j, k);
-            }
-          else
-            {
-              const std::size_t k = coordinate;
-              for (std::size_t j = begin[1]; j < end[1]; ++j)
+              }
+        }
+      else
+        {
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel for collapse(2) if(computeThreadCount() > 1) num_threads(computeThreadCount()) schedule(static)
+#endif
+          for (std::size_t ordinal = 0;
+               ordinal < profile.activeIndices.size(); ++ordinal)
+            for (std::size_t j = begin[1]; j < end[1]; ++j)
+              {
+                const std::size_t k = profile.activeIndices[ordinal];
+                if (k < begin[2] || k >= end[2]) continue;
                 for (std::size_t i = begin[0]; i < end[0]; ++i)
                   operation(i, j, k);
-            }
+              }
         }
     }
 

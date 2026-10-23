@@ -1,4 +1,5 @@
 #include "eb_field.h"
+#include "compute_threads.h"
 
 #include <algorithm>
 #include <cmath>
@@ -120,40 +121,9 @@ namespace aprl
     std::fill(values_.begin(), values_.end(), value);
   }
 
-  std::size_t YeeComponent::index(std::size_t i, std::size_t j,
-                                  std::size_t k) const
-  {
-#ifdef DIRECT_EB_BOUNDS_CHECK
-    if (i >= nx_ || j >= ny_ || k >= nz_)
-      throw std::out_of_range("Yee component index is outside the lattice");
-#endif
-    return (k * ny_ + j) * nx_ + i;
-  }
-
-  Double& YeeComponent::operator()(std::size_t i, std::size_t j,
-                                   std::size_t k)
-  {
-    return values_[index(i, j, k)];
-  }
-
-  const Double& YeeComponent::operator()(std::size_t i, std::size_t j,
-                                         std::size_t k) const
-  {
-    return values_[index(i, j, k)];
-  }
-
-  std::size_t YeeComponent::nx() const { return nx_; }
-  std::size_t YeeComponent::ny() const { return ny_; }
-  std::size_t YeeComponent::nz() const { return nz_; }
-  std::size_t YeeComponent::size() const { return values_.size(); }
   std::size_t YeeComponent::bytes() const
   {
     return values_.capacity() * sizeof(Double);
-  }
-  Double* YeeComponent::data() { return values_.empty() ? 0 : &values_[0]; }
-  const Double* YeeComponent::data() const
-  {
-    return values_.empty() ? 0 : &values_[0];
   }
 
   RadiationFieldSample::RadiationFieldSample()
@@ -291,6 +261,27 @@ namespace aprl
 
   void EBFieldGrid::clearCurrent()
   {
+#ifdef APRL_HAS_OPENMP
+    if (computeThreadCount() > 1)
+      {
+        Double* const jx = jx_.data();
+        Double* const jy = jy_.data();
+        Double* const jz = jz_.data();
+        const std::size_t nx = jx_.size();
+        const std::size_t ny = jy_.size();
+        const std::size_t nz = jz_.size();
+#pragma omp parallel num_threads(computeThreadCount())
+        {
+#pragma omp for schedule(static) nowait
+          for (std::size_t index = 0; index < nx; ++index) jx[index] = 0.0;
+#pragma omp for schedule(static) nowait
+          for (std::size_t index = 0; index < ny; ++index) jy[index] = 0.0;
+#pragma omp for schedule(static) nowait
+          for (std::size_t index = 0; index < nz; ++index) jz[index] = 0.0;
+        }
+        return;
+      }
+#endif
     jx_.fill(0.0); jy_.fill(0.0); jz_.fill(0.0);
   }
 
@@ -314,24 +305,37 @@ namespace aprl
     const Double dtdy = geometry_.dt / geometry_.dy;
     const Double dtdz = geometry_.dt / geometry_.dz;
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel if(computeThreadCount() > 1) num_threads(computeThreadCount())
+#endif
+    {
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 0; k < geometry_.nz; ++k)
       for (std::size_t j = 0; j < geometry_.ny; ++j)
         for (std::size_t i = 0; i <= geometry_.nx; ++i)
           bx_(i, j, k) -= dtdy * (ez_(i, j + 1, k) - ez_(i, j, k))
                         - dtdz * (ey_(i, j, k + 1) - ey_(i, j, k));
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 0; k < geometry_.nz; ++k)
       for (std::size_t j = 0; j <= geometry_.ny; ++j)
         for (std::size_t i = 0; i < geometry_.nx; ++i)
           by_(i, j, k) -= dtdz * (ex_(i, j, k + 1) - ex_(i, j, k))
                         - dtdx * (ez_(i + 1, j, k) - ez_(i, j, k));
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 0; k <= geometry_.nz; ++k)
       for (std::size_t j = 0; j < geometry_.ny; ++j)
         for (std::size_t i = 0; i < geometry_.nx; ++i)
           bz_(i, j, k) -= dtdx * (ey_(i + 1, j, k) - ey_(i, j, k))
                         - dtdy * (ex_(i, j + 1, k) - ex_(i, j, k));
-
+    }
   }
 
   Double EBFieldGrid::electricValue(
@@ -445,6 +449,13 @@ namespace aprl
     const Double dtdy = geometry_.dt / geometry_.dy;
     const Double dtdz = geometry_.dt / geometry_.dz;
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel if(computeThreadCount() > 1) num_threads(computeThreadCount())
+#endif
+    {
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 0; k < geometry_.nz; ++k)
       for (std::size_t j = 0; j < geometry_.ny; ++j)
         for (std::size_t i = 0; i <= geometry_.nx; ++i)
@@ -458,6 +469,9 @@ namespace aprl
             bx_(i, j, k) -= dtdy * dEzDy - dtdz * dEyDz;
           }
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 0; k < geometry_.nz; ++k)
       for (std::size_t j = 0; j <= geometry_.ny; ++j)
         for (std::size_t i = 0; i < geometry_.nx; ++i)
@@ -471,6 +485,9 @@ namespace aprl
             by_(i, j, k) -= dtdz * dExDz - dtdx * dEzDx;
           }
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 0; k <= geometry_.nz; ++k)
       for (std::size_t j = 0; j < geometry_.ny; ++j)
         for (std::size_t i = 0; i < geometry_.nx; ++i)
@@ -483,6 +500,7 @@ namespace aprl
               smoothedElectric(ex_, 0, 1, i, j, k, halo);
             bz_(i, j, k) -= dtdx * dEyDx - dtdy * dExDy;
           }
+    }
   }
 
   void EBFieldGrid::advanceElectric()
@@ -494,6 +512,13 @@ namespace aprl
     const Double curlY = curlScale / geometry_.dy;
     const Double curlZ = curlScale / geometry_.dz;
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel if(computeThreadCount() > 1) num_threads(computeThreadCount())
+#endif
+    {
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 1; k < geometry_.nz; ++k)
       for (std::size_t j = 1; j < geometry_.ny; ++j)
         for (std::size_t i = 0; i < geometry_.nx; ++i)
@@ -501,6 +526,9 @@ namespace aprl
                         - curlZ * (by_(i, j, k) - by_(i, j, k - 1))
                         - currentScale * jx_(i, j, k);
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 1; k < geometry_.nz; ++k)
       for (std::size_t j = 0; j < geometry_.ny; ++j)
         for (std::size_t i = 1; i < geometry_.nx; ++i)
@@ -508,12 +536,16 @@ namespace aprl
                         - curlX * (bz_(i, j, k) - bz_(i - 1, j, k))
                         - currentScale * jy_(i, j, k);
 
+#ifdef APRL_HAS_OPENMP
+#pragma omp for collapse(2) schedule(static) nowait
+#endif
     for (std::size_t k = 0; k < geometry_.nz; ++k)
       for (std::size_t j = 1; j < geometry_.ny; ++j)
         for (std::size_t i = 1; i < geometry_.nx; ++i)
           ez_(i, j, k) += curlX * (by_(i, j, k) - by_(i - 1, j, k))
                         - curlY * (bx_(i, j, k) - bx_(i, j - 1, k))
                         - currentScale * jz_(i, j, k);
+    }
 
     boundary_->afterElectricUpdate(*this);
   }

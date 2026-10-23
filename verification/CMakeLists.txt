@@ -26,6 +26,22 @@ target_compile_options(aprl_frozen_plane_scan PRIVATE
 )
 
 set(APRL_VERIFY_WORK "${CMAKE_CURRENT_BINARY_DIR}/work")
+
+add_executable(aprl_threaded_fields threaded_fields.cpp)
+target_link_libraries(aprl_threaded_fields PRIVATE direct_eb_core)
+add_executable(aprl_mpi_overlap_checks mpi_overlap_checks.cpp)
+target_link_libraries(aprl_mpi_overlap_checks PRIVATE direct_eb_core)
+add_test(NAME required.parallel.fields COMMAND aprl_threaded_fields)
+set_tests_properties(required.parallel.fields PROPERTIES
+  LABELS "required;functional;parallel" TIMEOUT 120)
+foreach(ranks 2 3)
+  add_test(NAME required.parallel.halo-${ranks}
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+      ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_mpi_overlap_checks>
+      ${MPIEXEC_POSTFLAGS})
+  set_tests_properties(required.parallel.halo-${ranks} PROPERTIES
+    LABELS "required;functional;parallel;mpi" TIMEOUT 120)
+endforeach()
 set(APRL_VERIFY_CARDS "${CMAKE_CURRENT_SOURCE_DIR}/cards")
 foreach(directory
     smoke teardown detector mpi-one mpi-two ledger invalid-key invalid-stop
@@ -534,6 +550,33 @@ if(APRL_ENABLE_PHYSICS_ANALYSIS)
     DEPENDS analysis.energy-budget.signal)
 endif()
 
+# Keep this full-pipeline check together: its two four-rank runs must consume
+# exactly the same input, then compare all scientific datasets without h5py.
+if(APRL_ENABLE_OPENMP AND OpenMP_CXX_FOUND)
+  add_executable(aprl_hybrid_output_checks hybrid_output_checks.cpp)
+  target_include_directories(aprl_hybrid_output_checks PRIVATE ${HDF5_INCLUDE_DIRS})
+  target_link_libraries(aprl_hybrid_output_checks PRIVATE MPI::MPI_CXX ${HDF5_LIBRARIES})
+  target_compile_definitions(aprl_hybrid_output_checks PRIVATE
+    OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX)
+  configure_file("${APRL_VERIFY_CARDS}/hybrid-held.yaml.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/hybrid-held.yaml" @ONLY)
+  add_test(NAME required.parallel.held-end-to-end
+    COMMAND ${CMAKE_COMMAND}
+      "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
+      "-DAPRL=$<TARGET_FILE:aprl>"
+      "-DCOMPARATOR=$<TARGET_FILE:aprl_hybrid_output_checks>"
+      "-DMPIEXEC=${MPIEXEC_EXECUTABLE}"
+      "-DMPIEXEC_NUMPROC_FLAG=${MPIEXEC_NUMPROC_FLAG}"
+      "-DMPIEXEC_PREFLAGS=${MPIEXEC_PREFLAGS}"
+      "-DMPIEXEC_POSTFLAGS=${MPIEXEC_POSTFLAGS}"
+      "-DCARD=${CMAKE_CURRENT_BINARY_DIR}/hybrid-held.yaml"
+      "-DWORK=${APRL_VERIFY_WORK}/hybrid-held"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/check_hybrid_held.cmake")
+  set_tests_properties(required.parallel.held-end-to-end PROPERTIES
+    LABELS "required;functional;parallel;mpi" TIMEOUT 420 PROCESSORS 8
+    RUN_SERIAL TRUE)
+endif()
+
 add_custom_target(verify_required
   COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -L required
   DEPENDS aprl aprl_core_checks aprl_output_checks
@@ -555,6 +598,12 @@ add_custom_target(verify_required_no_mpi
 if(APRL_BUILD_SASE_BUNCH_GENERATOR)
   add_dependencies(verify_required sase_bunch_generator)
   add_dependencies(verify_required_no_mpi sase_bunch_generator)
+endif()
+
+add_dependencies(verify_required aprl_threaded_fields aprl_mpi_overlap_checks)
+add_dependencies(verify_required_no_mpi aprl_threaded_fields)
+if(TARGET aprl_hybrid_output_checks)
+  add_dependencies(verify_required aprl_hybrid_output_checks)
 endif()
 
 if(APRL_BUILD_POSTPROCESSORS)

@@ -1,0 +1,59 @@
+# Thread equivalence fixture, not a physical convergence example.
+# Four 16-cell z slabs force step-internal held release across a rank boundary.
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output: {overwrite: true, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  ballistic_outside_transverse: true
+  self_field_feedback: true
+  cells: [104, 104, 64]
+  cell_size: [5, 5, 1]
+  center: [0, 0, 0]
+  duration: 200
+  boost_gamma: 2
+  particle_steps_per_undulator_period: 4
+boundary:
+  type: cpml
+  cells: [10, 10, 8]
+  polynomial_order: 3
+  target_reflection: 1.0e-8
+  kappa_max: 8
+  alpha_fraction: 0
+initial_self_field: {enabled: false, model: relativistic-poisson}
+beam:
+  reference:
+    input_plane_z: 0
+    initial_center_z: 10
+    frozen_lab_plane_injection: true
+    activation_plane_z: 0
+    hold_transverse_until_activation: true
+  input:
+    type: hdf5
+    file: "@APRL_VERIFY_WORK@/hybrid-held/particles.h5"
+    electrons: 10410
+    position_offset: [0, 0, 0]
+sources:
+  incident_waves: []
+  magnetic_elements:
+    - {type: uniform-dipole, entrance_z: 18, length: 2, field_T: 0.1,
+       polarization_angle_rad: 0.3}
+detectors:
+  enabled: true
+  directory: detectors
+  field_planes:
+    - {name: field, z: 22, rhythm: 1, buffer_samples: 3, compression: 0}
+  particle_planes:
+    - {name: activation, z: 0, buffer_records: 2048, compression: 0}
+    - {name: downstream, z: 22, buffer_records: 2048, compression: 0}
+stop: {mode: reference-center-z, z: 40}
+trajectory: {enabled: false}
+energy_ledger:
+  enabled: true
+  directory: ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 1
+  buffer_records: 4
+  compression: 0
+  warning_relative_tolerance: 1.0e-6

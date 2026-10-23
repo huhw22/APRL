@@ -31,10 +31,19 @@ namespace aprl
   {
   public:
     Simulation(const SimulationConfig& config, MPI_Comm communicator);
+    ~Simulation();
 
     void solve();
 
   private:
+    struct ParticleWorkspace;
+    enum PerformanceStage
+    {
+      FieldStage, ParticlePrepareStage, ParticleDepositStage,
+      ParticleMigrationStage, DiagnosticsStage, ControlStage,
+      FieldCommunicationStage, ParticleCommunicationStage,
+      PerformanceStageCount
+    };
     struct Slab
     {
       std::size_t offset;
@@ -61,6 +70,8 @@ namespace aprl
     void calibrateResourceEstimate();
     void reportResourceEstimate();
     void reportResourceProgress(const char* phase);
+    Double performanceNow() const;
+    void reportPerformance(bool final = false);
     void initializeTrajectoryOutput();
     void initializeDetectorOutput();
     void initializeEnergyLedger();
@@ -113,6 +124,7 @@ namespace aprl
     std::unique_ptr<EBZSlabHaloExchange> halo_;
     std::unique_ptr<EBMaxwellIncidentInjector> incident_;
     std::vector<RelativisticParticleSI> particles_;
+    std::unique_ptr<ParticleWorkspace> particleWorkspace_;
     std::unique_ptr<ParticleCPMLRegion> particleCPML_;
     std::vector<ParticleCPMLCarrier> pmlCarriers_;
     /* The same compact record is reused for experimental retirement-current
@@ -151,6 +163,11 @@ namespace aprl
     Double estimatedStepSeconds_;
     std::size_t estimatedMaximumSteps_;
     std::uint64_t modeledLocalPeakBytes_;
+    std::size_t performanceInterval_;
+    std::size_t performanceLastStep_;
+    Double performanceWallStart_;
+    Double performanceSeconds_[PerformanceStageCount];
+    unsigned long long localLostParticles_;
     unsigned long long lostParticles_;
     unsigned long long ballisticBoundaryEntries_;
     unsigned long long frozenPlaneActivations_;
