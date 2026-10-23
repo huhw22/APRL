@@ -43,7 +43,12 @@ namespace
   {
     std::vector<std::string> result;
     require(H5Ovisit(file, H5_INDEX_NAME, H5_ITER_INC, collectDatasets,
-                     &result) >= 0, "Cannot enumerate HDF5 datasets");
+                     &result
+#if defined(H5Ovisit_vers) && H5Ovisit_vers > 1
+                     // Newer HDF5 APIs require an explicit metadata selection.
+                     , H5O_INFO_BASIC
+#endif
+                     ) >= 0, "Cannot enumerate HDF5 datasets");
     return result;
   }
 
