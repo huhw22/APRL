@@ -1,9 +1,11 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <mpi.h>
@@ -17,6 +19,79 @@ namespace
   void require(bool condition, const std::string& message)
   {
     if (!condition) throw std::runtime_error(message);
+  }
+
+  void requireZero(const aprl::YeeComponent& component)
+  {
+    for (std::size_t index = 0; index < component.size(); ++index)
+      require(component.data()[index] == 0.0 &&
+              !std::signbit(component.data()[index]),
+        "Yee storage was not initialized to positive zero");
+  }
+
+  void componentStorage(int provided, int threads)
+  {
+    aprl::configureComputeThreads(provided, threads);
+    aprl::YeeComponent component(19, 23, 29);
+    require(component.nx() == 19 && component.ny() == 23 &&
+            component.nz() == 29 && component.size() == 19 * 23 * 29,
+      "Yee component shape was not preserved");
+    requireZero(component);
+    component.fill(3.5);
+    component.resize(7, 11, 13);
+    require(component.nx() == 7 && component.ny() == 11 &&
+            component.nz() == 13 && component.size() == 7 * 11 * 13,
+      "Yee component resize has an incorrect shape");
+    requireZero(component);
+
+    component(2, 3, 4) = -7.25;
+    aprl::YeeComponent copied(component);
+    component(2, 3, 4) = 1.25;
+    require(copied(2, 3, 4) == -7.25,
+      "Yee component copy construction did not preserve independent data");
+    aprl::YeeComponent assigned;
+    assigned = copied;
+    copied(2, 3, 4) = 4.5;
+    require(assigned(2, 3, 4) == -7.25,
+      "Yee component copy assignment did not preserve independent data");
+    aprl::YeeComponent moved(std::move(assigned));
+    require(moved.nx() == 7 && moved.ny() == 11 && moved.nz() == 13 &&
+            moved.size() == 7 * 11 * 13 && moved(2, 3, 4) == -7.25,
+      "Yee component move construction lost shape or values");
+    assigned.resize(3, 5, 7);
+    requireZero(assigned);
+    assigned = std::move(moved);
+    require(assigned.nx() == 7 && assigned.ny() == 11 &&
+            assigned.nz() == 13 && assigned.size() == 7 * 11 * 13 &&
+            assigned(2, 3, 4) == -7.25,
+      "Yee component move assignment lost shape or values");
+
+    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
+    const std::size_t invalid[][3] = {
+      {maximum, 2, 1}, {2, 2, maximum}, {maximum, 1, 1}
+    };
+    for (std::size_t trial = 0; trial < 3; ++trial)
+      {
+        bool rejected = false;
+        try { component.resize(invalid[trial][0], invalid[trial][1],
+                               invalid[trial][2]); }
+        catch (const std::exception&) { rejected = true; }
+        require(rejected, "An impossible Yee component size was accepted");
+        require(component.nx() == 7 && component.ny() == 11 &&
+                component.nz() == 13 && component.size() == 7 * 11 * 13 &&
+                component(2, 3, 4) == 1.25,
+          "A failed Yee resize changed the existing shape or values");
+      }
+
+    component.resize(7, 11, 13);
+    requireZero(component);
+    component.resize(19, 23, 29);
+    requireZero(component);
+    component.resize(0, 5, 3);
+    require(component.nx() == 0 && component.ny() == 5 &&
+            component.nz() == 3 && component.size() == 0 &&
+            component.data() == 0,
+      "An empty Yee component has invalid shape or storage");
   }
 
   std::vector<aprl::YeeComponent*> components(aprl::EBFieldGrid& fields)
@@ -156,16 +231,19 @@ int main(int argc, char** argv)
             }
           const int maximum = aprl::computeThreadingAvailable() ? 4 : 1;
           for (int threads = 1; threads <= maximum; threads *= 2)
-            for (unsigned int solver = 0; solver < 2; ++solver)
-              for (unsigned int boundary = 0; boundary < 2; ++boundary)
-                {
-                  compare(provided, threads, solver == 0 ?
-                    aprl::EBMaxwellSolver::Yee : aprl::EBMaxwellSolver::CowanZ,
-                    boundary != 0, false);
-                  if (solver == 1)
-                    compare(provided, threads, aprl::EBMaxwellSolver::CowanZ,
-                      boundary != 0, true);
-                }
+            {
+              componentStorage(provided, threads);
+              for (unsigned int solver = 0; solver < 2; ++solver)
+                for (unsigned int boundary = 0; boundary < 2; ++boundary)
+                  {
+                    compare(provided, threads, solver == 0 ?
+                      aprl::EBMaxwellSolver::Yee : aprl::EBMaxwellSolver::CowanZ,
+                      boundary != 0, false);
+                    if (solver == 1)
+                      compare(provided, threads, aprl::EBMaxwellSolver::CowanZ,
+                        boundary != 0, true);
+                  }
+            }
 #ifdef DIRECT_EB_BOUNDS_CHECK
           aprl::YeeComponent checked(2, 3, 4);
           bool boundsRejected = false;

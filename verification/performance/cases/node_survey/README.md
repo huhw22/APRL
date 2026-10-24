@@ -1,5 +1,20 @@
 # gnode1 CPU 小测试的运行前检查
 
+## 2026-10-25 固定 MPI 优化的必需回归
+
+用户已明确授权 gnode1 上受控 CPU 测试。`run_required.sh BUILD NEW_RESULT`
+用于独立新构建的 required 回归：只允许 gnode1、显式授权环境变量，
+共享 CPU 标定锁，先检查 4×4 绑定，再串行运行 CTest，整体限时20分钟。
+测试目录必须全新，不复用已运行构建；失败停止并保留日志。
+该脚本不修改生产程序、不绕过 Slurm 变量检查、不设置 MPI 网络参数。
+
+新构建须启用 `BUILD_TESTING`，使用 `/usr/bin/mpiexec`，并设置
+`MPIEXEC_PREFLAGS` 为
+`--host;gnode1:16;--map-by;slot:PE=2;--bind-to;core;--nooversubscribe`。
+现有 MPI 回归至多4个进程，每进程最多2线程；独立线程测试最多4线程。
+这些是功能回归所需布局，性能对照仍固定为4 MPI×4线程，入口见
+`../fixed_mpi_numa/README.md`。本段以下保留早期探针准备记录。
+
 2026-10-24（Asia/Shanghai）只读检查找到一台 `gnode1`，地址 `10.10.10.11`。用户随后说明可能只有这一台，不再假定存在 `gnode2`。
 
 已确认的环境：

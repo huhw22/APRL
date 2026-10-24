@@ -3,7 +3,9 @@
 
 #include <cstddef>
 #include <memory>
+#include <new>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 #include "boostframe.h"
@@ -85,6 +87,46 @@ namespace aprl
     EBElectricHaloView();
   };
 
+  namespace detail
+  {
+    /* Used only by YeeComponent: default construction starts each scalar's
+     * lifetime without writing it.  resize() fills every element before the
+     * storage is published, so its compute threads perform the first writes.
+     * Construction with a value remains normal for vector copy operations. */
+    template<typename T>
+    class YeeStorageAllocator : public std::allocator<T>
+    {
+    public:
+      template<typename U>
+      struct rebind { typedef YeeStorageAllocator<U> other; };
+
+      YeeStorageAllocator() noexcept {}
+      template<typename U>
+      YeeStorageAllocator(const YeeStorageAllocator<U>&) noexcept {}
+
+      template<typename U>
+      void construct(U* pointer)
+      { ::new (static_cast<void*>(pointer)) U; }
+
+      template<typename U, typename... Arguments>
+      void construct(U* pointer, Arguments&&... arguments)
+      {
+        ::new (static_cast<void*>(pointer))
+          U(std::forward<Arguments>(arguments)...);
+      }
+    };
+
+    template<typename T, typename U>
+    bool operator==(const YeeStorageAllocator<T>&,
+                    const YeeStorageAllocator<U>&) noexcept
+    { return true; }
+
+    template<typename T, typename U>
+    bool operator!=(const YeeStorageAllocator<T>&,
+                    const YeeStorageAllocator<U>&) noexcept
+    { return false; }
+  }
+
   /* A compact scalar component on a rectangular Yee lattice.  Components are
    * kept in separate contiguous arrays (SoA) so the hot curl loops stream only
    * the values they need.  x is the unit-stride dimension and a complete z
@@ -127,7 +169,8 @@ namespace aprl
     std::size_t nx_;
     std::size_t ny_;
     std::size_t nz_;
-    std::vector<Double> values_;
+    typedef std::vector<Double, detail::YeeStorageAllocator<Double> > Storage;
+    Storage values_;
   };
 
   struct RadiationFieldSample

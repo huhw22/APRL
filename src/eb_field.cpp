@@ -110,10 +110,29 @@ namespace aprl
     if (xy != 0 && nz > std::numeric_limits<std::size_t>::max() / xy)
       throw std::overflow_error("Yee component size overflows size_t");
 
+    const std::size_t count = xy * nz;
+    Storage replacement(count);
+    if (count != 0)
+      {
+        Double* const data = &replacement[0];
+        // Match the contiguous row partition used by the field updates.
+        // The allocator deliberately has not zero-filled these elements.
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel for collapse(2) schedule(static) \
+  if(computeThreadCount() > 1) num_threads(computeThreadCount())
+#endif
+        for (std::size_t k = 0; k < nz; ++k)
+          for (std::size_t j = 0; j < ny; ++j)
+            {
+              Double* const row = data + (k * ny + j) * nx;
+              std::fill(row, row + nx, 0.0);
+            }
+      }
+
+    values_.swap(replacement);
     nx_ = nx;
     ny_ = ny;
     nz_ = nz;
-    values_.assign(xy * nz, 0.0);
   }
 
   void YeeComponent::fill(Double value)
