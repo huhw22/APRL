@@ -19,9 +19,35 @@ grep -Fxq 'MPIEXEC_PREFLAGS:STRING=--host;gnode1:16;--map-by;slot:PE=2;--bind-to
 source "$workspace/cluster.env"
 exec 9>>"$workspace/results/node_survey/.cpu-calibration.lock"
 flock -n 9 || { echo 'Another CPU test holds the calibration lock' >&2; exit 2; }
-awk '{exit !($1 <= 2)}' /proc/loadavg || {
-  echo 'gnode1 has nontrivial load; inspect resources before starting regression' >&2; exit 2;
-}
+required_resource_snapshot=$("$PYTHON_BIN" - <<'PY'
+import json
+import os
+from pathlib import Path
+import time
+active = []
+for entry in Path('/proc').iterdir():
+    if not entry.name.isdigit():
+        continue
+    try:
+        name = Path(os.fsdecode((entry / 'cmdline').read_bytes().split(b'\0')[0])).name
+        if name in ('aprl', 'mpirun', 'mpiexec', 'orted'):
+            active.append({'pid': int(entry.name), 'executable': name})
+    except (OSError, ValueError):
+        continue
+def counters():
+    values = list(map(int, Path('/proc/stat').read_text().splitlines()[0].split()[1:9]))
+    return sum(values), values[3]
+before, idle_before = counters()
+time.sleep(2)
+after, idle_after = counters()
+fraction = (idle_after - idle_before) / (after - before) if after > before else 0
+snapshot = {'loadavg': os.getloadavg(), 'cpu_idle_fraction': fraction,
+            'sample_seconds': 2, 'compute_processes': active}
+if active or fraction < .95:
+    raise SystemExit('gnode1 has active work: ' + json.dumps(snapshot))
+print(json.dumps(snapshot))
+PY
+)
 mkdir "$result_dir"
 mkdir "$build_dir/.gnode1-required-started"
 finish() {
@@ -49,6 +75,7 @@ hostname
 lscpu --parse=CPU,CORE,SOCKET,NODE,ONLINE > "$result_dir/cpu-topology.csv"
 sha256sum "$build_dir/aprl" "$build_dir/CMakeCache.txt" > "$result_dir/build.sha256"
 cp "$build_dir/CMakeCache.txt" "$result_dir/CMakeCache.txt"
+printf '%s\n' "$required_resource_snapshot" > "$result_dir/initial-resources.json"
 if [[ -d "$build_dir/runtime-libs" ]]; then
   # Optional build-local copies of libraries absent from gnode1; no system
   # installation or shared production runtime is changed.
