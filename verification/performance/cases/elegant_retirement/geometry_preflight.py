@@ -2,8 +2,9 @@
 """Stream the real v4 input on a Slurm node and size a held/retirement run.
 
 This is a kinematic planning check, not an evolved-orbit or radiation test.
-The extra dynamics delay is an explicit allowance. The production manifest,
-retirement completion counts, and saved field tail still need checking later.
+The stop uses a measured exit-cohort arrival projection, or an explicitly
+supplied dynamics model. No quiet tail or dynamics allowance is implicit.
+The production manifest and actual new-cohort arrival coverage need checking.
 No particle subset or modified particle file is produced.
 """
 
@@ -120,12 +121,34 @@ def analyze(args):
             raise ValueError(f"Historical common-time mismatch: {common_time_error:.6g} s")
         # The stop worldline is defined by the lab event (t=0, z_reference).
         # Eliminating the held frame origin gives this exact fixed-plane relation.
-        target_retarded = latest_exit_photon_retarded + (
-            args.dynamics_delay_fs + args.tail_margin_fs) * 1e-15
+        arrival_report = None
+        if args.arrival_report:
+            arrival_report = json.loads(Path(args.arrival_report).read_text())
+            if arrival_report.get("pass") is not True:
+                raise ValueError("Observed exit-arrival projection did not pass")
+            for key, expected in (("input_plane_z_m", z_input),
+                                  ("retirement_exit_z_m", z_exit),
+                                  ("detector_z_m", args.detector_z)):
+                if not math.isclose(arrival_report[key], expected, rel_tol=0, abs_tol=1e-12):
+                    raise ValueError(f"Arrival geometry mismatch: {key}")
+            target_signal = max(latest_exit_photon_retarded,
+                arrival_report.get("latest_aperture_envelope_retarded_relative_input_s",
+                                   arrival_report["latest_boundary_retarded_relative_input_s"]))
+            dynamics_delay_fs = (target_signal - latest_exit_photon_retarded) * 1e15
+        else:
+            if args.dynamics_delay_fs is None:
+                raise ValueError("Supply an observed arrival report or an explicit physical delay model")
+            dynamics_delay_fs = args.dynamics_delay_fs
+            target_signal = latest_exit_photon_retarded + dynamics_delay_fs * 1e-15
+        # One solver sample brackets the latest required arrival. This is a
+        # discrete sampling requirement, not a prescribed quiet radiation tail.
+        endpoint_sampling_s = args.endpoint_samples * args.dz / (C * gamma_b)
+        target_retarded = target_signal + args.tail_margin_fs * 1e-15 + endpoint_sampling_s
         minimum_stop_z = z_input + gamma_b**2 * (z_reference - z_input) + (
             gamma_b**2 * beta_b * C * target_retarded) + (
             beta_b / (1.0 + beta_b) * flight_to_detector)
-        stop_z = max(args.stop_z, math.ceil(minimum_stop_z / args.stop_rounding_m) * args.stop_rounding_m)
+        stop_z = max(args.stop_z, (math.ceil(minimum_stop_z / args.stop_rounding_m) * args.stop_rounding_m
+                                  if args.stop_rounding_m > 0 else minimum_stop_z))
         reference_at_box_zero = z_input + gamma_b**2 * (
             z_reference - z_input + beta_b * C * t_origin)
         stop_box = (stop_z - reference_at_box_zero) / (gamma_b * beta_b * C)
@@ -201,8 +224,8 @@ def analyze(args):
         args.minimum_photon_energy_ev * delay_factor_gamma)
     causal_distance = max_gamma * math.hypot(args.cells_x * args.dx, args.cells_y * args.dy)
     minimum_detector_z = z_exit + causal_distance + gamma_b * args.dz
-    tail_margin_actual_fs = (detector_stop_retarded - latest_exit_photon_retarded) * 1e15 - args.dynamics_delay_fs
-    latest_retirement_with_allowance = retirement_latest_box + gamma_b * args.dynamics_delay_fs * 1e-15
+    tail_margin_actual_fs = (detector_stop_retarded - target_signal) * 1e15
+    latest_retirement_with_allowance = retirement_latest_box + gamma_b * dynamics_delay_fs * 1e-15
     stat_after = input_path.stat()
     checks = {
         "input_unchanged": (stat_before.st_size, stat_before.st_mtime_ns) == (stat_after.st_size, stat_after.st_mtime_ns),
@@ -212,6 +235,7 @@ def analyze(args):
         "protected_cycles_sufficient": protected_cycles >= args.protection_cycles,
         "stop_after_detector": stop_z > args.detector_z + gamma_b * args.dz,
         "full_tail_margin": tail_margin_actual_fs >= args.tail_margin_fs - 1e-6,
+        "last_required_arrival_bracketed": detector_stop_retarded >= target_retarded - 1e-22,
         "retirement_complete_before_stop_kinematic_with_allowance": rounded_stop_box > latest_retirement_with_allowance,
         "detector_in_physical_mesh_entire_run": min(plane_end_margin_cells, plane_start_margin_cells) >= args.window_guard_cells - 1e-6,
         "held_ballistic_worldtube_in_physical_mesh": worldtube_min + translation >= physical_lower and worldtube_max + translation <= physical_upper,
@@ -258,7 +282,10 @@ def analyze(args):
             "latest_ballistic_retirement_photon_retarded_s": latest_exit_photon_retarded,
             "pre_head_photon_margin_fs": (minima["arrival"] - detector_first_retarded) * 1e15,
             "post_retirement_photon_tail_margin_fs_after_dynamics_allowance": tail_margin_actual_fs,
-            "tail_margin_requested_fs": args.tail_margin_fs, "dynamics_delay_allowance_fs": args.dynamics_delay_fs,
+            "tail_margin_requested_fs": args.tail_margin_fs,
+            "dynamics_delay_allowance_fs": dynamics_delay_fs,
+            "latest_required_signal_retarded_s": target_signal,
+            "endpoint_sampling_s": endpoint_sampling_s,
             "z_untranslated_at_start_stop_m": [detector_z_at_start, detector_z_at_stop],
             "physical_margin_cells_start_stop": [plane_start_margin_cells, plane_end_margin_cells]},
         "mesh_geometry": {"extent_z_m": extent_z, "physical_bounds_z_m": [physical_lower, physical_upper],
@@ -269,10 +296,15 @@ def analyze(args):
             "requested_cycles": args.protection_cycles, "observed_cycles": protected_cycles,
             "minimum_taper_length_m": required_taper_length, "causal_distance_m": causal_distance,
             "minimum_detector_z_m": minimum_detector_z},
+        "arrival_policy": {"observed_arrival_report": str(Path(args.arrival_report).resolve()) if args.arrival_report else None,
+            "source": "historical exit cohort plus retirement flight and independent full physical aperture path envelope" if arrival_report else "explicit dynamics model",
+            "quiet_tail_fs": args.tail_margin_fs, "endpoint_samples": args.endpoint_samples,
+            "new_trajectory_coverage_requires_completion_check": True},
         "assumptions": [
             "Fixed input and activation lab plane are identical; held pre-activation x/y exactly equal input x/y.",
             "The automatic layout is reproduced for cowan-z, zero self-field RMS padding, and the declared guards.",
-            "The tail design uses the latest free-drift retirement-exit photon plus an explicit dynamics-delay allowance and the requested quiet tail.",
+            "The endpoint uses the selected latest signal arrival, any explicitly requested quiet tail, and solver-sample bracketing.",
+            "Historical exit events contain evolved magnetic/self-field flight delays, but are not a strict bound on the new held-start trajectories.",
             "Kinematic bounds do not guarantee evolved magnetic/self-field trajectories; check final retired/completed counts and saved field tail.",
             "Projected transverse retirement counts use initial straight-line velocities and are diagnostic estimates, not evolved-particle losses.",
             "No zero-radiation comparison is scheduled or required by this geometry planner.",
@@ -298,14 +330,16 @@ def parser():
     p.add_argument("--detector-z", type=float, default=7.5)
     p.add_argument("--retirement-entrance-z", type=float, default=4.03)
     p.add_argument("--retirement-length", type=float, default=2.0)
-    p.add_argument("--stop-z", type=float, default=50.0, help="Candidate lower bound; extended if tail requires it")
-    p.add_argument("--stop-rounding-m", type=float, default=0.1)
-    p.add_argument("--tail-margin-fs", type=float, default=100.0)
-    p.add_argument("--dynamics-delay-fs", type=float, default=20.0)
+    p.add_argument("--stop-z", type=float, default=0.0, help="Candidate lower bound; extended to cover required arrivals")
+    p.add_argument("--stop-rounding-m", type=float, default=0.0)
+    p.add_argument("--tail-margin-fs", type=float, default=0.0)
+    p.add_argument("--dynamics-delay-fs", type=float)
+    p.add_argument("--arrival-report", type=Path)
+    p.add_argument("--endpoint-samples", type=int, default=1)
     p.add_argument("--window-guard-cells", type=int, default=64)
     p.add_argument("--minimum-lower-guard-cells", type=int, default=64)
     p.add_argument("--upper-guard-cells", type=int, default=128)
-    p.add_argument("--guard-alignment-cells", type=int, default=256)
+    p.add_argument("--guard-alignment-cells", type=int, default=1)
     p.add_argument("--mesh-alignment-cells", type=int, default=256)
     p.add_argument("--ballistic-time-safety-factor", type=float, default=1.1)
     p.add_argument("--duration", type=float, default=5e-10)
@@ -315,6 +349,7 @@ def parser():
 
 
 def self_test(args):
+    args.dynamics_delay_fs = 0.0
     with tempfile.TemporaryDirectory(prefix="aprl-retirement-geometry-fixture-") as directory:
         root = Path(directory)
         dtype = np.dtype([("plane_position_m", "f8", (2,)), ("arrival_time_offset_s", "f8"),
@@ -347,8 +382,30 @@ def self_test(args):
         reference_box_z = g * (plan["initial_center_z_m"] + 0.05) + g * b * C * t0
         endpoint_reference_z = -0.05 + g * reference_box_z + g * b * C * result["expected_stop_box_s"]
         assert math.isclose(endpoint_reference_z, result["stop_z_m"], abs_tol=1e-10)
-        assert result["detector_window"]["post_retirement_photon_tail_margin_fs_after_dynamics_allowance"] >= 100.0
+        assert result["detector_window"]["post_retirement_photon_tail_margin_fs_after_dynamics_allowance"] >= 0.0
         assert result["recommended_lower_guard_cells"] % args.guard_alignment_cells == 0
+        report_file = root / "observed-arrivals.json"
+        observed_target = result["detector_window"]["latest_ballistic_retirement_photon_retarded_s"] + 4e-15
+        report_file.write_text(json.dumps({"pass": True, "input_plane_z_m": -0.05,
+            "retirement_exit_z_m": args.retirement_entrance_z + args.retirement_length,
+            "detector_z_m": args.detector_z,
+            "latest_boundary_retarded_relative_input_s": observed_target}))
+        args.arrival_report, args.dynamics_delay_fs = report_file, None
+        observed = analyze(args)
+        assert observed["pass"], observed["checks"]
+        final_tau = observed["detector_window"]["last_retarded_time_relative_input_plane_s"]
+        assert final_tau > observed_target
+        assert final_tau - observed_target < 3 * args.dz / (C * args.boost_gamma)
+        assert observed["expected_maxwell_steps"] > result["expected_maxwell_steps"]
+        invalid = json.loads(report_file.read_text())
+        invalid["detector_z_m"] += 1.0
+        report_file.write_text(json.dumps(invalid))
+        try:
+            analyze(args)
+        except ValueError as error:
+            assert "Arrival geometry mismatch" in str(error)
+        else:
+            raise AssertionError("Mismatched arrival geometry was accepted")
         print("geometry self-test PASS", flush=True)
 
 
@@ -356,11 +413,18 @@ def main():
     p = parser()
     args = p.parse_args()
     for name in ("chunk_rows", "boost_gamma", "dx", "dy", "dz", "cells_x", "cells_y",
-                 "stop_rounding_m", "guard_alignment_cells", "mesh_alignment_cells", "duration"):
+                 "guard_alignment_cells", "mesh_alignment_cells", "duration", "endpoint_samples"):
         if not math.isfinite(getattr(args, name)) or getattr(args, name) <= 0:
             p.error(f"{name} must be finite and positive")
     if args.boost_gamma <= 1 or args.ballistic_time_safety_factor < 1:
         p.error("A moving relativistic boost and ballistic safety factor >= 1 are required")
+    for name in ("tail_margin_fs", "stop_rounding_m"):
+        if not math.isfinite(getattr(args, name)) or getattr(args, name) < 0:
+            p.error(f"{name} must be finite and nonnegative")
+    if args.dynamics_delay_fs is not None and (not math.isfinite(args.dynamics_delay_fs) or args.dynamics_delay_fs < 0):
+        p.error("Explicit dynamics delay must be finite and nonnegative")
+    if args.arrival_report and args.dynamics_delay_fs is not None:
+        p.error("Select either observed arrivals or an explicit dynamics delay, not both")
     if args.self_test:
         self_test(args)
         return

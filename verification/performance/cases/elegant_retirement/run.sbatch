@@ -44,7 +44,8 @@ srun --mpi="$SRUN_MPI" --cpu-bind=cores --kill-on-bad-exit=1 --wait=60 \
   /public/home/wfollowm/APRL_Workspace/build/cluster-tools/binding_probe 256 1 \
   > "$root/binding.log" 2>&1
 echo "Start $(date --iso-8601=seconds) job=$SLURM_JOB_ID"
+binary=$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1]))["binary"])' "$root/run-plan.json")
 srun --mpi="$SRUN_MPI" --cpu-bind=cores --kill-on-bad-exit=1 --wait=300 \
-  "$APRL_CANDIDATE" "$root/run.yaml" > "$root/aprl.log" 2>&1
+  "$binary" "$root/run.yaml" > "$root/aprl.log" 2>&1
 "$PYTHON_BIN" "$root/scripts/check_completion.py" "$root"
 echo "Finished $(date --iso-8601=seconds)"

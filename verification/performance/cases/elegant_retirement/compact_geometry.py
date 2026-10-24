@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Place a shortened retirement detector at the existing causal-guard floor."""
+"""Size a compact retirement run from observed exit events and geometric delays."""
 import argparse
 import json
 import math
@@ -42,12 +42,26 @@ policy = dict(retirement_entrance_z_m=entrance,
               required_clearance_cells=1, configured_clearance_cells=2,
               stop_floor_z_m=stop_floor,
               protected_minimum_photon_energy_eV=50.0, protected_cycles=2,
-              retained_tail_margin_fs=100.0, retained_dynamics_allowance_fs=20.0,
-              rationale="Shorten the taper and move the detector to the existing causal guard plus one numerical cell; keep the previous tail-coverage policy.")
+              quiet_tail_fs=0.0, arbitrary_dynamics_allowance_fs=0.0,
+              lower_guard_base_cells=64, upper_guard_base_cells=128,
+              guard_alignment_cells=1, mesh_alignment_cells=256,
+              endpoint_bracketing_samples=1,
+              rationale="Keep original causal/frequency protection and left anchoring. Determine the last required signal from historical evolved exit events, retirement flight, and direct travel to the full physical detector aperture; add one sampling interval, no quiet tail.")
 policy_file = out / "geometry-policy.json"
 if policy_file.exists() or (out / "geometry.json").exists():
     raise ValueError("Refusing to overwrite a geometry plan")
 policy_file.write_text(json.dumps(policy, indent=2) + "\n")
+arrival_report = out / "arrival-projection.json"
+boundary = card["boundary"]["cells"]
+subprocess.run([
+    sys.executable, str(Path(__file__).resolve().with_name("observed_arrival.py")),
+    "--workspace", str(w), "--output", str(arrival_report),
+    "--retirement-exit-z", repr(entrance + args.retirement_length),
+    "--detector-z", repr(detector),
+    "--physical-half-x", repr((mesh["cells"][0] / 2 - boundary[0]) * mesh["cell_size"][0]),
+    "--physical-half-y", repr((mesh["cells"][1] / 2 - boundary[1]) * mesh["cell_size"][1]),
+    "--dx", repr(mesh["cell_size"][0]), "--dy", repr(mesh["cell_size"][1]),
+], check=True)
 command = [
     sys.executable, str(Path(__file__).resolve().with_name("geometry_preflight.py")),
     "--input-file", str(original / "particles.h5"),
@@ -56,7 +70,10 @@ command = [
     "--retirement-entrance-z", repr(entrance),
     "--retirement-length", repr(args.retirement_length),
     "--detector-z", repr(detector), "--stop-z", repr(stop_floor),
-    "--tail-margin-fs", "100", "--dynamics-delay-fs", "20",
+    "--tail-margin-fs", "0", "--arrival-report", str(arrival_report),
+    "--minimum-lower-guard-cells", "64", "--upper-guard-cells", "128",
+    "--guard-alignment-cells", "1", "--mesh-alignment-cells", "256",
+    "--stop-rounding-m", "0", "--endpoint-samples", "1",
 ]
 print(json.dumps(policy, indent=2), flush=True)
 subprocess.run(command, check=True)

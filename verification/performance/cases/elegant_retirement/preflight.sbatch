@@ -26,10 +26,9 @@ scontrol show job "$SLURM_JOB_ID" > "$root/allocation.txt"
 step=(srun --mpi="$SRUN_MPI" --exact --nodes=2 --ntasks=256 --ntasks-per-node=128 --cpus-per-task=1 --cpu-bind=verbose,cores --kill-on-bad-exit=1)
 timeout --signal=TERM --kill-after=30 120 "${step[@]}" "$workspace/build/cluster-tools/binding_probe" 256 1 > "$root/binding.log" 2>&1
 srun --mpi=none --exact --nodes=1 --ntasks=1 --cpus-per-task=1 --cpu-bind=cores --kill-on-bad-exit=1 \
-  "$PYTHON_BIN" "$scripts/geometry_preflight.py" \
-  --input-file "$workspace/results/elegant_4m_analysis_20261024/original/particles.h5" \
-  --historical-plan "$workspace/results/elegant_4m_analysis_20261024/original/runs/20261021T070618Z-861230/input-plan.json" \
-  --output "$root/geometry.json" > "$root/geometry.log" 2>&1
+  "$PYTHON_BIN" "$scripts/compact_geometry.py" \
+  --workspace "$workspace" --output-dir "$root" \
+  --retirement-length 0.3 > "$root/geometry.log" 2>&1
 "$PYTHON_BIN" "$scripts/preflight.py" prepare --root "$root" --binary "$APRL_CANDIDATE" > "$root/prepare.log" 2>&1
 timeout --signal=TERM --kill-after=30 600 "${step[@]}" "$APRL_CANDIDATE" "$root/functional/run.yaml" > "$root/functional/aprl.log" 2>&1
 "$PYTHON_BIN" "$scripts/preflight.py" check --root "$root" --binary "$APRL_CANDIDATE" > "$root/check.log" 2>&1

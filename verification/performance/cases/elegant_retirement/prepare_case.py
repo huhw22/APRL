@@ -36,6 +36,9 @@ def main():
     g = json.loads(args.geometry.read_text())
     if not g["pass"] or g["initial_outside_physical_count"] != 0:
         raise ValueError("Full-input geometry preflight must pass with all initial particles inside")
+    policy = g.get("arrival_policy", {})
+    if not policy.get("observed_arrival_report") or policy.get("quiet_tail_fs") != 0:
+        raise ValueError("Compact production requires observed arrival coverage with no arbitrary quiet tail")
     if not (args.preflight_result / "PASS").is_file():
         raise ValueError("Completed MPI/retirement functional preflight is required")
     binary = w / "build/candidate/aprl"
@@ -82,9 +85,11 @@ def main():
     root.mkdir(parents=True)
     (root / "scripts").mkdir()
     here = Path(__file__).resolve().parent
-    for name in ("prepare_case.py", "run.sbatch", "check_completion.py", "geometry_preflight.py"):
+    for name in ("prepare_case.py", "run.sbatch", "check_completion.py", "geometry_preflight.py",
+                 "compact_geometry.py", "observed_arrival.py"):
         shutil.copy2(here / name, root / "scripts" / name)
     shutil.copy2(args.geometry, root / "geometry-preflight.json")
+    shutil.copy2(policy["observed_arrival_report"], root / "arrival-projection.json")
     shutil.copy2(historical, root / "historical-run.yaml")
     (root / "run.yaml").write_text(yaml.safe_dump(card, sort_keys=False))
     copy_manifest = json.loads((original.parent / "copy-manifest.json").read_text())
@@ -104,12 +109,13 @@ def main():
             "Enable the existing C2 retirement layer after the undulator.",
             "Disable analytic particle-background recording.",
             "Move the fixed lab field plane downstream of retirement and its causal clearance.",
-            "Use reference-center-z stop and the geometry-checked longitudinal guards to retain the trailing window.",
+            "Use observed exit-event arrivals plus retirement and finite-aperture propagation to set the physical stop; no arbitrary quiet tail or dynamics allowance.",
+            "Restore the original 64/128 guard floor and left anchoring; align only the total mesh to 256 cells.",
             "Use existing held frozen-plane startup; disable incompatible transverse ballistic injection and CPML initial sources.",
             "Replace the old ballistic-reference particle record with an ordinary pre-retirement plane two lab-equivalent cells before the retirement entrance.",
             "Use the accepted optimized executable; keep the historical beam, charge, transverse mesh, dz, boost, magnetic device, subcycling and sampling cadence."])
     (root / "run-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
-    files = [root / "run.yaml", root / "run-plan.json", root / "geometry-preflight.json",
+    files = [root / "run.yaml", root / "run-plan.json", root / "geometry-preflight.json", root / "arrival-projection.json",
              *sorted((root / "scripts").iterdir()), binary, w / "build/cluster-tools/binding_probe"]
     (root / "frozen.sha256").write_text("".join(f"{sha(f)}  {f}\n" for f in files))
     print(root)

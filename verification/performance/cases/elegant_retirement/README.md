@@ -39,18 +39,41 @@ nodes, 256 MPI ranks, one thread per rank, and a 144-hour limit. The script chec
 the input SHA256, frozen configuration and binary, and binding before launching.
 It does not submit any control, parameter scan or postprocessing job.
 
-completion-check.json only certifies a configured stop and complete output
-transactions. Particle accounting, detector-window coverage and radiation
-interpretation still require subsequent review. For this request, confirm normal
-startup and leave the long job running until the user asks to inspect it.
+The completion check verifies output transactions, program/mesh identity,
+activation and retirement accounting, and direct-path arrival coverage from the
+new run's pre-retirement particle records. Radiation interpretation still needs
+subsequent review. For this request, confirm normal startup and leave the long
+job running until the user asks to inspect it.
 
 For the user's subsequent 0.3 m replacement, compact-geometry.sbatch runs
 compact_geometry.py and the complete-input geometry check using one CPU on an
 exclusive node. The detector is retirement exit plus the original gamma times
 full transverse diagonal clearance plus two lab-equivalent z cells: one required
 by the original guard, one numerical margin. The old 7.5 m detector and 50 m
-stop floor are not retained. The existing 100 fs tail and 20 fs dynamics allowance
-are retained, so moving the plane does not silently trim the recorded pulse.
-Reuse the successful 18254 functional/binding preflight; no second long run or
-new physics scan is required. Preserve the cancelled 2 m run in its old directory
-and prepare the replacement in a new directory.
+stop floor are not retained.
+
+The former 100 fs quiet tail and 20 fs dynamics allowance are withdrawn. They
+forced the moving laboratory detector far beyond the initial bunch's left end,
+expanded the left guard from 64 to 18688 cells, and defeated the original compact
+left-anchored layout. Keep dz and boost unchanged, use the original 64/128 guard
+floor, and align only total Nz to 256. Do not round each guard to 256.
+
+`observed_arrival.py` streams the complete historical 4.03 m exit cohort, uses
+its evolved laboratory crossing times and momenta, propagates the carriers to
+the 4.33 m retirement exit, and computes the farthest direct path to the physical
+detector aperture. It also combines the latest retirement time with the
+independent opposite-corner source/detector aperture bound, covering a changed
+transverse distribution within the physical aperture. Keep any later projected
+out-of-aperture particle in the bound. The endpoint uses the later of this
+observed-cohort envelope and the input free-drift prediction, plus one solver/detector sample for discrete
+bracketing. No fixed quiet tail or decimal reference-stop padding is added.
+The historical startup differs from the new held startup, so this is a
+data-backed planning estimate, not a rigorous bound on new self-consistent
+trajectories; completion must check the actual new exit-cohort coverage.
+
+`preflight.sbatch` now performs this compact geometry scan and the independent
+512-particle held/retirement functionality test on the selected two-node layout.
+The small functional test's internal post-retirement check does not set any
+production window. Preserve all cancelled runs and prepare one new production
+directory only after this preflight passes. There is no K=0 control or additional
+old-version timing run.
