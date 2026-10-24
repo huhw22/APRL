@@ -27,6 +27,9 @@ mkdir "$build_dir/.gnode1-required-started"
 finish() {
   code=$?
   trap - EXIT
+  if [[ -d "$build_dir/Testing" ]]; then
+    cp -a "$build_dir/Testing" "$result_dir/Testing" || code=1
+  fi
   printf '%s\n' "$code" > "$result_dir/EXIT_CODE"
   if (( code == 0 )); then
     printf 'All registered required tests passed on gnode1\n' > "$result_dir/PASS"
@@ -46,6 +49,40 @@ hostname
 lscpu --parse=CPU,CORE,SOCKET,NODE,ONLINE > "$result_dir/cpu-topology.csv"
 sha256sum "$build_dir/aprl" "$build_dir/CMakeCache.txt" > "$result_dir/build.sha256"
 cp "$build_dir/CMakeCache.txt" "$result_dir/CMakeCache.txt"
+if [[ -d "$build_dir/runtime-libs" ]]; then
+  # Optional build-local copies of libraries absent from gnode1; no system
+  # installation or shared production runtime is changed.
+  export LD_LIBRARY_PATH="$build_dir/runtime-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  sha256sum "$build_dir/runtime-libs/"*.so* > "$result_dir/runtime-libs.sha256"
+fi
+# A loader failure must not accidentally satisfy a WILL_FAIL negative test.
+"$PYTHON_BIN" - "$build_dir" "$result_dir/runtime-links.txt" <<'PY'
+from pathlib import Path
+import os
+import subprocess
+import sys
+root = Path(sys.argv[1])
+executables = [root / name for name in
+    ('aprl', 'particle_text_to_hdf5', 'uniform_lab_plane_bunch_generator',
+     'sase_bunch_generator')]
+executables += list((root / 'verification').glob('aprl_*'))
+executables += [root / 'postprocess' / name / name for name in
+    ('field_reconstruction', 'field_plane_analysis', 'field_power_compare',
+     'trajectory_radiation', 'energy_closure')]
+failed = []
+with open(sys.argv[2], 'w') as record:
+    for executable in executables:
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            raise SystemExit('Missing required executable: ' + str(executable))
+        result = subprocess.run(['ldd', '-r', str(executable)],
+                                text=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT)
+        record.write(str(executable) + '\n' + result.stdout + '\n')
+        if result.returncode or 'not found' in result.stdout or 'undefined symbol' in result.stdout:
+            failed.append(str(executable))
+if failed:
+    raise SystemExit('Runtime dependency preflight failed: ' + ', '.join(failed))
+PY
 OMP_NUM_THREADS=4 timeout --signal=TERM --kill-after=10 60 \
   mpirun --host gnode1:16 -np 4 --map-by slot:PE=4 --bind-to core \
   --nooversubscribe --report-bindings \
@@ -55,5 +92,4 @@ grep -q '^\[binding\] result=PASS failures=0' "$result_dir/binding.log"
 # to four threads; MPI tests use the explicit CPU mapping recorded in its cache.
 timeout --signal=TERM --kill-after=20 1200 taskset -c 0-15 \
   ctest --test-dir "$build_dir" -L required -j 1 --stop-on-failure --no-tests=error --output-on-failure
-cp -a "$build_dir/Testing" "$result_dir/Testing"
 date --iso-8601=seconds

@@ -70,6 +70,33 @@ def build_metadata(binary):
                 selected={key: values[key] for key in CACHE_KEYS})
 
 
+def required_evidence(pass_file, trial):
+    """Tie successful required checks to this exact executable, not a marker alone."""
+    exit_file = pass_file.parent / 'EXIT_CODE'
+    hashes_file = pass_file.parent / 'build.sha256'
+    for file in (pass_file, exit_file, hashes_file):
+        if not file.is_file():
+            raise ValueError('Required-regression evidence is missing: ' + str(file))
+    if exit_file.read_text().strip() != '0':
+        raise ValueError('Required-regression EXIT_CODE is not zero')
+    if (pass_file.parent / 'FAIL').exists():
+        raise ValueError('Required-regression directory contains a FAIL marker')
+    matches = []
+    for line in hashes_file.read_text().splitlines():
+        match = re.fullmatch(r'([0-9a-f]{64}) [ *](.+)', line)
+        if not match or not Path(match[2]).is_absolute():
+            raise ValueError('Malformed or non-absolute required build.sha256 record')
+        if match[2] == str(trial):
+            matches.append(match[1])
+    if len(matches) != 1:
+        raise ValueError('Required build.sha256 must contain exactly one absolute trial executable record')
+    if matches[0] != digest(trial):
+        raise ValueError('Required-regression trial executable SHA256 mismatch')
+    files = {str(file): digest(file) for file in (pass_file, exit_file, hashes_file)}
+    return dict(pass_path=str(pass_file), sha256=files[str(pass_file)],
+                trial_path=str(trial), trial_sha256=matches[0], files=files)
+
+
 def paired_order(case_names, repeat):
     cases = list(case_names)
     random.Random(SEED + repeat).shuffle(cases)
@@ -98,8 +125,7 @@ def prepare(args):
             metadata['control']['selected']['APRL_REQUIRE_PARALLEL_HDF5'] != 'ON':
         raise ValueError('OpenMP and required parallel HDF5 must remain enabled')
     required_pass = args.required_pass.resolve()
-    if not required_pass.is_file():
-        raise ValueError('Required-regression PASS evidence is missing: ' + str(required_pass))
+    required = required_evidence(required_pass, trial)
     source = args.source_campaign.resolve()
     source_plan = json.loads((source / 'plan.json').read_text())
     source_frozen = json.loads((source / 'frozen.json').read_text())
@@ -138,7 +164,7 @@ def prepare(args):
     plan = dict(format='aprl-fixed-mpi-numa-plan-v1', workspace=str(workspace), root=str(root),
                 prepared_at=datetime.now(timezone.utc).isoformat(),
                 source_campaign=str(source), binaries=binaries,
-                required_regression=dict(pass_path=str(required_pass), sha256=digest(required_pass)),
+                required_regression=required,
                 binding_probe=str(probe), binding_probe_sha256=digest(probe),
                 layout=dict(ranks=4, threads=4, placement='compact', cpus=16),
                 expected_host='gnode1', physical_core_budget=16, smt_workers=False,
@@ -155,7 +181,7 @@ def prepare(args):
                         'Communication stages include waiting; nested stage times and rank maxima are not additive.'])
     save(root / 'plan.json', plan)
     frozen = [root / 'plan.json', *sorted(scripts.iterdir()), *sorted(cards.iterdir()),
-              control, trial, probe, required_pass,
+              control, trial, probe, *[Path(file) for file in required['files']],
               *[Path(value['cache']) for value in metadata.values()]]
     save(root / 'frozen.json', {str(file): digest(file) for file in frozen})
     print(json.dumps(dict(prepared=str(root), layout='4 MPI x 4 threads',
@@ -281,8 +307,9 @@ class Campaign(memory.Campaign):
 
     def pilot(self):
         required = self.plan['required_regression']
-        if not Path(required['pass_path']).is_file() or digest(required['pass_path']) != required['sha256']:
-            raise ValueError('Required-regression PASS evidence changed or disappeared')
+        actual = required_evidence(Path(required['pass_path']), Path(self.plan['binaries']['trial']['path']))
+        if actual != required:
+            raise ValueError('Required-regression evidence changed or disappeared')
         if (self.root / 'PILOT_PASS').exists():
             return
         self.binding()
@@ -410,8 +437,12 @@ def self_test(workspace):
         trial_build = temporary / 'trial-build'; trial_build.mkdir()
         for filename in ('aprl', 'CMakeCache.txt'):
             shutil.copy2(workspace / 'build/candidate' / filename, trial_build / filename)
-        evidence = temporary / 'metadata-only-PASS'
+        required_dir = temporary / 'metadata-only-required'; required_dir.mkdir()
+        evidence = required_dir / 'PASS'
         evidence.write_text('Metadata-only fixture, not a scientific test result.\n')
+        (required_dir / 'EXIT_CODE').write_text('0\n')
+        (required_dir / 'build.sha256').write_text(
+            digest(trial_build / 'aprl') + '  ' + str(trial_build / 'aprl') + '\n')
         args = argparse.Namespace(workspace=workspace, root=temporary / 'prepared',
                                   control=workspace / 'build/candidate/aprl',
                                   trial=trial_build / 'aprl', trial_revision=CONTROL_REVISION,
@@ -433,6 +464,27 @@ def self_test(workspace):
             pass
         else:
             raise AssertionError('Changed frozen card was accepted')
+        evidence_hashes = required_dir / 'build.sha256'
+        good_hashes = evidence_hashes.read_text()
+        evidence_hashes.write_text('0' * 64 + '  ' + str(trial_build / 'aprl') + '\n')
+        args.root = temporary / 'wrong-required-binary'
+        try:
+            prepare(args)
+        except ValueError as error:
+            assert 'SHA256 mismatch' in str(error)
+        else:
+            raise AssertionError('Required evidence for a different binary was accepted')
+        evidence_hashes.write_text(good_hashes)
+        exit_file = required_dir / 'EXIT_CODE'
+        exit_file.write_text('8\n')
+        args.root = temporary / 'failed-required-suite'
+        try:
+            prepare(args)
+        except ValueError as error:
+            assert 'EXIT_CODE is not zero' in str(error)
+        else:
+            raise AssertionError('Failed required suite was accepted')
+        exit_file.write_text('0\n')
         cache = trial_build / 'CMakeCache.txt'
         cache.write_text(cache.read_text().replace('CMAKE_CXX_FLAGS:STRING=', 'CMAKE_CXX_FLAGS:STRING=-ffast-math '))
         args.root = temporary / 'different-toolchain'
@@ -442,7 +494,7 @@ def self_test(workspace):
             assert 'toolchain differs' in str(error)
         else:
             raise AssertionError('Changed compiler flags were accepted')
-    print('Self-test PASS: fixed 4x4 command, paired ordering, exact card copying, frozen-card and toolchain mismatch rejection; no compute launched.')
+    print('Self-test PASS: fixed 4x4 command, paired ordering, exact card copying, frozen-card, required-binary SHA/exit-code, and toolchain mismatch rejection; no compute launched.')
 
 
 def main():

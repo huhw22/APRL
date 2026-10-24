@@ -16,7 +16,7 @@ Preparation is metadata-only and can run on the login node. Supply the full revi
   --required-pass /public/home/wfollowm/APRL_Workspace/results/REQUIRED_REGRESSION/PASS
 ```
 
-The trial must first pass the required correctness suite. `--required-pass` names that completed suite's PASS evidence; preparation freezes it and pilot entry rechecks it. The operator must retain the trial identity and test results alongside that evidence.
+The trial must first pass the required correctness suite. `--required-pass` names that completed suite's PASS evidence. Its directory must also contain `EXIT_CODE` equal to zero and `build.sha256` with exactly one absolute-path entry for the current trial executable whose SHA256 matches. A `FAIL` marker rejects the evidence. Preparation freezes all three evidence files, and pilot entry rechecks the successful exit and exact executable identity. Keep the full required-test logs in the same directory.
 
 Control defaults to `build/candidate/aprl` and must match the accepted SHA256. Both builds must have identical recorded compiler, Release flags, MPI, parallel HDF5, and OpenMP selections in their CMake caches. Cards, scripts, probe and executables are SHA256-frozen. Each actual manifest must confirm its own compiled revision, mesh and four ranks, and each runtime must report four threads.
 
