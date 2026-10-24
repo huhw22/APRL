@@ -1,4 +1,9 @@
-# Fixed-MPI NUMA implementation check
+# Fixed-MPI implementation check
+
+The directory name records the initial NUMA experiment. The same frozen-card
+protocol also supports an isolated field-kernel trial via `--trial`; give each
+implementation a separate build and result directory. Do not combine changes
+when attributing a speedup to one implementation.
 
 This experiment keeps **4 MPI processes × 4 OpenMP threads** on gnode1's 16 physical cores for every measured simulation. Each rank spans two NUMA domains. It compares the currently accepted optimized executable with a separate trial build; it never changes rank counts, precision, cards, production inputs, or the production executable.
 

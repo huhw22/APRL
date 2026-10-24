@@ -110,29 +110,10 @@ namespace aprl
     if (xy != 0 && nz > std::numeric_limits<std::size_t>::max() / xy)
       throw std::overflow_error("Yee component size overflows size_t");
 
-    const std::size_t count = xy * nz;
-    Storage replacement(count);
-    if (count != 0)
-      {
-        Double* const data = &replacement[0];
-        // Match the contiguous row partition used by the field updates.
-        // The allocator deliberately has not zero-filled these elements.
-#ifdef APRL_HAS_OPENMP
-#pragma omp parallel for collapse(2) schedule(static) \
-  if(computeThreadCount() > 1) num_threads(computeThreadCount())
-#endif
-        for (std::size_t k = 0; k < nz; ++k)
-          for (std::size_t j = 0; j < ny; ++j)
-            {
-              Double* const row = data + (k * ny + j) * nx;
-              std::fill(row, row + nx, 0.0);
-            }
-      }
-
-    values_.swap(replacement);
     nx_ = nx;
     ny_ = ny;
     nz_ = nz;
+    values_.assign(xy * nz, 0.0);
   }
 
   void YeeComponent::fill(Double value)
@@ -436,6 +417,39 @@ namespace aprl
     const unsigned int transverseB = (derivativeAxis + 2) % 3;
     const Double delta = derivativeAxis == 0 ? cowan_.deltaYZ :
       (derivativeAxis == 1 ? cowan_.deltaZX : cowan_.deltaXY);
+
+    // A complete one-cell margin proves that all nine samples are local.
+    // Test the actual source-component coordinates, including any derivative
+    // shift supplied by the caller.  Edge samples retain the halo/PEC path.
+    if (i > 0 && i < static_cast<std::ptrdiff_t>(component.nx()) - 1 &&
+        j > 0 && j < static_cast<std::ptrdiff_t>(component.ny()) - 1 &&
+        k > 0 && k < static_cast<std::ptrdiff_t>(component.nz()) - 1)
+      {
+        const std::ptrdiff_t stride[3] = {
+          1,
+          static_cast<std::ptrdiff_t>(component.nx()),
+          static_cast<std::ptrdiff_t>(component.nx() * component.ny())
+        };
+        const std::ptrdiff_t offsetA = stride[transverseA];
+        const std::ptrdiff_t offsetB = stride[transverseB];
+        const Double* const centre = component.data() +
+          (static_cast<std::size_t>(k) * component.ny() +
+           static_cast<std::size_t>(j)) * component.nx() +
+          static_cast<std::size_t>(i);
+        Double result = cowan_.alpha[derivativeAxis] * centre[0];
+        // Keep the original accumulation order; no stencil reassociation.
+        for (int direction = -1; direction <= 1; direction += 2)
+          {
+            result += cowan_.beta[transverseA] * centre[direction * offsetA];
+            result += cowan_.beta[transverseB] * centre[direction * offsetB];
+          }
+        for (int directionA = -1; directionA <= 1; directionA += 2)
+          for (int directionB = -1; directionB <= 1; directionB += 2)
+            result += delta * centre[
+              directionA * offsetA + directionB * offsetB];
+        return result;
+      }
+
     std::ptrdiff_t base[3] = {i, j, k};
     Double result = cowan_.alpha[derivativeAxis] *
       electricValue(component, componentAxis, i, j, k, halo);

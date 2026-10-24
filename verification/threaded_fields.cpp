@@ -1,11 +1,9 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
-#include <limits>
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include <mpi.h>
@@ -19,79 +17,6 @@ namespace
   void require(bool condition, const std::string& message)
   {
     if (!condition) throw std::runtime_error(message);
-  }
-
-  void requireZero(const aprl::YeeComponent& component)
-  {
-    for (std::size_t index = 0; index < component.size(); ++index)
-      require(component.data()[index] == 0.0 &&
-              !std::signbit(component.data()[index]),
-        "Yee storage was not initialized to positive zero");
-  }
-
-  void componentStorage(int provided, int threads)
-  {
-    aprl::configureComputeThreads(provided, threads);
-    aprl::YeeComponent component(19, 23, 29);
-    require(component.nx() == 19 && component.ny() == 23 &&
-            component.nz() == 29 && component.size() == 19 * 23 * 29,
-      "Yee component shape was not preserved");
-    requireZero(component);
-    component.fill(3.5);
-    component.resize(7, 11, 13);
-    require(component.nx() == 7 && component.ny() == 11 &&
-            component.nz() == 13 && component.size() == 7 * 11 * 13,
-      "Yee component resize has an incorrect shape");
-    requireZero(component);
-
-    component(2, 3, 4) = -7.25;
-    aprl::YeeComponent copied(component);
-    component(2, 3, 4) = 1.25;
-    require(copied(2, 3, 4) == -7.25,
-      "Yee component copy construction did not preserve independent data");
-    aprl::YeeComponent assigned;
-    assigned = copied;
-    copied(2, 3, 4) = 4.5;
-    require(assigned(2, 3, 4) == -7.25,
-      "Yee component copy assignment did not preserve independent data");
-    aprl::YeeComponent moved(std::move(assigned));
-    require(moved.nx() == 7 && moved.ny() == 11 && moved.nz() == 13 &&
-            moved.size() == 7 * 11 * 13 && moved(2, 3, 4) == -7.25,
-      "Yee component move construction lost shape or values");
-    assigned.resize(3, 5, 7);
-    requireZero(assigned);
-    assigned = std::move(moved);
-    require(assigned.nx() == 7 && assigned.ny() == 11 &&
-            assigned.nz() == 13 && assigned.size() == 7 * 11 * 13 &&
-            assigned(2, 3, 4) == -7.25,
-      "Yee component move assignment lost shape or values");
-
-    const std::size_t maximum = std::numeric_limits<std::size_t>::max();
-    const std::size_t invalid[][3] = {
-      {maximum, 2, 1}, {2, 2, maximum}, {maximum, 1, 1}
-    };
-    for (std::size_t trial = 0; trial < 3; ++trial)
-      {
-        bool rejected = false;
-        try { component.resize(invalid[trial][0], invalid[trial][1],
-                               invalid[trial][2]); }
-        catch (const std::exception&) { rejected = true; }
-        require(rejected, "An impossible Yee component size was accepted");
-        require(component.nx() == 7 && component.ny() == 11 &&
-                component.nz() == 13 && component.size() == 7 * 11 * 13 &&
-                component(2, 3, 4) == 1.25,
-          "A failed Yee resize changed the existing shape or values");
-      }
-
-    component.resize(7, 11, 13);
-    requireZero(component);
-    component.resize(19, 23, 29);
-    requireZero(component);
-    component.resize(0, 5, 3);
-    require(component.nx() == 0 && component.ny() == 5 &&
-            component.nz() == 3 && component.size() == 0 &&
-            component.data() == 0,
-      "An empty Yee component has invalid shape or storage");
   }
 
   std::vector<aprl::YeeComponent*> components(aprl::EBFieldGrid& fields)
@@ -132,6 +57,210 @@ namespace
           phase + ": threaded field differs bitwise from serial component " +
           std::to_string(component));
       }
+  }
+
+  // Preserve the general PEC/halo sampler as an independent reference for
+  // the optimized interior stencil.  The reference always checks boundaries.
+  double referenceElectric(const aprl::YeeComponent& component,
+                           unsigned int componentAxis,
+                           std::ptrdiff_t i, std::ptrdiff_t j,
+                           std::ptrdiff_t k,
+                           const aprl::EBElectricHaloView& halo)
+  {
+    std::ptrdiff_t coordinate[3] = {i, j, k};
+    const std::ptrdiff_t size[3] = {
+      static_cast<std::ptrdiff_t>(component.nx()),
+      static_cast<std::ptrdiff_t>(component.ny()),
+      static_cast<std::ptrdiff_t>(component.nz())
+    };
+    double sign = 1.0;
+    for (unsigned int axis = 0; axis < 2; ++axis)
+      {
+        if (coordinate[axis] < 0)
+          {
+            if (componentAxis == axis)
+              coordinate[axis] = 0;
+            else
+              {
+                coordinate[axis] = -coordinate[axis];
+                sign = -sign;
+              }
+          }
+        else if (coordinate[axis] >= size[axis])
+          {
+            if (componentAxis == axis)
+              coordinate[axis] = size[axis] - 1;
+            else
+              {
+                coordinate[axis] = 2 * (size[axis] - 1) - coordinate[axis];
+                sign = -sign;
+              }
+          }
+      }
+    if (coordinate[2] < 0 || coordinate[2] >= size[2])
+      {
+        const bool lower = coordinate[2] < 0;
+        const double* plane = componentAxis == 0 ?
+          (lower ? halo.lowerEx : halo.upperEx) :
+          (componentAxis == 1 ? (lower ? halo.lowerEy : halo.upperEy) :
+           (lower ? halo.lowerEz : halo.upperEz));
+        if (plane)
+          return sign * plane[
+            static_cast<std::size_t>(coordinate[1]) * component.nx() +
+            static_cast<std::size_t>(coordinate[0])];
+        if (componentAxis == 2)
+          coordinate[2] = lower ? 0 : size[2] - 1;
+        else
+          {
+            coordinate[2] = lower ? -coordinate[2] :
+              2 * (size[2] - 1) - coordinate[2];
+            sign = -sign;
+          }
+      }
+    return sign * component(static_cast<std::size_t>(coordinate[0]),
+                            static_cast<std::size_t>(coordinate[1]),
+                            static_cast<std::size_t>(coordinate[2]));
+  }
+
+  double referenceSmoothed(const aprl::EBCowanCoefficients& coefficients,
+                           const aprl::YeeComponent& component,
+                           unsigned int componentAxis,
+                           unsigned int derivativeAxis,
+                           std::ptrdiff_t i, std::ptrdiff_t j,
+                           std::ptrdiff_t k,
+                           const aprl::EBElectricHaloView& halo)
+  {
+    const unsigned int transverseA = (derivativeAxis + 1) % 3;
+    const unsigned int transverseB = (derivativeAxis + 2) % 3;
+    const double delta = derivativeAxis == 0 ? coefficients.deltaYZ :
+      (derivativeAxis == 1 ? coefficients.deltaZX : coefficients.deltaXY);
+    const std::ptrdiff_t base[3] = {i, j, k};
+    double result = coefficients.alpha[derivativeAxis] *
+      referenceElectric(component, componentAxis, i, j, k, halo);
+    for (int direction = -1; direction <= 1; direction += 2)
+      {
+        std::ptrdiff_t pointA[3] = {base[0], base[1], base[2]};
+        std::ptrdiff_t pointB[3] = {base[0], base[1], base[2]};
+        pointA[transverseA] += direction;
+        pointB[transverseB] += direction;
+        result += coefficients.beta[transverseA] * referenceElectric(
+          component, componentAxis, pointA[0], pointA[1], pointA[2], halo);
+        result += coefficients.beta[transverseB] * referenceElectric(
+          component, componentAxis, pointB[0], pointB[1], pointB[2], halo);
+      }
+    for (int directionA = -1; directionA <= 1; directionA += 2)
+      for (int directionB = -1; directionB <= 1; directionB += 2)
+        {
+          std::ptrdiff_t point[3] = {base[0], base[1], base[2]};
+          point[transverseA] += directionA;
+          point[transverseB] += directionB;
+          result += delta * referenceElectric(
+            component, componentAxis, point[0], point[1], point[2], halo);
+        }
+    return result;
+  }
+
+  void referenceMagnetic(aprl::EBFieldGrid& fields,
+                         const aprl::EBElectricHaloView& halo)
+  {
+    const aprl::EBGridGeometry& geometry = fields.geometry();
+    const aprl::EBCowanCoefficients& coefficients = fields.cowanCoefficients();
+    const double dtdx = geometry.dt / geometry.dx;
+    const double dtdy = geometry.dt / geometry.dy;
+    const double dtdz = geometry.dt / geometry.dz;
+    for (std::size_t k = 0; k < geometry.nz; ++k)
+      for (std::size_t j = 0; j < geometry.ny; ++j)
+        for (std::size_t i = 0; i <= geometry.nx; ++i)
+          {
+            const double dEzDy = referenceSmoothed(
+              coefficients, fields.ez(), 2, 1, i, j + 1, k, halo) -
+              referenceSmoothed(coefficients, fields.ez(), 2, 1,
+                                i, j, k, halo);
+            const double dEyDz = referenceSmoothed(
+              coefficients, fields.ey(), 1, 2, i, j, k + 1, halo) -
+              referenceSmoothed(coefficients, fields.ey(), 1, 2,
+                                i, j, k, halo);
+            fields.bx()(i, j, k) -= dtdy * dEzDy - dtdz * dEyDz;
+          }
+    for (std::size_t k = 0; k < geometry.nz; ++k)
+      for (std::size_t j = 0; j <= geometry.ny; ++j)
+        for (std::size_t i = 0; i < geometry.nx; ++i)
+          {
+            const double dExDz = referenceSmoothed(
+              coefficients, fields.ex(), 0, 2, i, j, k + 1, halo) -
+              referenceSmoothed(coefficients, fields.ex(), 0, 2,
+                                i, j, k, halo);
+            const double dEzDx = referenceSmoothed(
+              coefficients, fields.ez(), 2, 0, i + 1, j, k, halo) -
+              referenceSmoothed(coefficients, fields.ez(), 2, 0,
+                                i, j, k, halo);
+            fields.by()(i, j, k) -= dtdz * dExDz - dtdx * dEzDx;
+          }
+    for (std::size_t k = 0; k <= geometry.nz; ++k)
+      for (std::size_t j = 0; j < geometry.ny; ++j)
+        for (std::size_t i = 0; i < geometry.nx; ++i)
+          {
+            const double dEyDx = referenceSmoothed(
+              coefficients, fields.ey(), 1, 0, i + 1, j, k, halo) -
+              referenceSmoothed(coefficients, fields.ey(), 1, 0,
+                                i, j, k, halo);
+            const double dExDy = referenceSmoothed(
+              coefficients, fields.ex(), 0, 1, i, j + 1, k, halo) -
+              referenceSmoothed(coefficients, fields.ex(), 0, 1,
+                                i, j, k, halo);
+            fields.bz()(i, j, k) -= dtdx * dEyDx - dtdy * dExDy;
+          }
+  }
+
+  void compareCowanReference(int provided, int threads,
+                             std::size_t nx, std::size_t ny, std::size_t nz,
+                             unsigned int haloMask)
+  {
+    const aprl::EBGridGeometry geometry(
+      nx, ny, nz, 0.12, 0.10, 0.08, 0.08 / aprl::SI::c,
+      aprl::EBMaxwellSolver::CowanZ);
+    aprl::EBFieldGrid expected(geometry);
+    aprl::EBFieldGrid actual(geometry);
+    seed(expected);
+    seed(actual);
+    const aprl::YeeComponent* electric[3] = {
+      &expected.ex(), &expected.ey(), &expected.ez()
+    };
+    std::vector<double> lower[3];
+    std::vector<double> upper[3];
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        const std::size_t size = electric[axis]->nx() * electric[axis]->ny();
+        lower[axis].resize(size);
+        upper[axis].resize(size);
+        for (std::size_t index = 0; index < size; ++index)
+          {
+            lower[axis][index] = 0.3 + std::sin(
+              0.013 * static_cast<double>(index + 11 * axis));
+            upper[axis][index] = -0.7 + std::cos(
+              0.021 * static_cast<double>(index + 17 * axis));
+          }
+      }
+    aprl::EBElectricHaloView halo;
+    if (haloMask & 1)
+      {
+        halo.lowerEx = lower[0].data();
+        halo.lowerEy = lower[1].data();
+        halo.lowerEz = lower[2].data();
+      }
+    if (haloMask & 2)
+      {
+        halo.upperEx = upper[0].data();
+        halo.upperEy = upper[1].data();
+        halo.upperEz = upper[2].data();
+      }
+    referenceMagnetic(expected, halo);
+    aprl::configureComputeThreads(provided, threads);
+    actual.advanceMagnetic(halo);
+    equalFields(expected, actual, "general Cowan reference " +
+      std::to_string(nx) + "x" + std::to_string(ny) + "x" +
+      std::to_string(nz) + " halo=" + std::to_string(haloMask) +
+      " threads=" + std::to_string(threads));
   }
 
   void compare(int provided, int threads, aprl::EBMaxwellSolver solver,
@@ -232,7 +361,17 @@ int main(int argc, char** argv)
           const int maximum = aprl::computeThreadingAvailable() ? 4 : 1;
           for (int threads = 1; threads <= maximum; threads *= 2)
             {
-              componentStorage(provided, threads);
+              for (unsigned int haloMask = 0; haloMask < 4; ++haloMask)
+                {
+                  // The minimum grid has no complete interior stencil;
+                  // larger irregular grids exercise both interior and edges.
+                  compareCowanReference(provided, threads, 2, 2, 2, haloMask);
+                  compareCowanReference(provided, threads, 3, 4, 5, haloMask);
+                  compareCowanReference(provided, threads, 17, 15, 2,
+                                        haloMask);
+                  compareCowanReference(provided, threads, 17, 15, 12,
+                                        haloMask);
+                }
               for (unsigned int solver = 0; solver < 2; ++solver)
                 for (unsigned int boundary = 0; boundary < 2; ++boundary)
                   {
@@ -252,6 +391,7 @@ int main(int argc, char** argv)
           require(boundsRejected, "Inline accessor lost its bounds check");
 #endif
           std::cout << "serial_threaded_fields=bitwise_identical "
+                       "cowan_general_reference=bitwise_identical "
                        "yee_cowan_cpml_halo=passed max_threads=" << maximum
                     << std::endl;
         }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fixed 4 MPI x 4 threads, same-physics NUMA implementation comparison."""
+"""Fixed 4 MPI x 4 threads, same-physics implementation comparison."""
 import argparse
 import csv
 from datetime import datetime, timezone
