@@ -507,32 +507,44 @@ namespace aprl
 #endif
     for (std::size_t k = 0; k < geometry_.nz; ++k)
       for (std::size_t j = 0; j <= geometry_.ny; ++j)
-        for (std::size_t i = 0; i < geometry_.nx; ++i)
-          {
-            const Double dExDz = smoothedElectric(
-              ex_, 0, 2, i, j, k + 1, halo) -
-              smoothedElectric(ex_, 0, 2, i, j, k, halo);
-            const Double dEzDx = smoothedElectric(
-              ez_, 2, 0, i + 1, j, k, halo) -
-              smoothedElectric(ez_, 2, 0, i, j, k, halo);
-            by_(i, j, k) -= dtdz * dExDz - dtdx * dEzDx;
-          }
+        {
+          // E is unchanged during the B update. Keep the shared x endpoint
+          // in this row's worker; boundary values still use the same sampler.
+          Double previousSmoothedEz = smoothedElectric(
+            ez_, 2, 0, 0, j, k, halo);
+          for (std::size_t i = 0; i < geometry_.nx; ++i)
+            {
+              const Double dExDz = smoothedElectric(
+                ex_, 0, 2, i, j, k + 1, halo) -
+                smoothedElectric(ex_, 0, 2, i, j, k, halo);
+              const Double nextSmoothedEz = smoothedElectric(
+                ez_, 2, 0, i + 1, j, k, halo);
+              const Double dEzDx = nextSmoothedEz - previousSmoothedEz;
+              by_(i, j, k) -= dtdz * dExDz - dtdx * dEzDx;
+              previousSmoothedEz = nextSmoothedEz;
+            }
+        }
 
 #ifdef APRL_HAS_OPENMP
 #pragma omp for collapse(2) schedule(static) nowait
 #endif
     for (std::size_t k = 0; k <= geometry_.nz; ++k)
       for (std::size_t j = 0; j < geometry_.ny; ++j)
-        for (std::size_t i = 0; i < geometry_.nx; ++i)
-          {
-            const Double dEyDx = smoothedElectric(
-              ey_, 1, 0, i + 1, j, k, halo) -
-              smoothedElectric(ey_, 1, 0, i, j, k, halo);
-            const Double dExDy = smoothedElectric(
-              ex_, 0, 1, i, j + 1, k, halo) -
-              smoothedElectric(ex_, 0, 1, i, j, k, halo);
-            bz_(i, j, k) -= dtdx * dEyDx - dtdy * dExDy;
-          }
+        {
+          Double previousSmoothedEy = smoothedElectric(
+            ey_, 1, 0, 0, j, k, halo);
+          for (std::size_t i = 0; i < geometry_.nx; ++i)
+            {
+              const Double nextSmoothedEy = smoothedElectric(
+                ey_, 1, 0, i + 1, j, k, halo);
+              const Double dEyDx = nextSmoothedEy - previousSmoothedEy;
+              const Double dExDy = smoothedElectric(
+                ex_, 0, 1, i, j + 1, k, halo) -
+                smoothedElectric(ex_, 0, 1, i, j, k, halo);
+              bz_(i, j, k) -= dtdx * dEyDx - dtdy * dExDy;
+              previousSmoothedEy = nextSmoothedEy;
+            }
+        }
     }
   }
 
