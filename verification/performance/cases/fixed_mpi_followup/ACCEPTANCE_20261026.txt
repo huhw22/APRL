@@ -1,0 +1,43 @@
+APRL 2026-10-26 后续计算优化验收
+
+决定：保留三项局部优化及组合实现。固定MPI、精度、物理模型与输出节拍；没有新开生产仿真。
+
+计算实现：
+1. Cowan x方向相邻格共享平滑端点，按行局部标量复用，不增全网格缓存。
+2. 普通本地粒子轨段复用CPML/outer/退休面的原始交点；held折点、接收段和ballistic仍用原路径，事件优先级分别保留。
+3. 能量、单分量能流、lab E/B诊断分别按需采样；保留插值、Lorentz变换及long double累加顺序。
+
+程序与环境：
+基准 build/cowan-accepted-r2-20261025/aprl，compiled77f1ef95267d037dcd629584e42aedc1b04668f3，SHA256 dc537da20eacc15648cc59360a1f61bdc9ef1176950ac0cdfda21714e2ba58bb。
+组合 build/compute-followup-20261026/aprl，compiled8adce330f646701123ef5b312b914b37152af874，SHA256 5edd096eec8d02fef03613a4f74731d90eba5574cb6c109fe26c7fb4f16a9483。
+独立源码提交6eb7716(Cowan)、0acb1e4(粒子)、bbff835(诊断)，均基于856e172；组合由三项叠加，后续提交仅测试和记录。
+同GNU9.4 Release、系统MPI、并行HDF5、OpenMP工具链及只读FFTW库；无fast-math、FP32、MPI网络或系统配置变化。
+
+性能验收：gnode1的16物理核，固定4 MPI×4线程。
+每版本对照使用原generated-gaussian三卡，粒子数/权重/随机种子/网格/边界/反馈/初场容差/子步/物理终点/输出完全相同；每卡先预跑和预热，5组交替配对关闭profiling，以步20–80计时；另单独profile。
+三单项及组合各48run，共192次；每组45次同rank数值逐位对照，共180组。独立重算全部120份正式计时日志、24份profile和576个H5，冻结身份保持。
+
+组合版实际步时（5次中位，不能将单项百分比相加）：
+grid016: 8.071355 -> 7.621165 ms/步，降低5.5776%，5/5配对更快，配对加速范围1.058768–1.080536。
+grid128: 49.310042 -> 42.841150 ms/步，降低13.1188%，5/5配对更快，配对加速范围1.141937–1.170278。
+particles262144: 107.192669 -> 102.223835 ms/步，降低4.6354%，5/5配对更快，配对加速范围1.046134–1.057090。
+
+组合版三个工况各自control/trial计时范围均不重叠。峰RSS总和中位74.758→74.441、316.055→315.820、187.598→187.988 MiB，变化均小于0.4MiB，未观察到随网格增加的大数组内存代价。
+独立收益：Cowan大格9.0613%；粒子重粒子卡4.1887%和小格4.7446%；诊断大格3.8152%。其余微小变化/正负混合不认定稳定收益。粒子与诊断实验各有一次偏慢control，保留原样，不剔除样本或把离群配对当收益。
+profile用于解释：组合大格field均值39.1353→34.4120ms、diagnostics3.8655→2.5844ms；粒子重deposit均值29.3125→27.4933ms。每项仅一次；通信含等待，嵌套阶段和不同rank最大值不可相加。
+
+正确性验收：
+四候选分别72/72 required通过（含原Cowan参考、48种网格/halo/线程组合、CPML、held跨rank、MPI watchdog和限步HDF关闭）；诊断接口另逐位对照未改的完整采样路径，覆盖边界、任意位置、boost1/2/1174与非零halo更新后的场。
+额外edge-all固定4×4：4工况×5版本=20次正常完成，16组科学datasets+attrs逐位一致，输出complete=1且finite。
+held跨rank：各版282次跨rank激活、两粒子面各10410记录；退休：各版512进入并完成退休、1159账本/966场样本、退完后继续传播；CPML与outer各8粒子从+x退出，物理终点15步且空粒子面完整关闭。
+MPI/收尾watchdog、物理卡/精度均未改变。保护默认600秒/Finalize60秒保持；本轮未重跑双节点失联注入。没有专门构造多个边界事件恰好同时或在容差附近触发的专项卡，原各自selector顺序未改。
+
+适用范围：本结论是当前gnode1固定4×4通用短卡的同rank数值等价与吞吐，不是两节点完整ELEGANT生产加速、跨rank一致性或辐射物理收敛。不能直接把13.12%乘到两天仿真。
+生产18893仍node5/7运行；build/candidate/aprl及cluster.env默认入口不改。gnode1测试已结束并无残留APRL/MPI进程。
+
+证据入口（工作区绝对根 /public/home/wfollowm/APRL_Workspace）：
+results/code_optimization_20261026/combined-campaign/RESULT_REVIEW.txt 和 REVIEWED_COMPLETION.json；
+results/code_optimization_20261026/{cowan-campaign-r2,particle-campaign,diagnostic-campaign}/ 同名独立复核；
+results/code_optimization_20261026/edge-all/acceptance.json；CODE_REVIEW.json、PERFORMANCE_REVIEW.json和CANDIDATES.json。
+版本化模板 verification/performance/cases/{fixed_mpi_followup,optimization_edges}；所有工作脚本改进已回写。
+未启动准备目录cowan-campaign（手填完整revision纠正）和edge-acceptance（新增组合版本）均保留NOT_LAUNCHED；其替代目录独立新建，未修改运行结果。
