@@ -124,6 +124,20 @@ def prepare(root, workspace):
         shutil.copy2(preflight / 'functional' / name, refs / ('preflight-' + name))
     small = read_yaml(refs / 'preflight-run.yaml')
     dt = original['mesh']['cell_size'][2] / 299792458.0
+    gamma = original['mesh']['boost_gamma']
+    beta = math.sqrt(1 - 1 / gamma**2)
+    longitudinal = manifest['resolved_mesh']['longitudinal']
+    detector_geometry = []
+    for detector in original['detectors']['field_planes']:
+        first = longitudinal['translation_m'] + (
+            detector['z'] - original['beam']['reference']['activation_plane_z']) / gamma
+        last = first - beta * 299792458.0 * STEPS * dt
+        lo, hi = longitudinal['physical_bounds_m']
+        require(lo < last <= first < hi, 'Field plane leaves preserved physical window during timing sample')
+        require(math.isclose(detector['rhythm'], dt / gamma, rel_tol=1e-12),
+                'Field cadence must remain one sample per field step for this checker')
+        detector_geometry.append({'name': detector['name'], 'box_z_at_step_0_m': first,
+                                  'box_z_at_step_600_m': last, 'expected_samples': STEPS + 1})
     for name in SPECS:
         case = root / name
         case.mkdir()
@@ -144,6 +158,7 @@ def prepare(root, workspace):
             'source_revision': subprocess.check_output(['git', '-C', str(workspace / 'source/aprl'),
                                                        'rev-parse', 'HEAD'], text=True).strip(),
             'steps': STEPS, 'dt_box_s': dt, 'expected_mesh': manifest['resolved_mesh'],
+            'field_sample_geometry': detector_geometry,
             'nodes': 2, 'ranks': 256, 'threads_per_rank': 1, 'exclusive': True,
             'run_timeout_s': 4800, 'preflight_timeout_s': 600, 'total_limit_s': 10800,
             'intervals': [[50, 100], [100, 400], [400, 600]],

@@ -8,6 +8,7 @@
 #SBATCH --exclusive
 #SBATCH --mem=0
 #SBATCH --time=03:00:00
+#SBATCH --no-requeue
 set -Eeuo pipefail
 root=$(realpath "${1:?Pass a new frozen full-scale comparison directory}")
 source /public/home/wfollowm/APRL_Workspace/cluster.env
