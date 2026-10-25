@@ -103,8 +103,9 @@ def prepare(args):
     root = args.root.resolve()
     require(not root.exists(), 'Use a fresh result directory')
     variants = json.loads(args.variants.read_text())
-    require(len(variants) == 4 and 'control' in variants,
-            'Provide accepted control plus exactly three implementation variants')
+    require(isinstance(variants, dict) and 2 <= len(variants) <= 5 and
+            'control' in variants,
+            'Provide accepted control plus one to four implementation candidates')
     frozen = []
     metadata = {}
     real_flags = {}
@@ -347,7 +348,10 @@ def run(args):
                 save(root / 'comparisons.json', comparisons)
     save(root / 'acceptance.json', {'pass': True, 'reports': reports, 'comparisons': comparisons,
                                   'uncovered': plan['uncovered'], 'scope': plan['scope']})
-    (root / 'PASS').write_text('All four small cases matched accepted r2 at fixed 4 MPI x 4 OpenMP.\n')
+    (root / 'PASS').write_text(
+        f"All {len(plan['cases'])} small cases matched accepted r2 for "
+        f"{len(names) - 1} candidate(s) at fixed 4 MPI x 4 OpenMP "
+        f"({len(reports)} completed runs).\n")
 
 
 def main():

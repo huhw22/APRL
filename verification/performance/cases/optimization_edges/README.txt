@@ -9,7 +9,7 @@ inspection/comparison helpers are used; their historical campaign configuration
 is not used. The output comparison checks every dataset and scientific attribute
 bitwise, ignoring only the existing four run/source identity attributes.
 
-Cases, independently identical across accepted control and all three variants:
+Cases, independently identical across accepted control and every candidate:
   held-crossrank: existing 10410-particle hybrid held H5; ballistic mode; require
     actual cross-rank activation pushes and complete particle detector cohorts.
   held-retirement: existing 512-particle, 16x16x4096 non-ballistic fixture; require
@@ -25,15 +25,20 @@ They do NOT test exact or tolerance-near simultaneous CPML/outer/retirement/
 MPI-interface events. The patch preserves both independent selectors unchanged;
 do not claim that structural evidence is an executed tie-priority regression.
 
-Prepare only after all trial required checks pass. Create a JSON object with four
-entries; every entry has binary (absolute path), revision (full compiled Git hash),
+Prepare only after all candidate required checks pass. Create a JSON object with
+2 to 5 entries: one named control and 1 to 4 named candidates. Every entry has
+binary (absolute path), revision (full compiled Git hash),
 and each non-control entry has required_directory (containing PASS, EXIT_CODE=0,
 and build.sha256 for that exact executable). The control entry must identify:
   /public/home/wfollowm/APRL_Workspace/build/cowan-accepted-r2-20261025/aprl
   revision 77f1ef95267d037dcd629584e42aedc1b04668f3
 
+Four cases produce 8 to 20 runs, depending on candidate count. For example,
+control plus cowan, particle, diagnostic and combined produces 20 runs. All
+candidates, including combined, require their own completed required evidence.
+
 Example invocation after sourcing cluster.env (RESULT must be new):
-  "$PYTHON_BIN" /public/home/wfollowm/APRL_Workspace/tests/code_optimization_20261026/edge_acceptance/run.py prepare --root "$RESULT" --variants "$VARIANTS_JSON"
+  "$PYTHON_BIN" /public/home/wfollowm/APRL_Workspace/source/aprl/verification/performance/cases/optimization_edges/run.py prepare --root "$RESULT" --variants "$VARIANTS_JSON"
 
 Run the frozen copy on authorized gnode1 with APRL_ALLOW_UNSCHEDULED_CPU_TESTS=1:
   "$PYTHON_BIN" "$RESULT/scripts/run.py" run --root "$RESULT"
