@@ -64,8 +64,17 @@ def prepare(root, binary, revision):
     original['beam']['input']['file'] = str(root / 'particles.h5')
     original['detectors']['field_planes'][0]['name'] = 'duration-field'
     # An empty writer must also flush its HDF5 metadata before expected abort.
+    # Detector planes participate in the beamline stop contract, so keep this
+    # plane after all particle retirement and before the original stop.
+    retirement_exit = (original['particle_retirement']['entrance_z'] +
+                       original['particle_retirement']['length'])
+    empty_z = 40
+    require(original['particle_retirement']['enabled'] and
+            original['stop']['mode'] == 'reference-center-z' and
+            retirement_exit < empty_z < original['stop']['z'],
+            'Empty detector must lie after retirement and before the original physical stop')
     original['detectors']['particle_planes'].append({
-        'name': 'after-stop-empty', 'z': 2000, 'buffer_records': 512, 'compression': 0})
+        'name': 'after-retirement-empty', 'z': empty_z, 'buffer_records': 512, 'compression': 0})
     dt = original['mesh']['cell_size'][2] * 1e-6 / 299792458.0
     variants = {}
     for name in VARIANTS:
@@ -154,7 +163,7 @@ def check_variant(root, name):
         empty = np.flatnonzero(records['active_macroparticles'] == 0)
         require(len(empty) and final_step + 1 - int(empty[0]) >= 20,
                 'Insufficient continued field propagation after retirement')
-    with h5py.File(directory / 'detectors/after-stop-empty.h5') as file:
+    with h5py.File(directory / 'detectors/after-retirement-empty.h5') as file:
         require(len(file['particle_plane/records']) == 0, 'Expected empty particle plane is nonempty')
     with h5py.File(root / 'particles.h5') as file:
         source = file['particles/records'][:]

@@ -74,11 +74,13 @@ revision = fixed['source_revision']
 assert re.fullmatch(r'[0-9a-f]{40}', revision), 'Exact compiled revision required'
 assert record['compiled_revision'] == old_record['compiled_revision'] == revision
 assert old_record['source_revision'] == revision
-# The sole allowed changed prior source is the reviewed Slurm-status checker.
-# Its original bytes remain recoverable from the exact compiled Git revision;
+# Only the reviewed Slurm-status checker and empty-plane fixture may differ.
+# Their original bytes remain recoverable from the exact compiled Git revision;
 # binaries, caches and the original configured build driver must still match.
 source = Path('/public/home/wfollowm/APRL_Workspace/source/aprl')
-allowed_source = source / 'verification/check_duration_barrier_fault.cmake.in'
+allowed_sources = {source / path for path in (
+    'verification/check_duration_barrier_fault.cmake.in',
+    'verification/performance/cases/duration_acceptance/cases.py')}
 original_check = (prior / 'build-verification.log').read_text().splitlines()
 frozen_entries = (prior / 'build-frozen.sha256').read_text().splitlines()
 assert len(original_check) == len(frozen_entries) and all(line.endswith(': OK') for line in original_check)
@@ -91,9 +93,10 @@ for line in frozen_entries:
     if digest(path) == expected:
         verified.append(filename + ': OK')
         continue
-    assert path.resolve() == allowed_source, 'Prior build artifact changed: ' + filename
+    assert path.resolve() in allowed_sources, 'Prior build artifact changed: ' + filename
+    relative_source = path.resolve().relative_to(source).as_posix()
     original = subprocess.run(['git', '-C', str(source), 'show',
-                               revision + ':verification/check_duration_barrier_fault.cmake.in'],
+                               revision + ':' + relative_source],
                               check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).stdout
     assert hashlib.sha256(original).hexdigest() == expected, 'Original checker source identity changed'
     verified.append(filename + ': ORIGINAL SOURCE VERIFIED AT ' + revision)
