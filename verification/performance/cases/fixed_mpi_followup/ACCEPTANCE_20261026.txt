@@ -41,3 +41,5 @@ results/code_optimization_20261026/{cowan-campaign-r2,particle-campaign,diagnost
 results/code_optimization_20261026/edge-all/acceptance.json；CODE_REVIEW.json、PERFORMANCE_REVIEW.json和CANDIDATES.json。
 版本化模板 verification/performance/cases/{fixed_mpi_followup,optimization_edges}；所有工作脚本改进已回写。
 未启动准备目录cowan-campaign（手填完整revision纠正）和edge-acceptance（新增组合版本）均保留NOT_LAUNCHED；其替代目录独立新建，未修改运行结果。
+
+最终独立边界复核：74冻结哈希保持；直接重读70个H5、16组共184 datasets和888科学属性逐位一致。10个CPML/outer运行均首步active=0/removed=8，空面records=committed=0且complete=1。五版held各282次跨rank激活、sourceID完整；退休step19清空后，按固定lab面时间映射各有950个实际场样本。证据edge-all/REVIEWED_COMPLETION.json。
