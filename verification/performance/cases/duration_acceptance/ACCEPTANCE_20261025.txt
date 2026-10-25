@@ -1,0 +1,82 @@
+APRL Cowan optimization and duration shutdown acceptance, 2026-10-25
+
+Accepted calculation changes relative to the prior accepted development line:
+- 5dba9d6: Cowan interior nine-point sampling fast path; original FP64
+  operation order and boundary/halo path retained. NUMA storage experiment
+  is not part of the final implementation.
+- 692cafd: synchronize after every local scientific output closes before
+  expected mesh.duration exhaustion can reach MPI_Abort. The new readiness
+  barrier uses the existing local shutdown watchdog. Unexpected rank-local
+  exceptions retain their abort path. No additional per-step synchronization.
+
+The user's earlier failure mode (one node stops while another waits in MPI)
+is explicitly covered. General teardown defaults to 600 seconds per guarded
+phase; MPI_Finalize retains its separate 60-second default. The timeout
+worker exits locally with status 124 and never calls MPI. An enabled,
+operational process-local watchdog does not promise recovery from a dead OS,
+an earlier unguarded HDF5 close, or a stuck launcher; batch time limits remain.
+
+Tested executable:
+  compiled revision: 77f1ef95267d037dcd629584e42aedc1b04668f3
+  build/cowan-accepted-r2-20261025/aprl
+  SHA256 dc537da20eacc15648cc59360a1f61bdc9ef1176950ac0cdfda21714e2ba58bb
+Final campaign template: a68a930febbaa7487a46c2d1333248883714e222
+Its src tree and root CMake configuration match the tested revision exactly.
+Later commits only correct test orchestration/fixtures and record acceptance.
+
+Evidence under /public/home/wfollowm/APRL_Workspace/results/duration_acceptance:
+  20261025-233024-r2: job 18909, all 72 required checks passed in 63.65 s.
+  20261025-234447-science-r2: job 18911, COMPLETED 0:0, 3 min 33 s,
+    node6/node8, two exclusive 128-CPU nodes, 256 MPI x 1 thread for science.
+  The final job verifies and copies 298 prior evidence files before reusing
+  the exact-binary required suite and old-race reproduction. Its own input
+  and build/template manifests contain 14 and 226 frozen entries.
+
+Shutdown checks:
+- The pre-fix binary reproducibly aborted while root was held in a 3-second
+  HDF5 close; the fixed binary finished the close and all five outputs passed.
+- Missing-peer injection uses two nodes with one rank on each. Root's barrier
+  participation and its own exit are deliberately held by a test-only library.
+  The healthy node8 rank independently takes its real watchdog _exit(124).
+  Five-second test watchdog plus Slurm cleanup takes 15 s in the final job.
+  All five files remain readable and correctly incomplete. This is a missing
+  peer/process test, not a physical host power-off or filesystem fault test.
+- Slurm may aggregate injected-root cleanup as 143 or 137. Those statuses
+  are accepted only with the healthy peer's actual 124 marker, explicit Slurm
+  peer124/root cleanup records, target-phase traces, timing and HDF5 checks.
+  Independent driver deadlines cannot count as success. Thirty-one offline
+  positive/negative cases are retained in the preceding continuation result's
+  driver-negative-checks directory.
+
+Four scientific cases: same held/retirement card, 512 particles, 16x16x4096
+grid, fixed 256x1 layout. Empty particle plane is at 40 um, after retirement
+exit 30 um and before unchanged physical stop 1000 um. All cards were parsed
+by the actual config loader before submission. No production window or stop
+was enlarged.
+
+  normal control / fixed: each 1158 steps; 966 field samples; 1159 ledger
+    records; complete=1; simulator exit 0.
+  bounded fixed repeats: each 200 steps; 167 field samples; 201 ledger
+    records; complete=0; expected duration-exhaustion exit 1.
+
+All 20 HDF5 files are readable, finite and have correct committed lengths.
+Activation and retirement-entry planes each contain 512 particles; the empty
+plane has zero records. All particles retire by step 19 and field propagation
+continues. Normal control/fixed and bounded repeats each match bitwise across
+16 datasets and 81 scientific attributes. Both bounded runs independently
+match the normal fixed prefix across 6 scientific datasets and 81 attributes.
+Only four run-identity attributes are excluded; completeness/commit metadata
+are checked independently. No numerical tolerance was relaxed.
+
+Earlier attempts remain FAILED: 18908/18909 exposed Slurm aggregate-status
+handling in the new test driver; 18910 rejected an incorrectly placed test
+empty plane before any physics step. Their records were not rewritten as PASS.
+
+Scope: small held/retirement shutdown and same-rank scientific equivalence.
+The prior full-scale 600-step timing observation (400-600: 5.103 -> 2.490 s/step,
+51.2% lower time, different node allocations) remains separate performance
+evidence. Its truncated files are still failed evidence. This acceptance does
+not establish full-scale output completeness, cross-rank equivalence, physical
+radiation convergence, or a new performance ratio.
+
+Production job 18893, build/candidate/aprl and cluster.env were not replaced.
