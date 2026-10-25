@@ -41,6 +41,10 @@ scontrol show job "$SLURM_JOB_ID" > allocation.txt
 scontrol show hostnames "$SLURM_JOB_NODELIST" > allocation-nodes.txt
 sha256sum --check frozen.sha256 > frozen-verification.log
 sha256sum --check build-frozen.sha256 > build-verification.log
+srun --mpi="$SRUN_MPI" --exact --nodes=2 --ntasks=2 --ntasks-per-node=1 \
+  --cpus-per-task=1 --cpu-bind=cores --kill-on-bad-exit=1 --wait=10 \
+  "$PYTHON_BIN" "$root/scripts/check-runtime.py" "$build" "$root" \
+  > runtime-links.log 2>&1
 OMP_NUM_THREADS=2 timeout --signal=TERM --kill-after=10 90 \
   srun --mpi="$SRUN_MPI" --exact --nodes=1 --ntasks=4 --ntasks-per-node=4 \
   --cpus-per-task=2 --cpu-bind=cores --kill-on-bad-exit=1 --wait=10 \
