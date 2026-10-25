@@ -44,9 +44,19 @@ set(log "${output}\n${error}")
 file(WRITE "${MPI_FAULT_WORK}/run.log" "${log}")
 file(WRITE "${MPI_FAULT_WORK}/EXIT_CODE" "${result}\n")
 file(WRITE "${MPI_FAULT_WORK}/ELAPSED_SECONDS" "${elapsed}\n")
-# A CMake execution deadline produces a descriptive string, never the numeric
-# watchdog status below. The peer marker is emitted only by its real _exit(124).
-if(NOT "${result}" STREQUAL "124" OR elapsed LESS 4 OR elapsed GREATER_EQUAL 25)
+# A CMake execution deadline produces a descriptive string, never either
+# numeric status below. Slurm can report 143 when it terminates the injected
+# root after a healthy peer exits 124; accept that only with both explicit
+# launcher records. The peer marker below must still prove its real _exit(124).
+set(watchdog_exit FALSE)
+if("${result}" STREQUAL "124")
+  set(watchdog_exit TRUE)
+elseif("${result}" STREQUAL "143" AND log MATCHES
+    "srun: error: [^\n]+: tasks? [1-9][0-9, -]*: Exited with exit code 124"
+    AND log MATCHES "srun: error: [^\n]+: task 0: Terminated")
+  set(watchdog_exit TRUE)
+endif()
+if(NOT watchdog_exit OR elapsed LESS 4 OR elapsed GREATER_EQUAL 25)
   message(FATAL_ERROR "MPI fault did not exit through the five-second local watchdog (result=${result}, elapsed=${elapsed}s):\n${log}")
 endif()
 if(NOT log MATCHES
