@@ -459,8 +459,20 @@ namespace aprl
         "Direct E/B run stopped after a complete field step; committed trajectory and detector outputs remain readable.");
     if (!interrupted_ && !configuredStopReached_ &&
         timeBoxSI_ >= totalTimeBoxSI_)
-      throw std::runtime_error(
-        "mesh.duration was exhausted before the configured physical stop; trajectory and detector outputs are readable but marked incomplete");
+      {
+        // The reductions above are not an output-close barrier: non-root
+        // ranks may return while rank zero is still flushing its writers.
+        // Complete every local close before this expected exception can
+        // reach main's MPI_Abort. Genuine rank-local failures still abort
+        // immediately through the ordinary exception handler.
+        logTeardownTrace("duration-exhaustion-readiness-sync-enter");
+        armShutdownWatchdog("duration-exhaustion-readiness-sync");
+        MPI_Barrier(communicator_);
+        disarmShutdownWatchdog();
+        logTeardownTrace("duration-exhaustion-readiness-sync-complete");
+        throw std::runtime_error(
+          "mesh.duration was exhausted before the configured physical stop; trajectory and detector outputs are readable but marked incomplete");
+      }
     logTeardownTrace("solve-complete");
   }
 

@@ -536,6 +536,122 @@ namespace
     return true;
   }
 
+  void requireDurationTransaction(const std::string& filename,
+      const char* groupName, const char* countName, const char* recordsName,
+      const std::vector<hsize_t>& expectedShape, const std::string& runId)
+  {
+    hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    requireHandle(file, "Cannot open bounded output: " + filename);
+    hid_t group = H5Gopen2(file, groupName, H5P_DEFAULT);
+    requireHandle(group, "Cannot open bounded output group: " + filename);
+    require(readByteScalar(group, "complete") == 0,
+      "Duration-limited output must remain marked incomplete: " + filename);
+    require(readUnsignedScalar(group, countName) == expectedShape[0],
+      "Bounded output commit count differs: " + filename);
+    require(readStringAttribute(group, "run_id") == runId,
+      "Bounded outputs have inconsistent run identities: " + filename);
+    hid_t records = H5Dopen2(group, recordsName, H5P_DEFAULT);
+    requireHandle(records, "Cannot open bounded records: " + filename);
+    require(dimensions(records) == expectedShape,
+      "Bounded output extent differs from committed records: " + filename);
+    H5Dclose(records);
+    H5Gclose(group);
+    H5Fclose(file);
+  }
+
+  int checkDurationClose(const std::string& directory)
+  {
+    // The fixture advances eight complete field steps. All buffers exceed
+    // their final sample counts so explicit close must flush pending data.
+    const std::size_t steps = 8;
+    const std::size_t samples = steps + 1;
+    const std::string fieldName = directory + "/detectors/duration-field.h5";
+    hid_t file = H5Fopen(fieldName.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    requireHandle(file, "Cannot open delayed field output");
+    hid_t group = H5Gopen2(file, "/field_plane", H5P_DEFAULT);
+    requireHandle(group, "Cannot open delayed field group");
+    const std::string runId = readStringAttribute(group, "run_id");
+    require(!runId.empty(), "Bounded run identity is empty");
+    hid_t timeDataset = H5Dopen2(group, "time_s", H5P_DEFAULT);
+    requireHandle(timeDataset, "Cannot open bounded field time axis");
+    require(dimensions(timeDataset) == std::vector<hsize_t>{samples},
+      "Bounded field time extent differs");
+    std::vector<double> times(samples);
+    requireStatus(H5Dread(timeDataset, H5T_NATIVE_DOUBLE, H5S_ALL, H5S_ALL,
+      H5P_DEFAULT, times.data()), "Cannot read bounded field time axis");
+    for (std::size_t i = 0; i < samples; ++i)
+      require(std::isfinite(times[i]) && (i == 0 || times[i] > times[i - 1]),
+        "Bounded field times are not finite and strictly increasing");
+    H5Dclose(timeDataset);
+    struct FieldRecord { double electric[3]; double magnetic[3]; };
+    hid_t memory = H5Tcreate(H5T_COMPOUND, sizeof(FieldRecord));
+    requireHandle(memory, "Cannot create bounded field memory type");
+    const hsize_t three[1] = {3};
+    hid_t vector = H5Tarray_create2(H5T_NATIVE_DOUBLE, 1, three);
+    requireHandle(vector, "Cannot create bounded field vector type");
+    requireStatus(H5Tinsert(memory, "electric_V_per_m",
+      HOFFSET(FieldRecord, electric), vector), "Cannot map bounded electric field");
+    requireStatus(H5Tinsert(memory, "magnetic_T",
+      HOFFSET(FieldRecord, magnetic), vector), "Cannot map bounded magnetic field");
+    H5Tclose(vector);
+    hid_t fields = H5Dopen2(group, "fields", H5P_DEFAULT);
+    requireHandle(fields, "Cannot open bounded fields");
+    require(dimensions(fields) == std::vector<hsize_t>{samples, 8, 8},
+      "Unexpected bounded field dimensions");
+    std::vector<FieldRecord> values(samples * 8 * 8);
+    requireStatus(H5Dread(fields, memory, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+      values.data()), "Cannot read bounded field values");
+    for (const FieldRecord& value : values)
+      for (int axis = 0; axis < 3; ++axis)
+        require(std::isfinite(value.electric[axis]) &&
+                std::isfinite(value.magnetic[axis]), "Nonfinite bounded field");
+    H5Dclose(fields);
+    H5Tclose(memory);
+    H5Gclose(group);
+    H5Fclose(file);
+    requireDurationTransaction(fieldName, "/field_plane", "committed_samples",
+      "fields", {samples, 8, 8}, runId);
+
+    const char* particleNames[] = {
+      "duration-particles", "duration-empty-near", "duration-empty-far"};
+    for (std::size_t index = 0; index < 3; ++index)
+      {
+        const std::string name = directory + "/detectors/" +
+          particleNames[index] + ".h5";
+        const std::size_t expected = index == 0 ? 4 : 0;
+        requireDurationTransaction(name, "/particle_plane", "committed_records",
+          "records", {expected}, runId);
+        const std::vector<ParticlePlaneRecord> records = readParticlePlane(name, false);
+        require(records.size() == expected, "Unexpected bounded particle cohort");
+        for (const ParticlePlaneRecord& record : records)
+          require(finiteParticle(record), "Nonfinite bounded particle record");
+      }
+
+    const std::string ledgerName = directory + "/ledger/energy-ledger.h5";
+    requireDurationTransaction(ledgerName, "/energy_ledger", "committed_records",
+      "records", {samples}, runId);
+    file = H5Fopen(ledgerName.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
+    requireHandle(file, "Cannot reopen bounded energy ledger");
+    hid_t records = H5Dopen2(file, "/energy_ledger/records", H5P_DEFAULT);
+    requireHandle(records, "Cannot open bounded ledger records");
+    memory = aprl::EnergyLedgerWriter::createMemoryRecordType();
+    std::vector<aprl::EnergyLedgerRecord> ledger(samples);
+    requireStatus(H5Dread(records, memory, H5S_ALL, H5S_ALL, H5P_DEFAULT,
+      ledger.data()), "Cannot read bounded ledger");
+    H5Tclose(memory);
+    H5Dclose(records);
+    H5Fclose(file);
+    const double dt = 0.1e-6 / 299792458.0;
+    for (std::size_t i = 0; i < samples; ++i)
+      require(ledger[i].step == i && finiteLedger(ledger[i]) &&
+        nearlyEqual(ledger[i].timeBox, static_cast<double>(i) * dt, 1e-29, 1e-12),
+        "Bounded ledger is nonfinite or has a missing complete step");
+    std::cout << "duration-close: all five files readable, complete=0, field="
+              << samples << ", particle cohort=4, empty planes=2, ledger="
+              << samples << ", final step=" << steps << '\n';
+    return EXIT_SUCCESS;
+  }
+
   int checkLedger(const std::string& filename)
   {
     hid_t file = H5Fopen(filename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
@@ -700,6 +816,11 @@ int main(int argc, char** argv)
         {
           require(argc == 3, "ledger needs ENERGY_LEDGER_H5");
           return checkLedger(argv[2]);
+        }
+      if (command == "duration-close")
+        {
+          require(argc == 3, "duration-close needs RUN_DIRECTORY");
+          return checkDurationClose(argv[2]);
         }
       if (command == "boundary-ledger")
         {

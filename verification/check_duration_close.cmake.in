@@ -1,0 +1,56 @@
+foreach(required APRL_EXECUTABLE DURATION_DELAY_LIBRARY OUTPUT_CHECKER
+                 DURATION_CARD DURATION_WORK)
+  if(NOT DEFINED ${required})
+    message(FATAL_ERROR "duration close check is missing ${required}")
+  endif()
+endforeach()
+
+file(MAKE_DIRECTORY "${DURATION_WORK}")
+set(mpi_preflags "@MPIEXEC_PREFLAGS@")
+set(mpi_postflags "@MPIEXEC_POSTFLAGS@")
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env APRL_TEARDOWN_TRACE=all
+          APRL_TEST_DELAY_H5_CLOSE=1 "LD_PRELOAD=${DURATION_DELAY_LIBRARY}"
+          OMP_NUM_THREADS=1 OMP_DYNAMIC=FALSE APRL_PROFILE_INTERVAL=0
+          "@MPIEXEC_EXECUTABLE@" "@MPIEXEC_NUMPROC_FLAG@" 4
+          ${mpi_preflags} "${APRL_EXECUTABLE}" ${mpi_postflags}
+          "${DURATION_CARD}"
+  WORKING_DIRECTORY "${DURATION_WORK}"
+  RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+  TIMEOUT 45)
+set(log "${output}\n${error}")
+file(WRITE "${DURATION_WORK}/run.log" "${log}")
+file(WRITE "${DURATION_WORK}/EXIT_CODE" "${result}\n")
+
+# Duration exhaustion intentionally remains an unsuccessful physical run.
+# Neither a successful physical stop nor a launcher failure may pass this test.
+if(NOT "${result}" STREQUAL "1" OR NOT log MATCHES
+    "mesh.duration was exhausted before the configured physical stop")
+  message(FATAL_ERROR "unexpected bounded-run exit '${result}':\n${log}")
+endif()
+foreach(marker
+    "DURATION_CLOSE_DELAY_BEGIN file=duration-field.h5 seconds=3"
+    "DURATION_CLOSE_DELAY_COMPLETE file=duration-field.h5")
+  if(NOT log MATCHES "${marker}")
+    message(FATAL_ERROR "root did not finish the injected slow close: ${marker}\n${log}")
+  endif()
+endforeach()
+foreach(phase detector-close-complete ledger-close-complete
+              final-resource-report-complete)
+  if(NOT log MATCHES
+      "\\[teardown\\] rank=0 host=[^ ]+ pid=[0-9]+ elapsed_s=[0-9]+\\.[0-9]+ phase=${phase}")
+    message(FATAL_ERROR "root output-close evidence missing: ${phase}\n${log}")
+  endif()
+endforeach()
+if(NOT log MATCHES "\\[resource\\] phase=final step=8 ")
+  message(FATAL_ERROR "bounded run did not record final step 8:\n${log}")
+endif()
+execute_process(
+  COMMAND "${OUTPUT_CHECKER}" duration-close "${DURATION_WORK}"
+  RESULT_VARIABLE checked OUTPUT_VARIABLE checked_output ERROR_VARIABLE checked_error
+  TIMEOUT 15)
+file(WRITE "${DURATION_WORK}/output-check.log" "${checked_output}\n${checked_error}")
+if(NOT checked EQUAL 0)
+  message(FATAL_ERROR "bounded outputs are not safely closed:\n${checked_output}${checked_error}")
+endif()
+message(STATUS "${checked_output}")

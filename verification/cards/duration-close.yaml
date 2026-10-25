@@ -1,0 +1,49 @@
+units: {length: micrometer, time: femtosecond}
+runtime:
+  mode: throughput
+  resource_monitor: {enabled: true, calibration_steps: 1, progress_interval_steps: 1}
+  shutdown_watchdog: {enabled: true, timeout_seconds: 15, finalize_timeout_seconds: 5}
+output: {overwrite: true, manifest: run-manifest.yaml}
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  cells: [8, 8, 64]
+  cell_size: [0.5, 0.5, 0.1]
+  center: [0.0, 0.0, 0.0]
+  duration: 2.5
+  boost_gamma: 2.0
+  particle_steps_per_undulator_period: 1
+boundary: {type: pec}
+initial_self_field: {enabled: false}
+beam:
+  reference: {initial_center_z: -0.5}
+  input:
+    type: generated-gaussian
+    electrons: 4.0
+    macroparticles: 4
+    gamma: 4.0
+    direction: [0.0, 0.0, 1.0]
+    center: [0.0, 0.0, 0.0]
+    sigma_position: [0.0, 0.0, 0.0]
+    sigma_proper_velocity: [0.0, 0.0, 0.0]
+    random_seed: 20261025
+sources: {incident_waves: [], magnetic_elements: []}
+detectors:
+  enabled: true
+  directory: detectors
+  field_planes:
+    - {name: duration-field, z: 0.0, rhythm: 0.05, buffer_samples: 64, compression: 0}
+  particle_planes:
+    - {name: duration-particles, z: 0.0, buffer_records: 64, compression: 0}
+    - {name: duration-empty-near, z: 5.0, buffer_records: 64, compression: 0}
+    - {name: duration-empty-far, z: 10.0, buffer_records: 64, compression: 0}
+stop: {mode: reference-center-z, z: 100.0}
+trajectory: {enabled: false}
+energy_ledger:
+  enabled: true
+  directory: ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 1
+  buffer_records: 64
+  compression: 0
+  warning_relative_tolerance: 0.05

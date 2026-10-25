@@ -19,6 +19,21 @@ target_compile_options(aprl_shutdown_watchdog_probe PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>
 )
 
+# Delay only a test output's H5Fclose to exercise the non-root abort/root
+# close race without adding a fault-injection hook to production code.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_library(aprl_duration_close_delay SHARED duration_close_delay.cpp)
+  target_include_directories(aprl_duration_close_delay PRIVATE ${HDF5_INCLUDE_DIRS})
+  target_link_libraries(aprl_duration_close_delay PRIVATE
+    MPI::MPI_CXX ${HDF5_LIBRARIES} ${CMAKE_DL_LIBS})
+  target_compile_definitions(aprl_duration_close_delay PRIVATE
+    OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX)
+  target_compile_options(aprl_duration_close_delay PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/check_duration_close.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/check_duration_close.cmake" @ONLY)
+endif()
+
 add_executable(aprl_frozen_plane_scan frozen_plane_scan.cpp)
 target_link_libraries(aprl_frozen_plane_scan PRIVATE direct_eb_core)
 target_compile_options(aprl_frozen_plane_scan PRIVATE
@@ -133,6 +148,19 @@ set_tests_properties(required.runtime.shutdown-watchdog PROPERTIES
   LABELS "required;smoke;mpi"
   TIMEOUT 60
 )
+
+if(TARGET aprl_duration_close_delay)
+  add_test(NAME required.runtime.duration-close
+    COMMAND ${CMAKE_COMMAND}
+      "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl>"
+      "-DDURATION_DELAY_LIBRARY=$<TARGET_FILE:aprl_duration_close_delay>"
+      "-DOUTPUT_CHECKER=$<TARGET_FILE:aprl_output_checks>"
+      "-DDURATION_CARD=${APRL_VERIFY_CARDS}/duration-close.yaml"
+      "-DDURATION_WORK=${APRL_VERIFY_WORK}/duration-close"
+      -P "${CMAKE_CURRENT_BINARY_DIR}/check_duration_close.cmake")
+  set_tests_properties(required.runtime.duration-close PROPERTIES
+    LABELS "required;functional;mpi" TIMEOUT 65 PROCESSORS 4 RUN_SERIAL TRUE)
+endif()
 
 aprl_required_mpi_test(required.lorentz-elegant
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
@@ -601,6 +629,9 @@ if(APRL_BUILD_SASE_BUNCH_GENERATOR)
 endif()
 
 add_dependencies(verify_required aprl_threaded_fields aprl_mpi_overlap_checks)
+if(TARGET aprl_duration_close_delay)
+  add_dependencies(verify_required aprl_duration_close_delay)
+endif()
 add_dependencies(verify_required_no_mpi aprl_threaded_fields)
 if(TARGET aprl_hybrid_output_checks)
   add_dependencies(verify_required aprl_hybrid_output_checks)
