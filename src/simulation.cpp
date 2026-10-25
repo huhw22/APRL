@@ -3030,7 +3030,7 @@ namespace aprl
         for (std::size_t j = jBegin; j < jEnd; ++j)
           for (std::size_t i = iBegin; i < iEnd; ++i)
             energy += static_cast<long double>(
-              fields_->radiationSampleCell(i, j, k).energyDensity) * volume;
+              fields_->fieldEnergyDensityCell(i, j, k)) * volume;
       }
     return energy;
   }
@@ -3069,10 +3069,10 @@ namespace aprl
             for (std::size_t j = jBegin; j < jEnd; ++j)
               {
                 power[0] -= static_cast<long double>(
-                  fields_->radiationSampleCell(lowerI, j, k).poynting[0]) *
+                  fields_->poyntingComponentCell(lowerI, j, k, 0)) *
                   area;
                 power[1] += static_cast<long double>(
-                  fields_->radiationSampleCell(upperI, j, k).poynting[0]) *
+                  fields_->poyntingComponentCell(upperI, j, k, 0)) *
                   area;
               }
           }
@@ -3092,10 +3092,10 @@ namespace aprl
             for (std::size_t i = iBegin; i < iEnd; ++i)
               {
                 power[2] -= static_cast<long double>(
-                  fields_->radiationSampleCell(i, lowerJ, k).poynting[1]) *
+                  fields_->poyntingComponentCell(i, lowerJ, k, 1)) *
                   area;
                 power[3] += static_cast<long double>(
-                  fields_->radiationSampleCell(i, upperJ, k).poynting[1]) *
+                  fields_->poyntingComponentCell(i, upperJ, k, 1)) *
                   area;
               }
           }
@@ -3115,7 +3115,7 @@ namespace aprl
             for (std::size_t j = jBegin; j < jEnd; ++j)
               for (std::size_t i = iBegin; i < iEnd; ++i)
                 power[4] -= static_cast<long double>(
-                  fields_->radiationSampleCell(i, j, k).poynting[2]) * area;
+                  fields_->poyntingComponentCell(i, j, k, 2)) * area;
           }
         if (upperGlobalK >= localZOffset_ &&
             upperGlobalK < localGlobalEnd)
@@ -3124,7 +3124,7 @@ namespace aprl
             for (std::size_t j = jBegin; j < jEnd; ++j)
               for (std::size_t i = iBegin; i < iEnd; ++i)
                 power[5] += static_cast<long double>(
-                  fields_->radiationSampleCell(i, j, k).poynting[2]) * area;
+                  fields_->poyntingComponentCell(i, j, k, 2)) * area;
           }
       }
   }

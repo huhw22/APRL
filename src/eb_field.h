@@ -240,6 +240,14 @@ namespace aprl
     RadiationFieldSample radiationSampleCell(
         std::size_t i, std::size_t j, std::size_t k) const;
 
+    /* Diagnostic-only subsets of radiationSampleCell, with the same Yee
+     * interpolation and arithmetic but no unused radiation quantities. */
+    Double fieldEnergyDensityCell(
+        std::size_t i, std::size_t j, std::size_t k) const;
+    Double poyntingComponentCell(
+        std::size_t i, std::size_t j, std::size_t k,
+        unsigned int axis) const;
+
     /* Transform the sampled field into the lab frame before computing the
      * Poynting vector.  This is the preferred radiation-output boundary. */
     RadiationFieldSample radiationSampleCellLab(
@@ -259,6 +267,14 @@ namespace aprl
         const FieldVector<Double>& positionBoxSI,
         const FieldVector<Double>& originBoxSI,
         const BoostFrameTransform& frame) const;
+
+    /* The E/B-only counterpart of radiationSamplePositionLab. */
+    void sampleFieldsPositionLab(
+        const FieldVector<Double>& positionBoxSI,
+        const FieldVector<Double>& originBoxSI,
+        const BoostFrameTransform& frame,
+        FieldVector<Double>& electricLab,
+        FieldVector<Double>& magneticLab) const;
 
   private:
     friend class EBConvolutionalPML;

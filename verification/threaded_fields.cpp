@@ -212,6 +212,83 @@ namespace
           }
   }
 
+  void requireSameDouble(double actual, double expected,
+                         const std::string& phase)
+  {
+    require(std::isfinite(expected), phase + ": non-finite reference");
+    require(std::memcmp(&actual, &expected, sizeof(double)) == 0,
+      phase + ": diagnostic subset differs bitwise from full sample");
+  }
+
+  void checkDiagnosticSamples(const aprl::EBFieldGrid& fields,
+                              const std::string& phase)
+  {
+    const aprl::EBGridGeometry& geometry = fields.geometry();
+    // The unchanged full-sample implementation is the independent oracle.
+    // Include every cell, so boundary cells and all slab depths are covered.
+    for (std::size_t k = 0; k < geometry.nz; ++k)
+      for (std::size_t j = 0; j < geometry.ny; ++j)
+        for (std::size_t i = 0; i < geometry.nx; ++i)
+          {
+            const aprl::RadiationFieldSample expected =
+              fields.radiationSampleCell(i, j, k);
+            requireSameDouble(fields.fieldEnergyDensityCell(i, j, k),
+                              expected.energyDensity, phase + " energy");
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              requireSameDouble(fields.poyntingComponentCell(i, j, k, axis),
+                                expected.poynting[axis], phase + " flux");
+          }
+
+    aprl::FieldVector<double> origin(0.0);
+    origin[0] = -0.25;
+    origin[1] = 0.5;
+    origin[2] = -0.75;
+    const double cells[3] = {static_cast<double>(geometry.nx),
+                            static_cast<double>(geometry.ny),
+                            static_cast<double>(geometry.nz)};
+    const double spacing[3] = {geometry.dx, geometry.dy, geometry.dz};
+    double coordinates[3][7];
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        // Physical faces, first/last cell centres and fractional positions
+        // exercise the original clamping and eight-term interpolation order.
+        const double lattice[7] = {0.0, 0.5, 0.125 * cells[axis],
+          0.37 * cells[axis], 0.5 * cells[axis], cells[axis] - 0.5,
+          cells[axis]};
+        for (unsigned int index = 0; index < 7; ++index)
+          coordinates[axis][index] = origin[axis] +
+            lattice[index] * spacing[axis];
+      }
+    const double gammas[] = {1.0, 2.0, 1174.0};
+    for (double gamma : gammas)
+      {
+        aprl::BoostFrameTransform frame;
+        frame.setOriginsFromGamma(gamma, aprl::SI::c, 0.13, -0.9, 0.52);
+        for (unsigned int k = 0; k < 7; ++k)
+          for (unsigned int j = 0; j < 7; ++j)
+            for (unsigned int i = 0; i < 7; ++i)
+              {
+                aprl::FieldVector<double> position(0.0);
+                position[0] = coordinates[0][i];
+                position[1] = coordinates[1][j];
+                position[2] = coordinates[2][k];
+                const aprl::RadiationFieldSample expected =
+                  fields.radiationSamplePositionLab(position, origin, frame);
+                aprl::FieldVector<double> electric(17.0);
+                aprl::FieldVector<double> magnetic(-19.0);
+                fields.sampleFieldsPositionLab(position, origin, frame,
+                                                electric, magnetic);
+                for (unsigned int axis = 0; axis < 3; ++axis)
+                  {
+                    requireSameDouble(electric[axis], expected.electric[axis],
+                                      phase + " lab E");
+                    requireSameDouble(magnetic[axis], expected.magnetic[axis],
+                                      phase + " lab B");
+                  }
+              }
+      }
+  }
+
   void compareCowanReference(int provided, int threads,
                              std::size_t nx, std::size_t ny, std::size_t nz,
                              unsigned int haloMask)
@@ -261,6 +338,8 @@ namespace
       std::to_string(nx) + "x" + std::to_string(ny) + "x" +
       std::to_string(nz) + " halo=" + std::to_string(haloMask) +
       " threads=" + std::to_string(threads));
+    checkDiagnosticSamples(actual, "Cowan diagnostic halo=" +
+      std::to_string(haloMask));
   }
 
   void compare(int provided, int threads, aprl::EBMaxwellSolver solver,
@@ -324,6 +403,7 @@ namespace
         parallel.clearCurrent();
         equalFields(serial, parallel, "current clearing");
       }
+    checkDiagnosticSamples(parallel, "evolved Yee/Cowan PEC/CPML diagnostic");
   }
 }
 
@@ -392,6 +472,7 @@ int main(int argc, char** argv)
 #endif
           std::cout << "serial_threaded_fields=bitwise_identical "
                        "cowan_general_reference=bitwise_identical "
+                       "diagnostic_subsets=bitwise_identical "
                        "yee_cowan_cpml_halo=passed max_threads=" << maximum
                     << std::endl;
         }

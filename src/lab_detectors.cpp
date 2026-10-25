@@ -1607,9 +1607,10 @@ namespace aprl
             {
               position[0] = globalOriginBox_[0] +
                 (static_cast<double>(i) + 0.5) * globalGeometry_.dx;
-              const RadiationFieldSample fields =
-                localFields.radiationSamplePositionLab(
-                  position, localOriginBox_, frame_);
+              FieldVector<Double> electricLab(0.0);
+              FieldVector<Double> magneticLab(0.0);
+              localFields.sampleFieldsPositionLab(
+                position, localOriginBox_, frame_, electricLab, magneticLab);
               FieldVector<Double> externalElectric(0.0);
               FieldVector<Double> externalMagnetic(0.0);
               if (externalBackground_)
@@ -1623,9 +1624,9 @@ namespace aprl
                 sample[j * globalGeometry_.nx + i];
               for (unsigned int component = 0; component < 3; ++component)
                 {
-                  point.electric[component] = fields.electric[component] -
+                  point.electric[component] = electricLab[component] -
                     externalElectric[component];
-                  point.magnetic[component] = fields.magnetic[component] -
+                  point.magnetic[component] = magneticLab[component] -
                     externalMagnetic[component];
                 }
             }

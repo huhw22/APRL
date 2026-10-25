@@ -681,6 +681,75 @@ namespace aprl
     return makeRadiationSample(electric, magnetic);
   }
 
+  Double EBFieldGrid::fieldEnergyDensityCell(
+      std::size_t i, std::size_t j, std::size_t k) const
+  {
+    if (i >= geometry_.nx || j >= geometry_.ny || k >= geometry_.nz)
+      throw std::out_of_range("Radiation sample is outside the E/B grid");
+
+    // Keep the collocation and norm expressions identical to the full
+    // radiation sample. The diagnostic does not need its Poynting vector.
+    FieldVector<Double> electric(0.0);
+    electric[0] = 0.25 * (ex_(i, j, k) + ex_(i, j + 1, k) +
+                          ex_(i, j, k + 1) + ex_(i, j + 1, k + 1));
+    electric[1] = 0.25 * (ey_(i, j, k) + ey_(i + 1, j, k) +
+                          ey_(i, j, k + 1) + ey_(i + 1, j, k + 1));
+    electric[2] = 0.25 * (ez_(i, j, k) + ez_(i + 1, j, k) +
+                          ez_(i, j + 1, k) + ez_(i + 1, j + 1, k));
+
+    FieldVector<Double> magnetic(0.0);
+    magnetic[0] = 0.5 * (bx_(i, j, k) + bx_(i + 1, j, k));
+    magnetic[1] = 0.5 * (by_(i, j, k) + by_(i, j + 1, k));
+    magnetic[2] = 0.5 * (bz_(i, j, k) + bz_(i, j, k + 1));
+
+    return 0.5 *
+      (SI::epsilon0 * electric.norm2() + magnetic.norm2() / SI::mu0);
+  }
+
+  Double EBFieldGrid::poyntingComponentCell(
+      std::size_t i, std::size_t j, std::size_t k,
+      unsigned int axis) const
+  {
+    if (i >= geometry_.nx || j >= geometry_.ny || k >= geometry_.nz)
+      throw std::out_of_range("Radiation sample is outside the E/B grid");
+    if (axis >= 3)
+      throw std::out_of_range("Poynting component axis is outside [0, 3)");
+
+    // Only the two transverse E and B components contribute to this face.
+    // Preserve both the collocation sum order and cross-product division.
+    Double electricA, electricB, magneticA, magneticB;
+    if (axis == 0)
+      {
+        electricA = 0.25 * (ey_(i, j, k) + ey_(i + 1, j, k) +
+                             ey_(i, j, k + 1) + ey_(i + 1, j, k + 1));
+        electricB = 0.25 * (ez_(i, j, k) + ez_(i + 1, j, k) +
+                             ez_(i, j + 1, k) + ez_(i + 1, j + 1, k));
+        magneticA = 0.5 * (by_(i, j, k) + by_(i, j + 1, k));
+        magneticB = 0.5 * (bz_(i, j, k) + bz_(i, j, k + 1));
+      }
+    else if (axis == 1)
+      {
+        electricA = 0.25 * (ez_(i, j, k) + ez_(i + 1, j, k) +
+                             ez_(i, j + 1, k) + ez_(i + 1, j + 1, k));
+        electricB = 0.25 * (ex_(i, j, k) + ex_(i, j + 1, k) +
+                             ex_(i, j, k + 1) + ex_(i, j + 1, k + 1));
+        magneticA = 0.5 * (bz_(i, j, k) + bz_(i, j, k + 1));
+        magneticB = 0.5 * (bx_(i, j, k) + bx_(i + 1, j, k));
+      }
+    else
+      {
+        electricA = 0.25 * (ex_(i, j, k) + ex_(i, j + 1, k) +
+                             ex_(i, j, k + 1) + ex_(i, j + 1, k + 1));
+        electricB = 0.25 * (ey_(i, j, k) + ey_(i + 1, j, k) +
+                             ey_(i, j, k + 1) + ey_(i + 1, j, k + 1));
+        magneticA = 0.5 * (bx_(i, j, k) + bx_(i + 1, j, k));
+        magneticB = 0.5 * (by_(i, j, k) + by_(i, j + 1, k));
+      }
+    Double poynting = electricA * magneticB - electricB * magneticA;
+    poynting /= SI::mu0;
+    return poynting;
+  }
+
   RadiationFieldSample EBFieldGrid::radiationSampleCellLab(
       std::size_t i, std::size_t j, std::size_t k,
       const BoostFrameTransform& frame) const
@@ -721,6 +790,21 @@ namespace aprl
     frame.fieldsBoxToLab(electricBox, magneticBox,
                          electricLab, magneticLab);
     return makeRadiationSample(electricLab, magneticLab);
+  }
+
+  void EBFieldGrid::sampleFieldsPositionLab(
+      const FieldVector<Double>& positionBoxSI,
+      const FieldVector<Double>& originBoxSI,
+      const BoostFrameTransform& frame,
+      FieldVector<Double>& electricLab,
+      FieldVector<Double>& magneticLab) const
+  {
+    FieldVector<Double> electricBox(0.0);
+    FieldVector<Double> magneticBox(0.0);
+    sampleFieldsPosition(positionBoxSI, originBoxSI,
+                         electricBox, magneticBox);
+    frame.fieldsBoxToLab(electricBox, magneticBox,
+                         electricLab, magneticLab);
   }
 
   void EBFieldGrid::validateGeometry() const
