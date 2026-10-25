@@ -76,6 +76,18 @@ def build_metadata(binary):
                 selected={key: values[key] for key in CACHE_KEYS})
 
 
+def compiled_revision_evidence(binary):
+    """Read the revision recorded in this Makefile build's core compile flags."""
+    flags = binary.parent / 'CMakeFiles/direct_eb_core.dir/flags.make'
+    if not flags.is_file():
+        raise ValueError('Compiled revision flags are missing: ' + str(flags))
+    text = flags.read_text()
+    matches = re.findall(r'-DAPRL_SOURCE_REVISION=\\"([0-9a-f]{40})\\"(?=\s|$)', text)
+    if len(matches) != 1 or text.count('-DAPRL_SOURCE_REVISION=') != 1:
+        raise ValueError('Expected one full APRL_SOURCE_REVISION in ' + str(flags))
+    return dict(flags=str(flags), flags_sha256=digest(flags), compiled_revision=matches[0])
+
+
 def required_evidence(pass_file, trial):
     """Bind a completed 72-test suite to the exact executable and build cache."""
     root = pass_file.parent
@@ -151,6 +163,9 @@ def prepare(args):
         raise ValueError('Control must be the accepted Cowan executable (dc537da / compiled 77f1ef9)')
     if not re.fullmatch(r'[0-9a-f]{40}', args.trial_revision):
         raise ValueError('--trial-revision must be the full compiled source revision')
+    trial_revision = compiled_revision_evidence(trial)
+    if args.trial_revision != trial_revision['compiled_revision']:
+        raise ValueError('--trial-revision differs from APRL_SOURCE_REVISION in ' + trial_revision['flags'])
     metadata = {name: build_metadata(binary) for name, binary in (('control', control), ('trial', trial))}
     if metadata['control']['selected'] != metadata['trial']['selected']:
         differences = {key: [metadata['control']['selected'][key], metadata['trial']['selected'][key]]
@@ -207,6 +222,7 @@ def prepare(args):
     plan = dict(format='aprl-fixed-mpi-followup-plan-v1', workspace=str(workspace), root=str(root),
                 prepared_at=datetime.now(timezone.utc).isoformat(),
                 source_campaign=str(source), binaries=binaries, runtime_libraries=runtime,
+                trial_compiled_revision=trial_revision,
                 required_regression=required,
                 binding_probe=str(probe), binding_probe_sha256=digest(probe),
                 layout=dict(ranks=4, threads=4, placement='compact', cpus=16),
@@ -224,7 +240,8 @@ def prepare(args):
                         'Communication stages include waiting; nested stage times and rank maxima are not additive.'])
     save(root / 'plan.json', plan)
     frozen = [root / 'plan.json', *sorted(scripts.iterdir()), *sorted(cards.iterdir()),
-              control, trial, probe, *[Path(file) for file in required['files']],
+              control, trial, probe, Path(trial_revision['flags']),
+              *[Path(file) for file in required['files']],
               *[Path(file) for file in runtime_files],
               *[Path(value['cache']) for value in metadata.values()]]
     save(root / 'frozen.json', {str(file): digest(file) for file in frozen})
@@ -481,6 +498,9 @@ def self_test(workspace):
         trial_build = temporary / 'trial-build'; trial_build.mkdir()
         for filename in ('aprl', 'CMakeCache.txt'):
             shutil.copy2(workspace / CONTROL_BUILD / filename, trial_build / filename)
+        flags_relative = Path('CMakeFiles/direct_eb_core.dir/flags.make')
+        (trial_build / flags_relative).parent.mkdir(parents=True)
+        shutil.copy2(workspace / CONTROL_BUILD / flags_relative, trial_build / flags_relative)
         required_dir = temporary / 'metadata-only-required'; required_dir.mkdir()
         evidence = required_dir / 'PASS'
         evidence.write_text('Metadata-only fixture, not a scientific test result.\n')
@@ -520,6 +540,16 @@ def self_test(workspace):
             pass
         else:
             raise AssertionError('Changed frozen card was accepted')
+        args.root = temporary / 'wrong-compiled-revision'
+        args.trial_revision = '0' * 40
+        try:
+            prepare(args)
+        except ValueError as error:
+            assert 'differs from APRL_SOURCE_REVISION' in str(error)
+            assert not args.root.exists()
+        else:
+            raise AssertionError('Incorrect compiled revision was accepted')
+        args.trial_revision = CONTROL_REVISION
         evidence_hashes = required_dir / 'build.sha256'
         good_hashes = evidence_hashes.read_text()
         evidence_hashes.write_text('0' * 64 + '  ' + str(trial_build / 'aprl') + '\n')
@@ -582,7 +612,7 @@ def self_test(workspace):
             assert 'toolchain differs' in str(error)
         else:
             raise AssertionError('Changed compiler flags were accepted')
-    print('Self-test PASS: fixed 4x4 command, paired ordering, exact card copying, frozen-card, required-binary/cache SHA, 72-test evidence/exit-code, stale failure handling, and toolchain mismatch rejection; no compute launched.')
+    print('Self-test PASS: fixed 4x4 command, paired ordering, exact card copying, frozen-card, compiled revision, required-binary/cache SHA, 72-test evidence/exit-code, stale failure handling, and toolchain mismatch rejection; no compute launched.')
 
 
 def main():

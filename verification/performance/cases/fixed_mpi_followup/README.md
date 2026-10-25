@@ -10,7 +10,7 @@ This experiment keeps **4 MPI processes × 4 OpenMP threads** on gnode1's 16 phy
 
 The three cards (`grid016`, `grid128`, `particles262144`) are copied byte-for-byte from the completed memory-scaling campaign. Every run keeps that case's particle weights, mesh, feedback, boundary, initial field tolerance, substeps, physical endpoint, diagnostic cadence, and output cadence. Different cases intentionally differ in work and are not implementation speedups.
 
-Preparation is metadata-only and can run on the login node. Supply the full revision compiled into the trial executable:
+Preparation is metadata-only and can run on the login node. Supply the full revision compiled into the trial executable. Preparation verifies it against `CMakeFiles/direct_eb_core.dir/flags.make` from that same build before creating the result directory, and freezes the flags file; every actual manifest is still checked independently:
 
 ```bash
 /public/home/wfollowm/micromamba/envs/physics/bin/python3 \
