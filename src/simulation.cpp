@@ -4068,6 +4068,14 @@ namespace aprl
         processRetirementSegment(carrier, start, 0.0, true);
       }
 
+    // Store raw geometric hits only. Diagnostic termination and deposition
+    // keep their distinct event-selection rules and floating-point ordering.
+    struct ActiveSegmentBoundaryHits
+    {
+      ParticleBoundaryHit cpmlHit, outerHit, retirementHit;
+      bool entersCpml, exitsOuter, entersRetirement;
+    };
+
     const auto processActiveSegment =
       [&](RelativisticParticleSI particle,
           FieldVector<Double> segmentStart,
@@ -4075,7 +4083,8 @@ namespace aprl
           bool allowTransfer,
           const FieldVector<Double>* activationKink,
           Double activationKinkFraction,
-          bool pendingActivePush)
+          bool pendingActivePush,
+          const ActiveSegmentBoundaryHits* cachedBoundaryHits)
     {
       if (config_.mesh.ballisticOutsideTransverse)
         {
@@ -4261,16 +4270,26 @@ namespace aprl
       const Double interfaceFraction = interfaceCrossing(
         segmentStart, particle.position, crossLower, crossUpper);
       const bool crossesInterface = crossLower || crossUpper;
-      ParticleBoundaryHit cpmlHit;
-      ParticleBoundaryHit outerHit;
-      ParticleBoundaryHit retirementHit;
-      const bool entersCpml = particleCPML_->firstEntry(
-        segmentStart, particle.position, cpmlHit);
-      const bool exitsOuter = particleBoundary_->firstExit(
-        segmentStart, particle.position, outerHit);
-      const bool entersRetirement = labPlaneCrossing(
-        segmentStart, particle.position, segmentStartFraction,
-        config_.particleRetirement.entranceZ, retirementHit);
+      ActiveSegmentBoundaryHits computedBoundaryHits;
+      if (!cachedBoundaryHits)
+        {
+          computedBoundaryHits.entersCpml = particleCPML_->firstEntry(
+            segmentStart, particle.position, computedBoundaryHits.cpmlHit);
+          computedBoundaryHits.exitsOuter = particleBoundary_->firstExit(
+            segmentStart, particle.position, computedBoundaryHits.outerHit);
+          computedBoundaryHits.entersRetirement = labPlaneCrossing(
+            segmentStart, particle.position, segmentStartFraction,
+            config_.particleRetirement.entranceZ,
+            computedBoundaryHits.retirementHit);
+        }
+      const ActiveSegmentBoundaryHits& boundaryHits = cachedBoundaryHits ?
+        *cachedBoundaryHits : computedBoundaryHits;
+      const ParticleBoundaryHit& cpmlHit = boundaryHits.cpmlHit;
+      const ParticleBoundaryHit& outerHit = boundaryHits.outerHit;
+      const ParticleBoundaryHit& retirementHit = boundaryHits.retirementHit;
+      const bool entersCpml = boundaryHits.entersCpml;
+      const bool exitsOuter = boundaryHits.exitsOuter;
+      const bool entersRetirement = boundaryHits.entersRetirement;
 
       enum ActiveEnd { RetainActive, TransferActive,
                        EnterCpml, ExitOuter, EnterRetirement };
@@ -4596,7 +4615,7 @@ namespace aprl
                   }
                 else
                   processActiveSegment(particle, start, 0.0, true,
-                    activationKink, activationKinkFraction, true);
+                    activationKink, activationKinkFraction, true, 0);
                 continue;
               }
 
@@ -4610,7 +4629,7 @@ namespace aprl
                     activeStart, particle, activeStartTime,
                     timeBoxSI_ + globalGeometry_.dt);
                 processActiveSegment(particle, start, 0.0, true,
-                  activationKink, activationKinkFraction, false);
+                  activationKink, activationKinkFraction, false, 0);
                 continue;
               }
 
@@ -4619,17 +4638,16 @@ namespace aprl
             const Double diagnosticStartFraction =
               hasActivationKink ? activationKinkFraction : 0.0;
             ParticleBoundaryHit diagnosticHit;
-            ParticleBoundaryHit cpmlHit;
-            ParticleBoundaryHit outerHit;
-            ParticleBoundaryHit retirementHit;
-            const bool entersCpml = particleCPML_->firstEntry(
-              diagnosticStart, particle.position, cpmlHit);
-            const bool exitsOuter = particleBoundary_->firstExit(
-              diagnosticStart, particle.position, outerHit);
-            const bool entersRetirement = labPlaneCrossing(
+            ActiveSegmentBoundaryHits diagnosticBoundaryHits;
+            diagnosticBoundaryHits.entersCpml = particleCPML_->firstEntry(
+              diagnosticStart, particle.position, diagnosticBoundaryHits.cpmlHit);
+            diagnosticBoundaryHits.exitsOuter = particleBoundary_->firstExit(
+              diagnosticStart, particle.position, diagnosticBoundaryHits.outerHit);
+            diagnosticBoundaryHits.entersRetirement = labPlaneCrossing(
               diagnosticStart, particle.position,
               diagnosticStartFraction,
-              config_.particleRetirement.entranceZ, retirementHit);
+              config_.particleRetirement.entranceZ,
+              diagnosticBoundaryHits.retirementHit);
             bool hasTerminalEvent = false;
             TrajectoryEvent terminalEvent = TrajectoryEvent::DomainExit;
             Double terminalFraction = 1.0;
@@ -4646,11 +4664,14 @@ namespace aprl
                   terminalEvent = event;
                 }
             };
-            selectTerminal(exitsOuter, outerHit,
+            selectTerminal(diagnosticBoundaryHits.exitsOuter,
+                           diagnosticBoundaryHits.outerHit,
                            TrajectoryEvent::DomainExit);
-            selectTerminal(entersCpml, cpmlHit,
+            selectTerminal(diagnosticBoundaryHits.entersCpml,
+                           diagnosticBoundaryHits.cpmlHit,
                            TrajectoryEvent::CpmlEntry);
-            selectTerminal(entersRetirement, retirementHit,
+            selectTerminal(diagnosticBoundaryHits.entersRetirement,
+                           diagnosticBoundaryHits.retirementHit,
                            TrajectoryEvent::RetirementEntry);
             if (config_.energyLedger.enabled)
               energyLedgerPrescribedWork_ +=
@@ -4707,8 +4728,12 @@ namespace aprl
                   diagnosticEnd, diagnosticTime,
                   terminalEvent, diagnosticHit.face);
               }
+            // Without an activation kink, diagnosticStart is exactly start
+            // and diagnosticStartFraction is 0.0, matching this local segment.
+            // Kinked, ballistic and received segments retain their own queries.
             processActiveSegment(particle, start, 0.0, true,
-              activationKink, activationKinkFraction, false);
+              activationKink, activationKinkFraction, false,
+              hasActivationKink ? 0 : &diagnosticBoundaryHits);
           }
 
         performanceSeconds_[ParticleDepositStage] += performanceNow() - depositionStart;
@@ -4746,7 +4771,7 @@ namespace aprl
               processActiveSegment(
                 particle, segmentStart, transfer.segmentStartFraction, false,
                 transfer.hasActivationKink ? &activationKink : 0,
-                transfer.activationKinkFraction, false);
+                transfer.activationKinkFraction, false, 0);
               continue;
             }
 
@@ -4761,7 +4786,7 @@ namespace aprl
               processActiveSegment(
                 particle, segmentStart, transfer.segmentStartFraction, false,
                 transfer.hasActivationKink ? &activationKink : 0,
-                transfer.activationKinkFraction, false);
+                transfer.activationKinkFraction, false, 0);
               if (retained.size() != retainedBefore + 1)
                 throw std::runtime_error(
                   "Cross-rank frozen segment did not reach its activation point");
@@ -4800,7 +4825,7 @@ namespace aprl
               timeBoxSI_ + globalGeometry_.dt);
           processActiveSegment(
             activeEnd, activeStart.position,
-            transfer.activationKinkFraction, false, 0, 0.0, false);
+            transfer.activationKinkFraction, false, 0, 0.0, false, 0);
         }
 
     std::vector<CarrierTransferPacket>& receiveCarrierLower = workspace.receiveCarrierLower;
