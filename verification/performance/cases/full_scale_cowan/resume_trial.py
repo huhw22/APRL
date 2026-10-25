@@ -11,7 +11,8 @@ import run
 def prepare(root, previous, workspace):
     old = json.loads((previous / 'plan.json').read_text())
     submission = json.loads((previous / 'SUBMITTED.json').read_text())
-    run.require(submission['nodes'] == ['node1', 'node8'], 'Reuse requires the original node pair')
+    run.require(len(submission['nodes']) == 2 and submission['ranks'] == 256 and
+                submission['threads_per_rank'] == 1, 'Reuse requires the original two-node 256x1 layout')
     run.require(not (previous / 'trial/aprl.log').exists(), 'Trial already started; do not duplicate it')
     run.require((previous / 'JOB_EXIT_CODE').is_file(), 'Original allocation must have ended')
     for line in (previous / 'frozen.sha256').read_text().splitlines():
@@ -25,11 +26,12 @@ def prepare(root, previous, workspace):
     # Its configuration/manifest retain the original output paths as evidence.
     shutil.copytree(previous / 'control', root / 'control', dirs_exist_ok=True)
     plan['total_limit_s'] = 5400
+    plan['node_selection'] = 'Any two available 128-CPU nodes; no requested node list'
     plan['reused_control'] = {
         'directory': str(previous / 'control'), 'job_id': submission['job_id'],
         'nodes': submission['nodes'], 'method': 'independent copy of closed completed-600-step outputs',
         'control_rerun': False, 'original_failed_check_preserved': str(previous / 'control/check.log')}
-    plan['limitations'].append('The same-node control/trial pair spans two allocations after a checker-only failure; it is not a repeated measurement.')
+    plan['limitations'].append('The control/trial pair spans separate allocations and may use different nodes as explicitly requested; node performance differences may affect timing ratios. This is not a repeated measurement or an isolated same-node implementation-speedup estimate.')
     run.save(root / 'plan.json', plan)
     # Validate the reusable evidence before allocating any new CPU time.
     # Copy only the completed small checks for this offline revalidation;

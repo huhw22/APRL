@@ -43,7 +43,10 @@ control/trial arrays and attributes are still compared bit for bit.
 If a completed control was rejected solely by that checker, resume_trial.py
 can prepare a new directory containing an independent copy of its closed
 outputs. resume-trial.sbatch runs only the missing full-size trial, with
-fresh small preflights and binding on the original node1,node8 allocation.
+fresh small preflights and binding on any two available 128-CPU nodes,
+as requested by the user; neither submission nor runtime pins node names.
 This continuation has a 90-minute total cap and an 80-minute full-run cap.
-The resulting comparison explicitly records that it spans two allocations;
-the original failed job and checker logs remain unchanged.
+The resulting comparison records both node sets and separate allocations.
+Timing ratios may include differences between nodes and cannot be presented
+as an isolated same-node implementation-speedup estimate. The original
+failed job and checker logs remain unchanged.

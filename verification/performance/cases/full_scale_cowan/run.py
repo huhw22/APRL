@@ -466,8 +466,18 @@ def compare(root):
                           'control_s_per_step': old, 'trial_s_per_step': new,
                           'speedup': old / new, 'time_reduction_fraction': 1 - new / old})
     plan = json.loads((root / 'plan.json').read_text())
+    allocation_comparison = None
+    if 'reused_control' in plan:
+        trial_nodes = (root / 'allocation-nodes.txt').read_text().splitlines()
+        require(len(trial_nodes) == plan['nodes'] and len(set(trial_nodes)) == plan['nodes'],
+                'Missing or invalid trial allocation node provenance')
+        control_nodes = plan['reused_control']['nodes']
+        allocation_comparison = {'control_nodes': control_nodes, 'trial_nodes': trial_nodes,
+                                 'same_node_set': set(control_nodes) == set(trial_nodes),
+                                 'separate_allocations': True}
     save(root / 'comparison.json', {'pass': True, 'scientific_comparison': comparison,
-                                    'timing_intervals': intervals, 'limitations': plan['limitations']})
+                                    'timing_intervals': intervals, 'limitations': plan['limitations'],
+                                    'allocation_comparison': allocation_comparison})
     (root / 'PASS').write_text('Bounded same-256-rank comparison complete; partial production timing only.\n')
     print(json.dumps(intervals, indent=2))
 
