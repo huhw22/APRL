@@ -32,6 +32,17 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/check_duration_close.cmake.in"
     "${CMAKE_CURRENT_BINARY_DIR}/check_duration_close.cmake" @ONLY)
+
+  add_library(aprl_duration_barrier_fault SHARED duration_barrier_fault.cpp)
+  target_include_directories(aprl_duration_barrier_fault PRIVATE ${HDF5_INCLUDE_DIRS})
+  target_link_libraries(aprl_duration_barrier_fault PRIVATE
+    MPI::MPI_CXX ${HDF5_LIBRARIES} ${CMAKE_DL_LIBS})
+  target_compile_definitions(aprl_duration_barrier_fault PRIVATE
+    OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX)
+  target_compile_options(aprl_duration_barrier_fault PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+  configure_file("${CMAKE_CURRENT_SOURCE_DIR}/check_duration_barrier_fault.cmake.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/check_duration_barrier_fault.cmake" @ONLY)
 endif()
 
 add_executable(aprl_frozen_plane_scan frozen_plane_scan.cpp)
@@ -160,6 +171,17 @@ if(TARGET aprl_duration_close_delay)
       -P "${CMAKE_CURRENT_BINARY_DIR}/check_duration_close.cmake")
   set_tests_properties(required.runtime.duration-close PROPERTIES
     LABELS "required;functional;mpi" TIMEOUT 65 PROCESSORS 4 RUN_SERIAL TRUE)
+
+  add_test(NAME required.runtime.duration-barrier-watchdog
+    COMMAND ${CMAKE_COMMAND}
+      "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl>"
+      "-DMPI_FAULT_LIBRARY=$<TARGET_FILE:aprl_duration_barrier_fault>"
+      "-DOUTPUT_CHECKER=$<TARGET_FILE:aprl_output_checks>"
+      "-DDURATION_CARD=${APRL_VERIFY_CARDS}/duration-close.yaml"
+      "-DMPI_FAULT_WORK=${APRL_VERIFY_WORK}/duration-barrier-watchdog"
+      -P "${CMAKE_CURRENT_BINARY_DIR}/check_duration_barrier_fault.cmake")
+  set_tests_properties(required.runtime.duration-barrier-watchdog PROPERTIES
+    LABELS "required;functional;mpi" TIMEOUT 50 PROCESSORS 4 RUN_SERIAL TRUE)
 endif()
 
 aprl_required_mpi_test(required.lorentz-elegant
@@ -631,6 +653,7 @@ endif()
 add_dependencies(verify_required aprl_threaded_fields aprl_mpi_overlap_checks)
 if(TARGET aprl_duration_close_delay)
   add_dependencies(verify_required aprl_duration_close_delay)
+  add_dependencies(verify_required aprl_duration_barrier_fault)
 endif()
 add_dependencies(verify_required_no_mpi aprl_threaded_fields)
 if(TARGET aprl_hybrid_output_checks)

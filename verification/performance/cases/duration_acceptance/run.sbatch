@@ -29,7 +29,7 @@ finish() {
   echo "$rc" > "$root/JOB_EXIT_CODE"
   date --iso-8601=seconds > "$root/JOB_ENDED_AT"
   if (( rc == 0 )); then
-    echo 'Required regression, reproduced old race and fixed 256-rank normal/bounded outputs accepted.' > "$root/ACCEPTANCE_PASS"
+    echo 'Required regression, reproduced old race, bounded two-node fault exit and fixed 256-rank normal/bounded outputs accepted.' > "$root/ACCEPTANCE_PASS"
   fi
   exit "$rc"
 }
@@ -83,6 +83,16 @@ timeout --signal=TERM --kill-after=20 900 taskset -c "$ctest_cpus" \
   > required/ctest.log 2>&1
 echo 0 > required/EXIT_CODE
 echo 'All registered required checks passed' > required/PASS
+echo "Verify bounded exit when a peer withholds duration readiness $(date --iso-8601=seconds)"
+cmake -DAPRL_EXECUTABLE="$build/aprl" \
+  -DMPI_FAULT_LIBRARY="$build/verification/libaprl_duration_barrier_fault.so" \
+  -DOUTPUT_CHECKER="$build/verification/aprl_output_checks" \
+  -DDURATION_CARD="$APRL_SOURCE_DIR/verification/cards/duration-close.yaml" \
+  -DMPI_FAULT_WORK="$root/two-node-fault" \
+  -DMPI_FAULT_LAUNCHER="$root/scripts/mpi-launch-two-nodes.sh" \
+  -DMPI_FAULT_RANKS=2 \
+  -P "$build/verification/check_duration_barrier_fault.cmake" \
+  > two-node-fault-driver.log 2>&1
 step=(srun --mpi="$SRUN_MPI" --exact --nodes=2 --ntasks=256 --ntasks-per-node=128 --cpus-per-task=1 --cpu-bind=cores --kill-on-bad-exit=1 --wait=30)
 timeout --signal=TERM --kill-after=10 90 "${step[@]}" \
   "$APRL_WORKSPACE/build/cluster-tools/binding_probe" 256 1 > binding-256.log 2>&1

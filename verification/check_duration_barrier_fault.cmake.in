@@ -1,0 +1,80 @@
+foreach(required APRL_EXECUTABLE MPI_FAULT_LIBRARY OUTPUT_CHECKER
+                 DURATION_CARD MPI_FAULT_WORK)
+  if(NOT DEFINED ${required})
+    message(FATAL_ERROR "duration barrier fault check is missing ${required}")
+  endif()
+endforeach()
+if(NOT DEFINED MPI_FAULT_LAUNCHER)
+  set(MPI_FAULT_LAUNCHER "@MPIEXEC_EXECUTABLE@")
+endif()
+if(NOT DEFINED MPI_FAULT_RANKS)
+  set(MPI_FAULT_RANKS 4)
+endif()
+if(NOT MPI_FAULT_RANKS MATCHES "^[1-9][0-9]*$" OR MPI_FAULT_RANKS LESS 2)
+  message(FATAL_ERROR "duration barrier fault needs at least two MPI ranks")
+endif()
+if(NOT DEFINED MPI_FAULT_PREFLAGS)
+  set(MPI_FAULT_PREFLAGS "@MPIEXEC_PREFLAGS@")
+endif()
+if(NOT DEFINED MPI_FAULT_POSTFLAGS)
+  set(MPI_FAULT_POSTFLAGS "@MPIEXEC_POSTFLAGS@")
+endif()
+
+file(MAKE_DIRECTORY "${MPI_FAULT_WORK}")
+file(READ "${DURATION_CARD}" card)
+if(NOT card MATCHES "timeout_seconds: 15,")
+  message(FATAL_ERROR "duration fixture watchdog setting changed; review fault timing")
+endif()
+string(REPLACE "timeout_seconds: 15," "timeout_seconds: 5," card "${card}")
+file(WRITE "${MPI_FAULT_WORK}/run.yaml" "${card}")
+string(TIMESTAMP started "%s" UTC)
+execute_process(
+  COMMAND "${CMAKE_COMMAND}" -E env APRL_TEARDOWN_TRACE=all
+          APRL_TEST_STALL_DURATION_BARRIER=1 "LD_PRELOAD=${MPI_FAULT_LIBRARY}"
+          OMP_NUM_THREADS=1 OMP_DYNAMIC=FALSE APRL_PROFILE_INTERVAL=0
+          "${MPI_FAULT_LAUNCHER}" "@MPIEXEC_NUMPROC_FLAG@" "${MPI_FAULT_RANKS}"
+          ${MPI_FAULT_PREFLAGS} "${APRL_EXECUTABLE}" ${MPI_FAULT_POSTFLAGS}
+          "${MPI_FAULT_WORK}/run.yaml"
+  WORKING_DIRECTORY "${MPI_FAULT_WORK}"
+  RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error
+  TIMEOUT 30)
+string(TIMESTAMP ended "%s" UTC)
+math(EXPR elapsed "${ended} - ${started}")
+set(log "${output}\n${error}")
+file(WRITE "${MPI_FAULT_WORK}/run.log" "${log}")
+file(WRITE "${MPI_FAULT_WORK}/EXIT_CODE" "${result}\n")
+file(WRITE "${MPI_FAULT_WORK}/ELAPSED_SECONDS" "${elapsed}\n")
+# A CMake execution deadline produces a descriptive string, never the numeric
+# watchdog status below. The peer marker is emitted only by its real _exit(124).
+if(NOT "${result}" STREQUAL "124" OR elapsed LESS 4 OR elapsed GREATER_EQUAL 25)
+  message(FATAL_ERROR "MPI fault did not exit through the five-second local watchdog (result=${result}, elapsed=${elapsed}s):\n${log}")
+endif()
+if(NOT log MATCHES
+    "DURATION_BARRIER_FAULT_READY rank=0 ledger_closed=1 action=withhold-barrier"
+    OR NOT log MATCHES "DURATION_BARRIER_WATCHDOG_EXIT rank=[1-9][0-9]* status=124")
+  message(FATAL_ERROR "missing injected-rank readiness or waiting-peer watchdog proof:\n${log}")
+endif()
+math(EXPR last_rank "${MPI_FAULT_RANKS} - 1")
+foreach(rank RANGE 0 ${last_rank})
+  foreach(phase detector-close-complete ledger-close-complete
+                final-resource-report-complete duration-exhaustion-readiness-sync-enter)
+    if(NOT log MATCHES
+        "\\[teardown\\] rank=${rank} host=[^ ]+ pid=[0-9]+ elapsed_s=[0-9]+\\.[0-9]+ phase=${phase}")
+      message(FATAL_ERROR "rank ${rank} did not close its outputs and reach the target barrier (${phase}):\n${log}")
+    endif()
+  endforeach()
+endforeach()
+if(log MATCHES "phase=duration-exhaustion-readiness-sync-complete"
+    OR log MATCHES "mesh.duration was exhausted before the configured physical stop"
+    OR NOT log MATCHES "\\[resource\\] phase=final step=8 ")
+  message(FATAL_ERROR "fault did not remain at the duration barrier after eight complete steps:\n${log}")
+endif()
+execute_process(
+  COMMAND "${OUTPUT_CHECKER}" duration-close "${MPI_FAULT_WORK}"
+  RESULT_VARIABLE checked OUTPUT_VARIABLE checked_output ERROR_VARIABLE checked_error
+  TIMEOUT 15)
+file(WRITE "${MPI_FAULT_WORK}/output-check.log" "${checked_output}\n${checked_error}")
+if(NOT checked EQUAL 0)
+  message(FATAL_ERROR "watchdog exit lost closed scientific outputs:\n${checked_output}${checked_error}")
+endif()
+message(STATUS "Waiting MPI peer independently exited through watchdog status124 in ${elapsed}s; ${checked_output}")

@@ -318,8 +318,8 @@ seconds for the final MPI reductions, `Simulation` destruction, and
 shorter finalization limit is safe because the normal explicit HDF5 closes and
 the `Simulation` destructor precede it. All ranks then pass a
 `finalize-readiness-sync` barrier under the general 600-second watchdog before
-any rank arms the shorter timer; a fast rank therefore cannot terminate a peer
-that is still closing output. The shorter timer bounds MPI/PMIx runtime cleanup
+any rank arms the shorter timer; the short finalize timeout therefore cannot
+prematurely terminate a peer that is still closing output. The shorter timer bounds MPI/PMIx runtime cleanup
 without shortening either scientific output or general teardown. It is
 deliberately inactive during physical
 stepping and the normal explicit HDF5 close phase. Exceptional stack unwinding
@@ -334,6 +334,17 @@ manifest. `timeout_seconds` and `finalize_timeout_seconds` default to 600 and
 60 respectively. Both must be positive. A finalization timeout still exits
 with status 124; only output-aware campaign logic should decide whether the
 already-closed scientific files are complete enough to retain.
+
+Exhausting `mesh.duration` before the configured physical stop is still a
+failed, incomplete run. After closing its local outputs, each rank enters
+`duration-exhaustion-readiness-sync` before raising that expected error. This
+prevents a fast rank's `MPI_Abort` from interrupting another rank's file close.
+The barrier uses the existing general watchdog, not an unlimited wait: with
+the watchdog enabled and operational, a rank waiting for a missing peer exits
+locally with status 124 after `timeout_seconds`, without requiring MPI to
+respond. Unexpected rank-local exceptions still take the immediate abort
+path. This bounds the protected APRL process phase, not an unresponsive host,
+an earlier HDF5 close, or scheduler cleanup; retain the batch wall-time limit.
 
 For an all-rank trace, interpret each rank's last phase as follows:
 

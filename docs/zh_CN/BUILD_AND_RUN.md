@@ -228,7 +228,14 @@ mpirun aprl config/production.yaml
 `Simulation` 析构、finalize-readiness 同步及 `MPI_Finalize`。每行包含缓存的 MPI rank、主机名、进程号、单调递增的经过时间和阶段名。默认只由 rank 0 打印；诊断性重跑时可设置
 `APRL_TEARDOWN_TRACE=all`，使每个 rank 都打印同样的标记。该变量只改变日志，本身不增加 barrier 或其他 MPI 同步；程序的 finalize-readiness barrier 无论是否启用跟踪都会执行。`MPI_Finalize` 之后的标记只使用缓存的进程信息和本地单调时钟，不再调用 MPI。
 
-与跟踪日志相互独立，默认收尾 watchdog 会给每个 rank 的最终 MPI 汇总、`Simulation` 析构和 `MPI_Abort` 各留 600 秒，但对 `MPI_Finalize` 使用独立的 60 秒上限。正常路径显式关闭 HDF5 输出和 `Simulation` 析构都发生在 `MPI_Finalize` 之前；随后所有 rank 先在通用 600 秒 watchdog 保护下通过 `finalize-readiness-sync` barrier，才允许任何 rank 开启较短计时，因此较快的 rank 不会终止仍在关闭输出的同伴。较短的 finalize 上限只约束 MPI/PMIx 运行时清理，不缩短科学输出或一般收尾时间。APRL 会请求 `MPI_THREAD_FUNNELED`；每个 rank 的一个休眠 watchdog 线程既不调用 MPI，也不参与数值计算。它在物理推进和正常路径显式关闭 HDF5 输出时不启用；异常栈展开则把析构整体纳入保护，其中可能包含析构器的兜底关闭。超时会立即以状态码 124 非零退出；设置 `APRL_TEARDOWN_TRACE=all` 时，每个 rank 最后一条已经刷新的 `[teardown]` 进入标记可指出受保护阶段，从而避免批处理脚本把收尾失败误判为成功。可在 `runtime.shutdown_watchdog` 下分别用 `timeout_seconds` 和 `finalize_timeout_seconds` 配置，默认分别为 600 秒和 60 秒，且都必须为正数；解析后的设置也会写入运行清单。finalize 超时仍是失败状态，只有验证过输出完成元数据的 campaign 才应保留已经关闭的科学文件。
+与跟踪日志相互独立，默认收尾 watchdog 会给每个 rank 的最终 MPI 汇总、`Simulation` 析构和 `MPI_Abort` 各留 600 秒，但对 `MPI_Finalize` 使用独立的 60 秒上限。正常路径显式关闭 HDF5 输出和 `Simulation` 析构都发生在 `MPI_Finalize` 之前；随后所有 rank 先在通用 600 秒 watchdog 保护下通过 `finalize-readiness-sync` barrier，才允许任何 rank 开启较短计时，因此较短的 finalize 超时不会提前终止仍在关闭输出的同伴。较短的 finalize 上限只约束 MPI/PMIx 运行时清理，不缩短科学输出或一般收尾时间。APRL 会请求 `MPI_THREAD_FUNNELED`；每个 rank 的一个休眠 watchdog 线程既不调用 MPI，也不参与数值计算。它在物理推进和正常路径显式关闭 HDF5 输出时不启用；异常栈展开则把析构整体纳入保护，其中可能包含析构器的兜底关闭。超时会立即以状态码 124 非零退出；设置 `APRL_TEARDOWN_TRACE=all` 时，每个 rank 最后一条已经刷新的 `[teardown]` 进入标记可指出受保护阶段，从而避免批处理脚本把收尾失败误判为成功。可在 `runtime.shutdown_watchdog` 下分别用 `timeout_seconds` 和 `finalize_timeout_seconds` 配置，默认分别为 600 秒和 60 秒，且都必须为正数；解析后的设置也会写入运行清单。finalize 超时仍是失败状态，只有验证过输出完成元数据的 campaign 才应保留已经关闭的科学文件。
+
+若 `mesh.duration` 先于配置的物理终点耗尽，运行仍以失败退出，输出仍标为 incomplete。
+每个 rank 关闭自己的输出后，先通过 `duration-exhaustion-readiness-sync`，才抛出这一预期异常，
+避免较快 rank 的 `MPI_Abort` 打断同伴关闭文件。该同步沿用通用 watchdog；在 watchdog 已启用且可用时，
+即使同伴已退出，等待中的 rank 也会在 `timeout_seconds` 后直接以 124 本地退出，不依赖 MPI 响应。
+真正的单 rank 异常仍立即进入原有 abort 路径。此保护约束的是 APRL 中受保护的收尾阶段，
+不保证失联主机、此前的 HDF5 关闭或调度器清理一定及时返回，因此仍需保留作业总时限。
 
 启用全 rank 跟踪后，可按每个 rank 的最后一条标记定位：各组
 `*-enter`/`*-complete` 可直接指出未返回的最终求解操作；看到
