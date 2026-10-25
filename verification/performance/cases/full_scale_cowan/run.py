@@ -207,6 +207,57 @@ def finite(array, label):
         require(np.isfinite(array).all(), 'Nonfinite scientific values: ' + label)
 
 
+def field_cadence_report(times, dt_box_s, boost_gamma, expected_samples,
+                         lab_origin_time_s=0.0):
+    """Check the whole time grid with a bound derived from FP64 rounding.
+
+    The detector writes lab_origin + t_box/gamma + a constant flight time.
+    At a ~19 ns absolute time, adjacent 4.5 as samples cannot have an exactly
+    constant FP64 difference. Anchor every sample to the first timestamp so
+    a cumulative cadence error cannot hide inside independent pairwise tests.
+    """
+    times = np.asarray(times)
+    require(times.dtype == np.dtype('float64') and times.ndim == 1 and
+            len(times) == expected_samples and expected_samples >= 2,
+            'Unexpected field time-grid shape or precision')
+    require(np.isfinite(times).all() and np.all(np.diff(times) > 0),
+            'Nonfinite or nonmonotonic field time grid')
+    require(math.isfinite(dt_box_s) and dt_box_s > 0 and
+            math.isfinite(boost_gamma) and boost_gamma >= 1 and
+            math.isfinite(lab_origin_time_s), 'Invalid cadence reference')
+    wide = np.longdouble
+    k = np.arange(expected_samples, dtype=wide)
+    unit_roundoff = wide(np.finfo(np.float64).eps) / 2
+    require(k[-1] * unit_roundoff < 1, 'Time-grid rounding bound is undefined')
+    dt, gamma = wide(dt_box_s), wide(boost_gamma)
+    exact_offsets = k * dt / gamma
+    measured_offsets = times.astype(wide) - wide(times[0])
+    errors = np.abs(measured_offsets - exact_offsets)
+    # Each persisted endpoint has at most half an ULP of rounding error.
+    ulps = np.abs(np.spacing(times)).astype(wide)
+    endpoint_bound = (ulps + ulps[0]) / 2
+    # t_box += dt is performed once per step. gamma_n bounds the accumulated
+    # FP64 addition error; division and the small lab-origin addition follow
+    # boostframe.cpp::labTFromLabZBoxT. The constant flight term cancels in
+    # anchored differences. The factor two also covers the printed origin's
+    # insignificant decimal rounding when supplied from the simulation log.
+    accumulation_bound = (k * unit_roundoff / (1 - k * unit_roundoff)) * k * dt / gamma
+    conversion_bound = 2 * unit_roundoff * (
+        2 * abs(wide(lab_origin_time_s)) + np.abs(exact_offsets) + accumulation_bound)
+    bound = endpoint_bound + accumulation_bound + conversion_bound
+    require(np.all(errors <= bound), 'Field sampling cadence changed beyond FP64 time-grid rounding')
+    return {'method': 'anchored sample grid with FP64 endpoint ULP and accumulated-time bounds',
+            'samples': int(expected_samples), 'expected_cadence_s': float(dt / gamma),
+            'first_time_s': float(times[0]), 'last_time_s': float(times[-1]),
+            'maximum_absolute_anchor_error_s': float(np.max(errors)),
+            'maximum_allowed_anchor_error_s': float(np.max(bound)),
+            'maximum_error_fraction_of_bound': float(np.max(errors / bound)),
+            'timestamp_ulp_min_s': float(np.min(ulps)),
+            'timestamp_ulp_max_s': float(np.max(ulps)),
+            'maximum_accumulated_box_time_bound_lab_s': float(np.max(accumulation_bound)),
+            'maximum_conversion_roundoff_bound_s': float(np.max(conversion_bound))}
+
+
 def slices(dataset):
     if not dataset.shape:
         yield ()
@@ -374,12 +425,16 @@ def check_run(root, variant):
             'Logged field timestep differs')
     outputs = inspect_outputs(case, False)
     card = read_yaml(case / 'run.yaml')
+    origin = re.search(r'origin_lab_t=([\d.eE+-]+)', log)
+    require(origin is not None, 'Missing Lorentz lab time origin')
+    cadence_reports = []
     for detector in card['detectors']['field_planes']:
         with h5py.File(case / 'detectors' / (detector['name'] + '.h5')) as f:
             g = f['field_plane']
             require(g['fields'].shape == (601, 160, 160), 'Unexpected field sample shape')
-            require(np.allclose(np.diff(g['time_s'][:]), plan['dt_box_s'] / card['mesh']['boost_gamma'],
-                                rtol=1e-8, atol=1e-25), 'Field sampling cadence changed')
+            cadence_reports.append({'detector': detector['name'], **field_cadence_report(
+                g['time_s'][:], plan['dt_box_s'], card['mesh']['boost_gamma'], 601,
+                float(origin.group(1)))})
     with h5py.File(case / 'ledger/energy-ledger.h5') as f:
         records = f['energy_ledger/records'][:]
         require(np.array_equal(records['step'], np.arange(0, 601, 10)), 'Ledger cadence changed')
@@ -390,6 +445,7 @@ def check_run(root, variant):
     report = {'pass': True, 'variant': variant, 'simulation_complete': False,
               'expected_duration_exhaustion': True, 'steps': STEPS, 'exit_code': code,
               'timing_intervals': intervals, 'progress_elapsed_s': points, 'outputs': outputs,
+              'field_cadence_validation': cadence_reports,
               'limitations': plan['limitations']}
     save(case / 'timing-result.json', report)
     (case / 'TIMING_PASS').write_text('600-step bounded timing run checked; not a complete physical simulation.\n')

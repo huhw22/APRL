@@ -32,3 +32,18 @@ job 18893 and default program paths are not modified.
 Read plan.json for the frozen inputs and limits, slurm-JOBID.out for phase
 progress, control/aprl.log and trial/aprl.log for per-50-step elapsed times,
 and comparison.json for the automatic paired result after completion.
+
+Fixed-plane timestamp checks use the stored timestamps' binary64 rounding
+resolution and the accumulated box-time arithmetic error. They check the
+entire sequence against the first time plus n*dt/gamma. A relative tolerance
+on adjacent differences alone was invalid for 19 ns absolute timestamps
+with 4.5 as increments. This changes only the test checker; scientific
+control/trial arrays and attributes are still compared bit for bit.
+
+If a completed control was rejected solely by that checker, resume_trial.py
+can prepare a new directory containing an independent copy of its closed
+outputs. resume-trial.sbatch runs only the missing full-size trial, with
+fresh small preflights and binding on the original node1,node8 allocation.
+This continuation has a 90-minute total cap and an 80-minute full-run cap.
+The resulting comparison explicitly records that it spans two allocations;
+the original failed job and checker logs remain unchanged.
