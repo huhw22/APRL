@@ -197,8 +197,8 @@ def cpml_layers(run_dir):
     return int(cells[0]), int(cells[1]), "transverse CPML excluded using run.yaml"
 
 
-def analyze_field(run_dir, output_dir, block_frames=8, plots=True):
-    path = run_dir / "detectors/exit-field.h5"
+def analyze_field(run_dir, output_dir, block_frames=8, plots=True, field_file=None):
+    path = field_file if field_file is not None else run_dir / "detectors/exit-field.h5"
     cx, cy, aperture_note = cpml_layers(run_dir)
     with h5py.File(path, "r") as handle:
         group = handle["field_plane"]
@@ -231,8 +231,10 @@ def analyze_field(run_dir, output_dir, block_frames=8, plots=True):
         proxy_fluence = np.zeros((ny, nx))
         columns = {"time_lab_s": times, "time_from_first_fs": (times - times[0]) * 1e15}
         for prefix in ("recorded", "physical"):
-            for key in ("net_power_W", "positive_power_W", "negative_power_W", "forward_E_proxy_power_W", "rms_E_V_per_m", "rms_B_T"):
+            for key in ("net_power_W", "positive_power_W", "negative_power_W", "forward_E_proxy_power_W", "rms_E_V_per_m", "rms_B_T", "peak_E_V_per_m"):
                 columns[f"{prefix}_{key}"] = np.empty(n)
+        for letter in "xyz":
+            columns[f"physical_rms_E{letter}_V_per_m"] = np.empty(n)
         for key in ("peak_E_V_per_m", "peak_B_T", "axis_Ex_V_per_m", "axis_Ey_V_per_m", "axis_Ez_V_per_m", "axis_Bx_T", "axis_By_T", "axis_Bz_T"):
             columns[key] = np.empty(n)
         global_peak = -1.0
@@ -266,6 +268,9 @@ def analyze_field(run_dir, output_dir, block_frames=8, plots=True):
                     columns[f"{prefix}_forward_E_proxy_power_W"][index] = p.sum() * dx * dy
                     columns[f"{prefix}_rms_E_V_per_m"][index] = np.sqrt(em2[view].mean())
                     columns[f"{prefix}_rms_B_T"][index] = np.sqrt(bm2[view].mean())
+                    columns[f"{prefix}_peak_E_V_per_m"][index] = np.sqrt(em2[view].max())
+                for component, letter in enumerate("xyz"):
+                    columns[f"physical_rms_E{letter}_V_per_m"][index] = np.sqrt(e2[physical][:, :, component].mean())
                 columns["peak_E_V_per_m"][index] = np.sqrt(em2.max())
                 columns["peak_B_T"][index] = np.sqrt(bm2.max())
                 central_e = electric[np.ix_(centre_y, centre_x)].mean(axis=(0, 1))
@@ -313,6 +318,8 @@ def analyze_field(run_dir, output_dir, block_frames=8, plots=True):
             sub[f"{key}_energy_J"] = float(trapezoid(power, times))
         power = columns[f"{prefix}_net_power_W"]
         sub.update(peak_net_power_W=float(power.max()), minimum_net_power_W=float(power.min()),
+                   peak_E_magnitude_V_per_m=float(peak_e_magnitude[view].max()),
+                   peak_abs_E_components_V_per_m=peak_e[view].max(axis=(0, 1)).tolist(),
                    initial_net_power_W=float(power[0]), final_net_power_W=float(power[-1]),
                    forward_E_proxy_energy_J=float(trapezoid(columns[f"{prefix}_forward_E_proxy_power_W"], times)),
                    space_time_rms_E_V_per_m=float(np.sqrt(np.sum(rms_e[view]**2, axis=2).mean())),
@@ -432,6 +439,9 @@ def main():
     parser.add_argument("--run-dir", type=Path)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--ledger-only", action="store_true")
+    parser.add_argument("--field-only", action="store_true")
+    parser.add_argument("--field-file", type=Path, help="Explicit field-plane HDF5 file; defaults to detectors/exit-field.h5")
+    parser.add_argument("--no-plots", action="store_true", help="Write numerical summaries for separate plotting")
     parser.add_argument("--block-frames", type=int, default=8)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
@@ -442,10 +452,15 @@ def main():
         parser.error("--run-dir and --output-dir are required")
     if args.block_frames < 1:
         parser.error("--block-frames must be positive")
+    if args.field_only and args.ledger_only:
+        parser.error("--field-only and --ledger-only are mutually exclusive")
     args.output_dir.mkdir(parents=True, exist_ok=True)
-    summary = {"ledger": analyze_ledger(args.run_dir, args.output_dir)}
+    summary = {}
+    if not args.field_only:
+        summary["ledger"] = analyze_ledger(args.run_dir, args.output_dir, plots=not args.no_plots)
     if not args.ledger_only:
-        summary["field"] = analyze_field(args.run_dir, args.output_dir, args.block_frames)
+        summary["field"] = analyze_field(args.run_dir, args.output_dir, args.block_frames,
+                                        plots=not args.no_plots, field_file=args.field_file)
     dump_json(args.output_dir / "field_and_ledger_summary.json", summary)
 
 
