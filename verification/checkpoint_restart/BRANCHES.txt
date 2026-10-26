@@ -1,0 +1,65 @@
+Additional branch validation: run_branches.py
+
+This script imports run.py without changing the completed science-r1 harness.
+prepare is read-only with respect to the parent science campaign and only writes
+to a fresh destination. It does not submit Slurm or execute a simulator.
+
+python3 run_branches.py prepare --root /absolute/new-branches-directory \
+  --science-root /absolute/completed-science-directory \
+  --binary /absolute/candidate/aprl
+Then, inside the already approved allocation:
+python3 run_branches.py run --root /absolute/new-branches-directory
+The authorized gnode1 route additionally requires --allow-gnode1. Launcher, ranks,
+threads and per-run timeout are inherited from the completed science campaign.
+Source snapshots, inputs, plan, report and helper scripts are SHA-frozen; no old
+results or production geometry are modified.
+
+Seven positive gates, each compared to its matching cold-start model:
+- Change retirement length10->12um at snapshot7 before any particle entry.
+  Require all64 particles still exist, no retirement carriers and no previous
+  ledger removals. Compare E/B, CPML histories and ordered particles at the branch
+  boundary, all subsequent science rows, and numerical state at55.
+- reset_diagnostics with the field plane moved60->61um, another new field plane
+  at62um and new particle plane70um. Sample fields every Maxwell step so the
+  intentional sample exactly at restart time has an unambiguous cold-run match.
+- Enable a new ballistic reference and validation at snapshot1 before every
+  entrance crossing. Compare full validation result and exact suffix science;
+  the source run had no ballistic-reference diagnostics. The CPML/retirement
+  route remains separate from this analytic-reference route.
+- Automatic observation-bounded longitudinal geometry: restart the existing
+  small auto-longitudinal fixture and require resolved_mesh metadata identical.
+- Nonzero CPML current carriers: reuse the established near-+x-face exit design.
+  All8 real particles enter the CPML on step1, leaving current-only carriers;
+  require that state explicitly, then compare continuation and later snapshot7.
+- Yee+PEC plane-wave TF/SF: nonzero injected wave state at7, then exact continuing
+  scientific data. This checks that restart reconstructs the injector without
+  initializing/adding its wave to the saved grid a second time.
+- A longitudinally extended generated bunch and prescribed dipole: at17 some
+  particles must still be in the interaction region while some are downstream.
+  Decode the saved frame origins/time to assert actual laboratory positions and
+  require nonzero accumulated prescribed-device work before restart. All later
+  science and E/B/CPML/particle/carrier state at55 must remain bitwise identical.
+  These are independent small-fixture values; no production geometry is changed.
+
+The separate already-at-stop negative gate uses a valid downstream stop that the
+saved reference centre already passed. It must fail with the specific restart
+stop diagnostic; a generic configuration rejection or timeout is insufficient.
+
+Native scalar padding is not compared as raw bytes. Portable E/B, CPML history,
+ordered particle and carrier datasets are bitwise compared, and the energy ledger
+checks the saved long-double accumulation through subsequent outputs. Every HDF5
+output must be complete, finite and match committed record counts. Identity fields
+are separately checked before exclusion from science comparisons.
+
+The script is initially a prepared acceptance plan, not an assertion of measured
+PASS. If a physical fixture does not exercise its required state, inspect its log
+and modify the new test template with an explicit explanation. Never relax bitwise
+numerical equality or report missing state coverage as passed. Small-state write
+bandwidth is not a production multi-node filesystem throughput measurement.
+
+branches-r1 checker correction: its step1 reference prefix actually had zero
+entries. The filename substring selector also matched the case directory named
+new-ballistic-reference, wrongly including the ordinary field and ledger counts.
+The new template selects the exact HDF5 group ballistic_reference and requires
+exactly one such prefix plus zero entries. The physical step1 fixture and the
+zero-entry criterion are unchanged; the failed original result is retained.
