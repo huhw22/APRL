@@ -76,9 +76,10 @@ namespace aprl
      * no-crossing steps. */
     void collectParticleCrossings();
 
-    /* Sample due fixed-z field planes.  Only the rank owning the moving
-     * boosted-frame z slice interpolates the x-y plane; rank zero is the sole
-     * HDF5 writer. */
+    /* Sample due fixed-z field planes with the global Yee interpolation
+     * stencil. The owning rank obtains one adjacent Ez/Bx/By layer only when
+     * the stencil crosses an internal z-slab boundary; rank zero is the sole
+     * HDF5 writer. Stored E/B leapfrog times are unchanged. */
     void sampleFieldPlanes(const EBFieldGrid& localFields,
                            Double timeBox);
 

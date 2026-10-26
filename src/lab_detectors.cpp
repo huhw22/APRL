@@ -26,6 +26,75 @@ namespace aprl
   {
     const int CROSSING_EVENT_TAG = 8701;
     const int FIELD_SAMPLE_TAG = 8702;
+    const int FIELD_NEIGHBOUR_TAG = 8703;
+
+    struct FieldInterpolationAxis
+    {
+      std::size_t lower;
+      double fraction;
+    };
+
+    FieldInterpolationAxis interpolationAxis(double lattice, std::size_t size)
+    {
+      FieldInterpolationAxis result;
+      if (lattice <= 0.0)
+        {
+          result.lower = 0;
+          result.fraction = 0.0;
+        }
+      else if (lattice >= static_cast<double>(size - 1))
+        {
+          result.lower = size - 2;
+          result.fraction = 1.0;
+        }
+      else
+        {
+          result.lower = static_cast<std::size_t>(std::floor(lattice));
+          result.fraction = lattice - static_cast<double>(result.lower);
+        }
+      return result;
+    }
+
+    /* Use the global stencil for diagnostics, including its physical-boundary
+     * clamp. Clamping at a local slab boundary instead loses the other half of
+     * the Ez/Bx/By interpolation and makes a moving lab plane jump once per
+     * rank. The optional neighbour is one raw z plane, never propagated state.
+     * Global coordinates also avoid rank-dependent rounding of the z weight. */
+    double sampleDetectorComponent(const YeeComponent& component,
+                                   double latticeX, double latticeY,
+                                   const FieldInterpolationAxis& z,
+                                   std::size_t localZOffset,
+                                   const double* neighbour)
+    {
+      const FieldInterpolationAxis x =
+        interpolationAxis(latticeX, component.nx());
+      const FieldInterpolationAxis y =
+        interpolationAxis(latticeY, component.ny());
+      double value = 0.0;
+      for (unsigned int c = 0; c < 2; ++c)
+        {
+          const double weightZ = c ? z.fraction : 1.0 - z.fraction;
+          if (weightZ == 0.0) continue;
+          const std::size_t globalK = z.lower + c;
+          const bool local = globalK >= localZOffset &&
+            globalK - localZOffset < component.nz();
+          if (!local && !neighbour)
+            throw std::logic_error("Missing field-detector neighbour plane");
+          for (unsigned int b = 0; b < 2; ++b)
+            for (unsigned int a = 0; a < 2; ++a)
+              {
+                const double weightX = a ? x.fraction : 1.0 - x.fraction;
+                const double weightY = b ? y.fraction : 1.0 - y.fraction;
+                const std::size_t i = x.lower + a;
+                const std::size_t j = y.lower + b;
+                const double point = local ?
+                  component(i, j, globalK - localZOffset) :
+                  neighbour[j * component.nx() + i];
+                value += weightX * weightY * weightZ * point;
+              }
+        }
+      return value;
+    }
 
     void requireHandle(hid_t handle, const std::string& message)
     {
@@ -727,6 +796,8 @@ namespace aprl
             writeStringAttribute(group_, "frame", "laboratory");
             writeStringAttribute(group_, "write_mode", "rank-zero-throughput");
             writeStringAttribute(group_, "x_y_sampling", "cell-centres");
+            writeStringAttribute(group_, "spatial_sampling",
+              "global Yee trilinear stencil; adjacent MPI half-cell planes included");
             writeStringAttribute(group_, "magnetic_time_stagger",
               "Yee B is sampled at its stored leapfrog half time");
             writeStringAttribute(group_, "particle_background_status",
@@ -1415,6 +1486,7 @@ namespace aprl
         hasReferencePlanes_(false), hasValidationPlanes_(false),
         fieldRuntime_(config.fieldPlanes.size()), localCrossingEvents_(),
         crossingCounts_(), receivedCrossingEvents_(), fieldSample_(),
+        fieldNeighbour_(),
         fieldWriters_(), particleWriters_(), referenceWriters_(),
         validationEntries_(), validationStats_()
     {
@@ -1664,8 +1736,24 @@ namespace aprl
               timeLab < runtime.nextTimeLab - tolerance)
             continue;
 
+          const double coordinate =
+            (boxZ - globalOriginBox_[2]) / globalGeometry_.dz;
+          const FieldInterpolationAxis halfZ =
+            interpolationAxis(coordinate - 0.5, globalGeometry_.nz);
+          const std::size_t begin = slabOffset(owner);
+          const std::size_t end = slabOffset(owner + 1);
+          int neighbour = -1;
+          if (halfZ.lower < begin && halfZ.fraction != 1.0)
+            neighbour = owner - 1;
+          else if (halfZ.lower + 1 >= end && halfZ.fraction != 0.0)
+            neighbour = owner + 1;
+          if (neighbour >= 0 && neighbour < size_)
+            exchangeFieldNeighbour(localFields, owner, neighbour);
+          else
+            neighbour = -1;
           if (rank_ == owner)
-            samplePlane(localFields, boxZ, plane.z, timeLab, fieldSample_);
+            samplePlane(localFields, coordinate, halfZ, begin,
+                        neighbour >= 0, plane.z, timeLab, fieldSample_);
           const std::size_t points = globalGeometry_.nx * globalGeometry_.ny;
           if (owner != 0)
             {
@@ -1943,6 +2031,61 @@ namespace aprl
     }
 
   private:
+    std::size_t slabOffset(int rank) const
+    {
+      const std::size_t base = globalGeometry_.nz /
+        static_cast<std::size_t>(size_);
+      const std::size_t remainder = globalGeometry_.nz %
+        static_cast<std::size_t>(size_);
+      return base * static_cast<std::size_t>(rank) +
+        std::min(static_cast<std::size_t>(rank), remainder);
+    }
+
+    void exchangeFieldNeighbour(const EBFieldGrid& localFields,
+                                int owner, int neighbour)
+    {
+      if (rank_ != owner && rank_ != neighbour) return;
+      const YeeComponent* components[] = {
+        &localFields.ez(), &localFields.bx(), &localFields.by()
+      };
+      std::size_t values = 0;
+      for (unsigned int component = 0; component < 3; ++component)
+        {
+          const std::size_t count =
+            components[component]->nx() * components[component]->ny();
+          checkedByteCount(count, sizeof(double), "Field detector neighbour");
+          values += count;
+        }
+      const int bytes = checkedByteCount(values, sizeof(double),
+        "Field detector neighbour");
+      fieldNeighbour_.resize(values);
+      int status = MPI_SUCCESS;
+      if (rank_ == neighbour)
+        {
+          std::size_t offset = 0;
+          for (unsigned int component = 0; component < 3; ++component)
+            {
+              const YeeComponent& field = *components[component];
+              const std::size_t count = field.nx() * field.ny();
+              const std::size_t k = neighbour < owner ? field.nz() - 1 : 0;
+              std::copy(field.data() + k * count,
+                        field.data() + (k + 1) * count,
+                        fieldNeighbour_.begin() + offset);
+              offset += count;
+            }
+          status = MPI_Send(fieldNeighbour_.data(), bytes, MPI_BYTE, owner,
+                            FIELD_NEIGHBOUR_TAG, communicator_);
+        }
+      else
+        status = MPI_Recv(fieldNeighbour_.data(), bytes, MPI_BYTE, neighbour,
+                          FIELD_NEIGHBOUR_TAG, communicator_, MPI_STATUS_IGNORE);
+      if (status != MPI_SUCCESS)
+        {
+          MPI_Abort(communicator_, status);
+          throw std::runtime_error("Field detector neighbour transfer failed");
+        }
+    }
+
     int ownerRank(double boxZ) const
     {
       const double coordinate =
@@ -1967,32 +2110,58 @@ namespace aprl
       return static_cast<int>(remainder + (cell - longCells) / base);
     }
 
-    void samplePlane(const EBFieldGrid& localFields, double boxZ,
+    void samplePlane(const EBFieldGrid& localFields, double coordinate,
+                     const FieldInterpolationAxis& halfZ,
+                     std::size_t localZOffset, bool hasNeighbour,
                      double planeZLab, double timeLab,
                      std::vector<FieldPointRecord>& sample) const
     {
       sample.resize(globalGeometry_.nx * globalGeometry_.ny);
+      const FieldInterpolationAxis vertexZ =
+        interpolationAxis(coordinate, globalGeometry_.nz + 1);
+      const double* neighbourEz =
+        hasNeighbour ? fieldNeighbour_.data() : NULL;
+      const double* neighbourBx = hasNeighbour ? neighbourEz +
+        localFields.ez().nx() * localFields.ez().ny() : NULL;
+      const double* neighbourBy = hasNeighbour ? neighbourBx +
+        localFields.bx().nx() * localFields.bx().ny() : NULL;
       FieldVector<Double> position(0.0);
-      position[2] = boxZ;
+      position[2] = planeZLab;
       for (std::size_t j = 0; j < globalGeometry_.ny; ++j)
         {
           position[1] = globalOriginBox_[1] +
             (static_cast<double>(j) + 0.5) * globalGeometry_.dy;
+          const double y =
+            (position[1] - globalOriginBox_[1]) / globalGeometry_.dy;
           for (std::size_t i = 0; i < globalGeometry_.nx; ++i)
             {
               position[0] = globalOriginBox_[0] +
                 (static_cast<double>(i) + 0.5) * globalGeometry_.dx;
+              const double x =
+                (position[0] - globalOriginBox_[0]) / globalGeometry_.dx;
+              FieldVector<Double> electricBox(0.0);
+              FieldVector<Double> magneticBox(0.0);
+              electricBox[0] = sampleDetectorComponent(localFields.ex(),
+                x - 0.5, y, vertexZ, localZOffset, NULL);
+              electricBox[1] = sampleDetectorComponent(localFields.ey(),
+                x, y - 0.5, vertexZ, localZOffset, NULL);
+              electricBox[2] = sampleDetectorComponent(localFields.ez(),
+                x, y, halfZ, localZOffset, neighbourEz);
+              magneticBox[0] = sampleDetectorComponent(localFields.bx(),
+                x, y - 0.5, halfZ, localZOffset, neighbourBx);
+              magneticBox[1] = sampleDetectorComponent(localFields.by(),
+                x - 0.5, y, halfZ, localZOffset, neighbourBy);
+              magneticBox[2] = sampleDetectorComponent(localFields.bz(),
+                x - 0.5, y - 0.5, vertexZ, localZOffset, NULL);
               FieldVector<Double> electricLab(0.0);
               FieldVector<Double> magneticLab(0.0);
-              localFields.sampleFieldsPositionLab(
-                position, localOriginBox_, frame_, electricLab, magneticLab);
+              frame_.fieldsBoxToLab(electricBox, magneticBox,
+                                   electricLab, magneticLab);
               FieldVector<Double> externalElectric(0.0);
               FieldVector<Double> externalMagnetic(0.0);
               if (externalBackground_)
                 {
-                  FieldVector<Double> positionLab(position);
-                  positionLab[2] = planeZLab;
-                  externalBackground_->sampleLab(positionLab, timeLab,
+                  externalBackground_->sampleLab(position, timeLab,
                     externalElectric, externalMagnetic);
                 }
               FieldPointRecord& point =
@@ -2154,6 +2323,9 @@ namespace aprl
     std::vector<unsigned long long> crossingCounts_;
     std::vector<PlaneCrossingWire> receivedCrossingEvents_;
     std::vector<FieldPointRecord> fieldSample_;
+    /* Reused, at most one Ez/Bx/By z layer. No pending MPI or persistent
+     * physical state crosses a sample or a checkpoint boundary. */
+    std::vector<double> fieldNeighbour_;
     std::vector<std::unique_ptr<FieldPlaneWriter> > fieldWriters_;
     std::vector<std::unique_ptr<ParticlePlaneWriter> > particleWriters_;
     std::vector<std::unique_ptr<ParticlePlaneWriter> > referenceWriters_;

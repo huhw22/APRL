@@ -57,6 +57,18 @@ add_executable(aprl_threaded_fields threaded_fields.cpp)
 target_link_libraries(aprl_threaded_fields PRIVATE direct_eb_core)
 add_executable(aprl_mpi_overlap_checks mpi_overlap_checks.cpp)
 target_link_libraries(aprl_mpi_overlap_checks PRIVATE direct_eb_core)
+add_executable(aprl_detector_sampling_checks detector_sampling_checks.cpp)
+target_link_libraries(aprl_detector_sampling_checks PRIVATE direct_eb_core)
+target_compile_options(aprl_detector_sampling_checks PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+foreach(ranks 1 2 4)
+  add_test(NAME required.detector.sampling-${ranks}
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+      ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_detector_sampling_checks>
+      "${APRL_VERIFY_WORK}/detector-sampling-${ranks}" ${MPIEXEC_POSTFLAGS})
+  set_tests_properties(required.detector.sampling-${ranks} PROPERTIES
+    LABELS "required;functional;mpi;detector" TIMEOUT 120)
+endforeach()
 add_test(NAME required.parallel.fields COMMAND aprl_threaded_fields)
 set_tests_properties(required.parallel.fields PROPERTIES
   LABELS "required;functional;parallel" TIMEOUT 120)
@@ -651,6 +663,7 @@ if(APRL_BUILD_SASE_BUNCH_GENERATOR)
 endif()
 
 add_dependencies(verify_required aprl_threaded_fields aprl_mpi_overlap_checks)
+add_dependencies(verify_required aprl_detector_sampling_checks)
 if(TARGET aprl_duration_close_delay)
   add_dependencies(verify_required aprl_duration_close_delay)
   add_dependencies(verify_required aprl_duration_barrier_fault)
