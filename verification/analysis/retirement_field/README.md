@@ -70,3 +70,41 @@ quantified. Signal remains strong at the end (8.826 MW native power), and that
 last sample does not trigger the identified boundary clamp. Neither the slow
 offset nor the terminal signal has been attributed solely to the narrow-peak
 defect. Do not infer pure radiation or complete pulse coverage from these plots.
+
+## Raw time spectra
+
+`analyze_spectra.py` reads a committed, complete raw laboratory field file once,
+then transforms every physical-aperture pixel in time. It averages squared
+Fourier amplitudes across the aperture, never the electric vectors before the
+transform. Electric and `cB` component spectra have units `(V/m)^2/eV` and
+integrate to the discrete space/time mean square. They are not pure-radiation
+energy spectra. The separately saved signed native flux spectrum has units
+`J/eV` and inherits the detector's known spatial and temporal sampling issues.
+
+The principal rectangular-window result retains DC, the native signal, all
+spikes and all frequencies; no mean removal, detrending, background subtraction
+or angular selection is applied. An additional Hann window is divided by
+`sqrt(mean(window**2))` on all six components. Its different temporal weighting
+tests endpoint leakage; it cannot recover missing pulse history. The FFT period
+is `N*dt`, with correct odd/even one-sided factors, and both windows must pass
+component and signed-flux Parseval checks. Native timestamps are accepted only
+when a uniform grid fits to within 1e-4 sample; they are not interpolated.
+
+`spectra.sbatch` scans the preserved original ELEGANT field and the 18893 field
+sequentially. It reserves one exclusive 128-CPU node and 128 GiB for up to
+45 minutes, using eight bound CPU cores for SciPy FFT and one BLAS thread. The
+physical field cube is about 30 GiB per run; only one run is resident at a time.
+Place frozen `analyze_spectra.py` and `spectra.sbatch` in a new result directory's
+`scripts/`, generate `scripts/SPECTRA_SHA256SUMS` relative to that directory,
+then submit with the absolute result-directory and workspace arguments. A
+binding check and odd/even analytic-spectrum self-test precede the scans.
+
+`plot_spectra.py` renders the small results. The two configurations differ in
+detector position, startup, initial-field treatment and longitudinal grid;
+spectral differences are not an isolated absorption comparison. The theoretical
+sampling ceiling is not a physical convergence guarantee. The known MPI
+interface artifact produces different comb spacings for 182 versus 178 cells
+per rank; these are marked rather than removed.
+
+The two-run analysis is in `results/field_spectra_20261027/`, including a
+metadata-only source audit and a separately labelled central-waveform preview.
