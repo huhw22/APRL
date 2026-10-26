@@ -72,9 +72,12 @@ namespace aprl
               bool approximateBoundaryInjection = false);
     void append(const EnergyLedgerRecord& record);
     void flush();
+    /* Explicit snapshot durability; ordinary throughput flush is unchanged. */
+    void flushForCheckpoint();
     void close(bool completed = false);
 
     bool isOpen() const;
+    std::uint64_t committedRecords() const;
     std::size_t memoryBytes() const;
 
     /* Exposed for the small C++ report utility so readers use exactly the

@@ -20,6 +20,9 @@ namespace aprl
     std::string buildDescription;
     std::string mpiLibrary;
     std::string inputParticleIdentity;
+    std::string restartParent;
+    std::size_t restartStep;
+    Double restartTimeBox;
     int mpiSize;
 
     RunMetadata();

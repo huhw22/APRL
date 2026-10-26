@@ -225,6 +225,26 @@ namespace aprl
     OutputPolicyConfig();
   };
 
+  /* Optional synchronous full-state snapshots. Times are absolute box-frame
+   * times in SI after YAML unit conversion; steps count completed field
+   * updates. Restart provenance is filled by the loader of a saved state,
+   * never accepted from the input card. */
+  struct CheckpointConfig
+  {
+    std::string directory;
+    std::vector<std::size_t> steps;
+    std::vector<Double> times;
+    std::string restartFrom;
+    bool allowRetirementChange;
+    bool resetDiagnostics;
+    unsigned int ioTimeoutSeconds;
+    std::size_t restartStep;
+    Double restartTimeBox;
+
+    CheckpointConfig();
+    bool enabled() const;
+  };
+
   struct TrajectoryConfig
   {
     bool enabled;
@@ -366,6 +386,7 @@ namespace aprl
     std::vector<BeamlineElementExtent> beamlineElements;
     RuntimeConfig runtime;
     OutputPolicyConfig output;
+    CheckpointConfig checkpoint;
     StopConfig stop;
     TrajectoryConfig trajectory;
     EnergyLedgerConfig energyLedger;

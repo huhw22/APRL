@@ -2,6 +2,9 @@
 #define DIRECT_EB_LAB_DETECTORS_H
 
 #include <memory>
+#include <cstdint>
+#include <string>
+#include <vector>
 
 #include <mpi.h>
 
@@ -13,6 +16,18 @@
 
 namespace aprl
 {
+  /* An immutable prefix of an existing detector file at a checkpoint.  A
+   * restarted run writes a new segment; reference entries in these prefixes
+   * must remain available to radiation/near-field postprocessing. */
+  struct DetectorCheckpointPrefix
+  {
+    std::string planeName;
+    std::string filename;
+    std::string group;
+    std::uint64_t committedRecords;
+    std::uint64_t validationCommittedRecords;
+  };
+
   /* Detector-only subtraction hook for a known laboratory background such as
    * a future analytical injected laser.  It is deliberately separate from
    * EBFieldGrid: implementations are sampled only while writing a detector
@@ -66,6 +81,19 @@ namespace aprl
      * HDF5 writer. */
     void sampleFieldPlanes(const EBFieldGrid& localFields,
                            Double timeBox);
+
+    /* Checkpoints are taken after collectParticleCrossings and the complete
+     * field-step diagnostics. These methods perform no MPI operations and
+     * are never called on the ordinary, checkpoint-disabled stepping path.
+     * Flush publishes the old output prefix but leaves all writers open.
+     * State is rank-local: the root record additionally owns pending
+     * ballistic-validation entries and cumulative validation statistics. */
+    void flushForCheckpoint();
+    std::vector<unsigned char> checkpointState() const;
+    void restoreCheckpointState(const std::vector<unsigned char>& state);
+    /* Root-only prefixes, available after flushForCheckpoint; empty on
+     * other ranks. Paths are the configured detector output paths. */
+    std::vector<DetectorCheckpointPrefix> checkpointPrefixes() const;
 
     void close(bool completed);
 

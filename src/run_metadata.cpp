@@ -113,7 +113,8 @@ namespace aprl
     : runId(), configurationPath(), configurationDigest(), manifestPath(),
       sourceRevision(APRL_SOURCE_REVISION),
       buildDescription(APRL_BUILD_DESCRIPTION), mpiLibrary(),
-      inputParticleIdentity(), mpiSize(1)
+      inputParticleIdentity(), restartParent(), restartStep(0),
+      restartTimeBox(0.0), mpiSize(1)
   {}
 
   RunMetadata initializeRunMetadata(const SimulationConfig& config,
@@ -128,8 +129,13 @@ namespace aprl
     metadata.configurationPath = config.configurationPath;
     metadata.configurationDigest = config.configurationDigest;
     metadata.manifestPath = config.output.manifest;
-    metadata.inputParticleIdentity = config.beam.type == BeamInputType::Hdf5 ?
-      fileIdentity(config.beam.file) : "generated-gaussian";
+    metadata.restartParent = config.checkpoint.restartFrom;
+    metadata.restartStep = config.checkpoint.restartStep;
+    metadata.restartTimeBox = config.checkpoint.restartTimeBox;
+    metadata.inputParticleIdentity = !metadata.restartParent.empty() ?
+      "checkpoint;" + fileIdentity(metadata.restartParent) :
+      (config.beam.type == BeamInputType::Hdf5 ?
+        fileIdentity(config.beam.file) : "generated-gaussian");
 
     char mpiVersion[MPI_MAX_LIBRARY_VERSION_STRING] = {};
     int mpiVersionLength = 0;
@@ -176,8 +182,21 @@ namespace aprl
                    << "configuration_digest_fnv1a64: "
                    << quoteYaml(metadata.configurationDigest) << "\n"
                    << "particle_input: "
-                   << quoteYaml(metadata.inputParticleIdentity) << "\n"
-                   << "resolved_runtime:\n"
+                   << quoteYaml(metadata.inputParticleIdentity) << "\n";
+            if (!metadata.restartParent.empty())
+              stream << "restart:\n"
+                     << "  parent: " << quoteYaml(metadata.restartParent)
+                     << "\n"
+                     << "  step: " << metadata.restartStep << "\n"
+                     << std::setprecision(17)
+                     << "  time_box_s: " << metadata.restartTimeBox << "\n"
+                     << "  reset_diagnostics: "
+                     << (config.checkpoint.resetDiagnostics ? "true" : "false")
+                     << "\n"
+                     << "  allow_retirement_change: "
+                     << (config.checkpoint.allowRetirementChange ?
+                         "true" : "false") << "\n";
+            stream << "resolved_runtime:\n"
                    << "  shutdown_watchdog:\n"
                    << "    enabled: "
                    << (config.runtime.shutdownWatchdogEnabled ?

@@ -26,6 +26,7 @@
 
 namespace aprl
 {
+  class CheckpointArchive;
   /* Direct SI E/B application path. It deliberately owns no A/phi state. */
   class Simulation
   {
@@ -58,6 +59,14 @@ namespace aprl
     };
 
     void initialize();
+    void loadCheckpointGeometry();
+    void restoreCheckpointFields();
+    void restoreCheckpointDiagnostics();
+    void maybeWriteCheckpoint();
+    void writeCheckpoint(const std::string& path);
+    void transferCheckpointScalars(std::vector<unsigned char>& bytes,
+                                   bool reading, bool geometry);
+    void validateCheckpointBranch() const;
     void preflightOutputPaths() const;
     void initializeGeometry();
     void validateAndReportRadiationResolution() const;
@@ -186,6 +195,14 @@ namespace aprl
     Double retirementExitResidualCharge_;
     std::size_t peakRetirementCarriers_;
     std::string stopReason_;
+    // Allocated/opened only for explicitly requested checkpoint/restart I/O.
+    bool checkpointEnabled_;
+    std::size_t nextCheckpointStep_;
+    std::size_t nextCheckpointTime_;
+    bool retirementChangedOnRestart_;
+    Double initialMaximumLabGamma_;
+    unsigned long long initialGlobalParticleCount_;
+    std::unique_ptr<CheckpointArchive> checkpointReader_;
   };
 }
 

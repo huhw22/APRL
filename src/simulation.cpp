@@ -14,6 +14,7 @@
 #include <sys/stat.h>
 
 #include "particle_initializer.h"
+#include "checkpoint_io.h"
 #include "compute_threads.h"
 #include "runtime_control.h"
 #include "runtime_util.h"
@@ -276,7 +277,11 @@ namespace aprl
       boundaryInjectionWorkSamples_(),
       retirementEntryCount_(0), retirementEntryCharge_(0.0),
       retirementExitCount_(0), retirementExitResidualCharge_(0.0),
-      peakRetirementCarriers_(0), stopReason_()
+    peakRetirementCarriers_(0), stopReason_(),
+    checkpointEnabled_(config.checkpoint.enabled()), nextCheckpointStep_(0),
+    nextCheckpointTime_(0), retirementChangedOnRestart_(false),
+    initialMaximumLabGamma_(1.0), initialGlobalParticleCount_(0),
+    checkpointReader_()
   {
     if (communicator_ == MPI_COMM_NULL)
       throw std::invalid_argument("E/B solver communicator cannot be null");
@@ -344,14 +349,16 @@ namespace aprl
             logRoot(communicator_, message.str());
           }
       }
-    if (config_.trajectory.enabled)
+    if (config_.checkpoint.restartFrom.empty() && config_.trajectory.enabled)
       sampleTrajectory();
-    if (detectors_)
+    if (config_.checkpoint.restartFrom.empty() && detectors_)
       detectors_->sampleFieldPlanes(*fields_, timeBoxSI_);
-    if (config_.energyLedger.enabled)
+    if (config_.checkpoint.restartFrom.empty() && config_.energyLedger.enabled)
       sampleEnergyLedger(true);
+    if (checkpointEnabled_) maybeWriteCheckpoint();
     loopWallStart_ = MPI_Wtime();
     performanceWallStart_ = loopWallStart_;
+    performanceLastStep_ = step_;
 
     while (timeBoxSI_ < totalTimeBoxSI_)
       {
@@ -410,6 +417,7 @@ namespace aprl
         const bool reached = configuredStopReached();
         performanceSeconds_[ControlStage] += performanceNow() - stageStart;
         reportPerformance();
+        if (checkpointEnabled_) maybeWriteCheckpoint();
         if (reached)
           {
             configuredStopReached_ = true;
@@ -495,7 +503,10 @@ namespace aprl
       throw std::runtime_error(
         "Cowan-z field advance is active, but the present TF/SF incident-wave correction is still Yee-specific. Select mesh.field_solver: yee for this run until the generalized Cowan TF/SF stencil is connected; refusing to inject a numerically inconsistent seed field.");
 
-    initializeParticles();
+    if (config_.checkpoint.restartFrom.empty())
+      initializeParticles();
+    else
+      loadCheckpointGeometry();
     runMetadata_ = initializeRunMetadata(config_, communicator_,
       hasLongitudinalLayoutReport_ ? &longitudinalLayoutReport_ : NULL);
     validateAndReportRadiationResolution();
@@ -514,9 +525,14 @@ namespace aprl
           halo_->upperRank() == MPI_PROC_NULL)));
     else
       halo_->installPhysicalBoundaryMask(*fields_);
-    calibrateResourceEstimate();
-    fields_->clearFields();
-    initializeParticleSelfField();
+    if (config_.checkpoint.restartFrom.empty())
+      {
+        calibrateResourceEstimate();
+        fields_->clearFields();
+        initializeParticleSelfField();
+      }
+    else
+      restoreCheckpointFields();
 
     if (sources_.maxwellIncidentWaveCount() > 0)
       {
@@ -526,13 +542,16 @@ namespace aprl
           1, globalGeometry_.nz - 1);
         incident_.reset(new EBMaxwellIncidentInjector(
           localGeometry_, region, localZOffset_, globalGeometry_.nz));
-        incident_->initialize(*fields_, sources_, localOriginBox_,
-                              timeBoxSI_, frame_, false);
+        if (config_.checkpoint.restartFrom.empty())
+          incident_->initialize(*fields_, sources_, localOriginBox_,
+                                timeBoxSI_, frame_, false);
       }
 
     initializeTrajectoryOutput();
     initializeDetectorOutput();
     initializeEnergyLedger();
+    if (!config_.checkpoint.restartFrom.empty())
+      restoreCheckpointDiagnostics();
     reportResourceEstimate();
     const unsigned long long localBoundaryBytes =
       static_cast<unsigned long long>(
@@ -1439,8 +1458,9 @@ namespace aprl
 
     const Double elapsed = loopWallStart_ > 0.0 ?
       MPI_Wtime() - loopWallStart_ : 0.0;
-    const Double secondsPerStep = step_ > 0 ?
-      elapsed / static_cast<Double>(step_) : 0.0;
+    const std::size_t segmentSteps = step_ - config_.checkpoint.restartStep;
+    const Double secondsPerStep = segmentSteps > 0 ?
+      elapsed / static_cast<Double>(segmentSteps) : 0.0;
     const std::size_t remainingSteps =
       estimatedMaximumSteps_ > step_ ?
       estimatedMaximumSteps_ - step_ : 0;
@@ -2677,10 +2697,11 @@ namespace aprl
 
   void Simulation::initializeFieldDetectorRegions()
   {
+    if (config_.checkpoint.restartFrom.empty())
+      {
     const unsigned long long localParticleCount =
       static_cast<unsigned long long>(particles_.size());
-    unsigned long long globalParticleCount = 0;
-    MPI_Allreduce(&localParticleCount, &globalParticleCount, 1,
+    MPI_Allreduce(&localParticleCount, &initialGlobalParticleCount_, 1,
                   MPI_UNSIGNED_LONG_LONG, MPI_SUM, communicator_);
 
     Double localMaximumGamma = 1.0;
@@ -2688,9 +2709,11 @@ namespace aprl
       localMaximumGamma = std::max(localMaximumGamma,
         BoostFrameTransform::gammaFromProperVelocity(
           particles_[index].properVelocity));
-    Double maximumGamma = 1.0;
-    MPI_Allreduce(&localMaximumGamma, &maximumGamma, 1, MPI_DOUBLE,
+    MPI_Allreduce(&localMaximumGamma, &initialMaximumLabGamma_, 1, MPI_DOUBLE,
                   MPI_MAX, communicator_);
+      }
+    const Double maximumGamma = initialMaximumLabGamma_;
+    const unsigned long long globalParticleCount = initialGlobalParticleCount_;
     if (!(maximumGamma >= 1.0) || !std::isfinite(maximumGamma))
       throw std::runtime_error(
         "Cannot derive a finite laboratory gamma for field-detector references");
@@ -2976,8 +2999,11 @@ namespace aprl
       config_.trajectory.bufferRecords, config_.trajectory.compression,
       config_.runtime.interactive(), config_.output.overwrite,
       &runMetadata_);
-    nextTrajectorySampleTime_ = 0.0;
-    trajectorySamplesSinceFlush_ = 0;
+    if (config_.checkpoint.restartFrom.empty())
+      {
+        nextTrajectorySampleTime_ = 0.0;
+        trajectorySamplesSinceFlush_ = 0;
+      }
   }
 
   void Simulation::initializeDetectorOutput()
@@ -3140,7 +3166,8 @@ namespace aprl
         config_.energyLedger.compression,
         config_.runtime.interactive(), config_.output.overwrite,
         &runMetadata_, config_.mesh.ballisticOutsideTransverse);
-    localInteriorBoundaryPower(energyLedgerPreviousPower_);
+    if (config_.checkpoint.restartFrom.empty())
+      localInteriorBoundaryPower(energyLedgerPreviousPower_);
     if (rank_ == 0)
       {
         std::ostringstream message;

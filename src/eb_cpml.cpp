@@ -542,4 +542,37 @@ namespace aprl
   {
     return impl_->memoryBytes();
   }
+
+  std::size_t EBConvolutionalPML::checkpointHistoryCount() const
+  {
+    return 12;
+  }
+
+  std::vector<Double>& EBConvolutionalPML::checkpointHistory(
+      std::size_t index)
+  {
+    if (index >= checkpointHistoryCount())
+      throw std::out_of_range("CPML checkpoint history index is out of range");
+    const unsigned int pairs[6][2] = {
+      {0, 1}, {0, 2}, {1, 2}, {1, 0}, {2, 0}, {2, 1}
+    };
+    const unsigned int component = pairs[index % 6][0];
+    const unsigned int derivative = pairs[index % 6][1];
+    return (index < 6 ? impl_->magneticTerm[component][derivative] :
+                       impl_->electricTerm[component][derivative])->history;
+  }
+
+  const std::vector<Double>& EBConvolutionalPML::checkpointHistory(
+      std::size_t index) const
+  {
+    if (index >= checkpointHistoryCount())
+      throw std::out_of_range("CPML checkpoint history index is out of range");
+    const unsigned int pairs[6][2] = {
+      {0, 1}, {0, 2}, {1, 2}, {1, 0}, {2, 0}, {2, 1}
+    };
+    const unsigned int component = pairs[index % 6][0];
+    const unsigned int derivative = pairs[index % 6][1];
+    return (index < 6 ? impl_->magneticTerm[component][derivative] :
+                       impl_->electricTerm[component][derivative])->history;
+  }
 }

@@ -119,6 +119,14 @@ namespace aprl
     unsigned long long cumulativeCount(ParticleBoundaryFace face) const;
     Double stepCharge(ParticleBoundaryFace face) const;
     Double cumulativeCharge(ParticleBoundaryFace face) const;
+
+    /* Full-step checkpoint state. Face order follows ParticleBoundaryFace.
+     * Per-step flux is intentionally excluded: beginStep clears it before
+     * the next deposition. Restore validates every charge before mutation. */
+    void checkpointCumulative(unsigned long long counts[6],
+                              Double charges[6]) const;
+    void restoreCumulative(const unsigned long long counts[6],
+                           const Double charges[6]);
     std::size_t memoryBytes() const;
     bool retainsSpatialFlux() const;
 

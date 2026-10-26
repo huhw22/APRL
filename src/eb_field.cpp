@@ -253,6 +253,10 @@ namespace aprl
     boundary_ = std::move(boundary);
   }
 
+  EBBoundaryOperator& EBFieldGrid::boundary() { return *boundary_; }
+  const EBBoundaryOperator& EBFieldGrid::boundary() const
+  { return *boundary_; }
+
   void EBFieldGrid::clearFields()
   {
     ex_.fill(0.0); ey_.fill(0.0); ez_.fill(0.0);

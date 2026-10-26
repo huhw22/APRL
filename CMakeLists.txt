@@ -103,6 +103,7 @@ set(DIRECT_EB_SOURCES
   src/boostframe.cpp
   src/compute_threads.cpp
   src/config.cpp
+  src/checkpoint_io.cpp
   src/eb_bunch.cpp
   src/eb_cpml.cpp
   src/eb_deposition.cpp
@@ -123,6 +124,7 @@ set(DIRECT_EB_SOURCES
   src/runtime_util.cpp
   src/shutdown_watchdog.cpp
   src/simulation.cpp
+  src/simulation_checkpoint.cpp
   src/teardown_trace.cpp
   src/trajectory_writer.cpp
 )

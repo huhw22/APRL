@@ -86,12 +86,19 @@ namespace aprl
         "units", "runtime", "mesh", "radiation_resolution", "boundary",
         "initial_self_field", "beam", "sources", "detectors",
         "particle_retirement", "stop", "trajectory", "energy_ledger",
-        "output"
+        "output", "checkpoint"
       });
 
       const YAML::Node output = root["output"];
       if (output)
         validateMapKeys(output, "output", {"overwrite", "manifest"});
+
+      const YAML::Node checkpoint = root["checkpoint"];
+      if (checkpoint)
+        validateMapKeys(checkpoint, "checkpoint", {
+          "directory", "steps", "times", "restart_from",
+          "allow_retirement_change", "reset_diagnostics", "io_timeout_seconds"
+        });
 
       const YAML::Node units = root["units"];
       if (units)
@@ -352,6 +359,37 @@ namespace aprl
       if (value < 0)
         throw configError(node, name + " must be a nonnegative integer");
       return static_cast<std::size_t>(value);
+    }
+
+    std::size_t checkpointSize(const YAML::Node& node,
+                               const std::string& name)
+    {
+      std::size_t value = 0;
+      try
+        {
+          if (!node.IsScalar() || node.Scalar().empty() ||
+              node.Scalar()[0] == '-')
+            throw configError(node, name + " must be a nonnegative integer");
+          value = node.as<std::size_t>();
+        }
+      catch (const YAML::Exception&)
+        {
+          throw configError(node, name +
+            " must be a nonnegative integer in the supported size range");
+        }
+      return value;
+    }
+
+    std::string checkpointPath(const YAML::Node& node,
+                               const std::string& name)
+    {
+      if (!node.IsScalar())
+        throw configError(node, name + " must be a nonempty path");
+      const std::string value = node.as<std::string>();
+      if (value.find_first_not_of(" \t\r\n") == std::string::npos ||
+          value.find('\0') != std::string::npos)
+        throw configError(node, name + " must be a nonempty path without NUL bytes");
+      return value;
     }
 
     void cpmlCells(const YAML::Node& node, std::size_t result[3])
@@ -688,6 +726,17 @@ namespace aprl
     : overwrite(false), manifest("run-manifest.yaml")
   {}
 
+  CheckpointConfig::CheckpointConfig()
+    : directory("checkpoints"), steps(), times(), restartFrom(),
+      allowRetirementChange(false), resetDiagnostics(false),
+      ioTimeoutSeconds(3600), restartStep(0), restartTimeBox(0.0)
+  {}
+
+  bool CheckpointConfig::enabled() const
+  {
+    return !steps.empty() || !times.empty();
+  }
+
   bool RuntimeConfig::interactive() const
   {
     return mode == RuntimeMode::Interactive;
@@ -778,6 +827,69 @@ namespace aprl
       {
         result.inputUnits.length = lengthScale(required(units, "length"));
         result.inputUnits.time = timeScale(required(units, "time"));
+      }
+
+    const YAML::Node checkpoint = root["checkpoint"];
+    if (checkpoint)
+      {
+        if (checkpoint["directory"])
+          result.checkpoint.directory = checkpointPath(
+            checkpoint["directory"], "checkpoint directory");
+        if (checkpoint["restart_from"])
+          result.checkpoint.restartFrom = checkpointPath(
+            checkpoint["restart_from"], "checkpoint restart_from");
+        if (checkpoint["allow_retirement_change"])
+          result.checkpoint.allowRetirementChange =
+            checkpoint["allow_retirement_change"].as<bool>();
+        if (checkpoint["reset_diagnostics"])
+          result.checkpoint.resetDiagnostics =
+            checkpoint["reset_diagnostics"].as<bool>();
+        if (checkpoint["io_timeout_seconds"])
+          {
+            const std::size_t timeout = checkpointSize(
+              checkpoint["io_timeout_seconds"],
+              "checkpoint io_timeout_seconds");
+            if (timeout == 0 ||
+                timeout > std::numeric_limits<unsigned int>::max())
+              throw configError(checkpoint["io_timeout_seconds"],
+                "checkpoint io_timeout_seconds must be a positive unsigned integer");
+            result.checkpoint.ioTimeoutSeconds =
+              static_cast<unsigned int>(timeout);
+          }
+        const YAML::Node steps = checkpoint["steps"];
+        if (steps)
+          {
+            if (!steps.IsSequence())
+              throw configError(steps, "checkpoint steps must be a sequence");
+            for (std::size_t i = 0; i < steps.size(); ++i)
+              result.checkpoint.steps.push_back(checkpointSize(
+                steps[i], "checkpoint step"));
+            std::sort(result.checkpoint.steps.begin(),
+                      result.checkpoint.steps.end());
+            result.checkpoint.steps.erase(std::unique(
+              result.checkpoint.steps.begin(), result.checkpoint.steps.end()),
+              result.checkpoint.steps.end());
+          }
+        const YAML::Node times = checkpoint["times"];
+        if (times)
+          {
+            if (!times.IsSequence())
+              throw configError(times, "checkpoint times must be a sequence");
+            for (std::size_t i = 0; i < times.size(); ++i)
+              {
+                const Double time = finiteDouble(times[i],
+                  "checkpoint time") * result.inputUnits.time;
+                if (!(time >= 0.0) || !std::isfinite(time))
+                  throw configError(times[i],
+                    "checkpoint time must be finite and nonnegative after SI conversion");
+                result.checkpoint.times.push_back(time);
+              }
+            std::sort(result.checkpoint.times.begin(),
+                      result.checkpoint.times.end());
+            result.checkpoint.times.erase(std::unique(
+              result.checkpoint.times.begin(), result.checkpoint.times.end()),
+              result.checkpoint.times.end());
+          }
       }
 
     const YAML::Node runtime = root["runtime"];

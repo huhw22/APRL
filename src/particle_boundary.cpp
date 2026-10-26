@@ -411,6 +411,28 @@ namespace aprl
     return cumulativeCharge_[faceIndex(face)];
   }
 
+  void ParticleOpenBoundary::checkpointCumulative(
+      unsigned long long counts[6], Double charges[6]) const
+  {
+    if (!counts || !charges)
+      throw std::invalid_argument("Boundary checkpoint arrays cannot be null");
+    std::copy(cumulativeCount_, cumulativeCount_ + 6, counts);
+    std::copy(cumulativeCharge_, cumulativeCharge_ + 6, charges);
+  }
+
+  void ParticleOpenBoundary::restoreCumulative(
+      const unsigned long long counts[6], const Double charges[6])
+  {
+    if (!counts || !charges)
+      throw std::invalid_argument("Boundary checkpoint arrays cannot be null");
+    for (std::size_t face = 0; face < 6; ++face)
+      if (!std::isfinite(charges[face]))
+        throw std::invalid_argument(
+          "Boundary checkpoint cumulative charge must be finite");
+    std::copy(counts, counts + 6, cumulativeCount_);
+    std::copy(charges, charges + 6, cumulativeCharge_);
+  }
+
   std::size_t ParticleOpenBoundary::memoryBytes() const
   {
     std::size_t bytes = 0;

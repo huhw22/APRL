@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <memory>
+#include <vector>
 
 #include "eb_field.h"
 
@@ -42,6 +43,14 @@ namespace aprl
         EBFieldGrid& fields, const EBElectricHaloView& halo);
     virtual void afterElectricUpdate(EBFieldGrid& fields);
     virtual std::size_t memoryBytes() const;
+
+    /* Checkpoint order is magnetic then electric, each with derivative
+     * pairs (component, axis): (0,1), (0,2), (1,2), (1,0), (2,0), (2,1).
+     * Restore values into the existing history; never resize these arrays.
+     * Geometry and CPML parameters must match before restoring a history. */
+    std::size_t checkpointHistoryCount() const;
+    std::vector<Double>& checkpointHistory(std::size_t index);
+    const std::vector<Double>& checkpointHistory(std::size_t index) const;
 
   private:
     struct Impl;

@@ -144,6 +144,21 @@ namespace aprl
     armWithTimeout(true);
   }
 
+  bool armCheckpointWatchdog(unsigned int timeoutSeconds)
+  {
+    ShutdownWatchdogState& state = watchdogState;
+    std::lock_guard<std::mutex> lock(state.mutex);
+    if (!state.initialized || !state.available || state.stop ||
+        timeoutSeconds == 0)
+      return false;
+    state.armed = true;
+    state.deadline = WatchdogClock::now() +
+      std::chrono::seconds(timeoutSeconds);
+    ++state.generation;
+    state.changed.notify_all();
+    return true;
+  }
+
   void disarmShutdownWatchdog()
   {
     ShutdownWatchdogState& state = watchdogState;

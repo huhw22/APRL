@@ -213,6 +213,8 @@ namespace aprl
     const YeeComponent& jz() const;
 
     void setBoundary(std::unique_ptr<EBBoundaryOperator> boundary);
+    EBBoundaryOperator& boundary();
+    const EBBoundaryOperator& boundary() const;
 
     void clearFields();
     void clearCurrent();

@@ -62,6 +62,8 @@ namespace aprl
               const RunMetadata* metadata = NULL);
     void append(const TrajectoryRecord& record);
     void flush();
+    /* Explicit snapshot durability; ordinary throughput flush is unchanged. */
+    void flushForCheckpoint();
 
     /* completed=false marks an intentionally interrupted or partial run. */
     void close(bool completed = false);

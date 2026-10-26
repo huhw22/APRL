@@ -16,6 +16,20 @@ namespace aprl
     {
       if (status < 0) throw std::runtime_error(message);
     }
+
+    void writeRestartScalar(hid_t object, const char* name, hid_t fileType,
+                            hid_t memoryType, const void* value)
+    {
+      hid_t space = H5Screate(H5S_SCALAR);
+      requireHandle(space, "Cannot create restart attribute space");
+      hid_t attribute = H5Acreate2(object, name, fileType, space,
+                                  H5P_DEFAULT, H5P_DEFAULT);
+      H5Sclose(space);
+      requireHandle(attribute, std::string("Cannot create restart attribute: ") + name);
+      const herr_t status = H5Awrite(attribute, memoryType, value);
+      H5Aclose(attribute);
+      requireStatus(status, std::string("Cannot write restart attribute: ") + name);
+    }
   }
 
   TrajectoryRecord::TrajectoryRecord()
@@ -269,6 +283,17 @@ namespace aprl
               metadata->sourceRevision);
             writeStringAttribute(group_, "run_manifest",
               metadata->manifestPath);
+            if (!metadata->restartParent.empty())
+              {
+                writeStringAttribute(group_, "restart_parent", metadata->restartParent);
+                const std::uint64_t step = metadata->restartStep;
+                writeRestartScalar(group_, "restart_step", H5T_STD_U64LE,
+                  H5T_NATIVE_UINT64, &step);
+                writeRestartScalar(group_, "restart_time_box_s", H5T_IEEE_F64LE,
+                  H5T_NATIVE_DOUBLE, &metadata->restartTimeBox);
+                writeStringAttribute(group_, "output_scope",
+                  "restart-segment; earlier records belong to the checkpoint parent prefixes");
+              }
           }
 
         if (durableProgress_)
@@ -374,6 +399,15 @@ namespace aprl
       }
     committedRecords_ = newCommitted;
     buffer_.clear();
+  }
+
+  void TrajectoryWriter::flushForCheckpoint()
+  {
+    if (!isOpen_)
+      throw std::runtime_error("Cannot checkpoint a closed output writer");
+    flush();
+    requireStatus(H5Fflush(file_, H5F_SCOPE_GLOBAL),
+      "Cannot flush checkpoint output prefix");
   }
 
   void TrajectoryWriter::close(bool completed)

@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -192,6 +193,126 @@ namespace aprl
       std::uint32_t destination;
       std::uint32_t detectorIndex;
       ParticlePlaneRecord record;
+    };
+
+    /* Explicit little-endian fields: no C++ object padding, pointers, or
+     * HDF5 handles enter the checkpoint. Floating-point bits are preserved. */
+    class DetectorStateWriter
+    {
+    public:
+      std::vector<unsigned char> bytes;
+      void integer(std::uint64_t value)
+      {
+        for (unsigned int i = 0; i < 8; ++i)
+          bytes.push_back(static_cast<unsigned char>(value >> (8 * i)));
+      }
+      void real(double value)
+      {
+        static_assert(sizeof(double) == sizeof(std::uint64_t),
+          "Detector checkpoints require binary64 doubles");
+        std::uint64_t bits = 0;
+        std::memcpy(&bits, &value, sizeof(bits));
+        integer(bits);
+      }
+      void text(const std::string& value)
+      {
+        integer(value.size());
+        bytes.insert(bytes.end(), value.begin(), value.end());
+      }
+      void particle(const ParticlePlaneRecord& value)
+      {
+        integer(value.particleId); integer(value.sourceId); real(value.time);
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          real(value.position[axis]);
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          real(value.properVelocity[axis]);
+        real(value.charge); real(value.mass); real(value.weight);
+        integer(value.direction == 1 ? 1 : 0);
+      }
+      void stats(const BallisticValidationStats& value)
+      {
+        integer(value.matched); integer(value.duplicateEntries);
+        integer(value.unmatchedExits); integer(value.invalidPredictions);
+        real(value.transverseSquared); real(value.timeSquared);
+        real(value.relativeProperVelocitySquared); real(value.directionSquared);
+        real(value.maximumTransverse); real(value.maximumAbsoluteTime);
+        real(value.maximumRelativeProperVelocity); real(value.maximumDirection);
+      }
+    };
+
+    class DetectorStateReader
+    {
+    public:
+      explicit DetectorStateReader(const std::vector<unsigned char>& bytes)
+        : bytes_(bytes), offset_(0) {}
+      std::size_t remaining() const { return bytes_.size() - offset_; }
+      std::uint64_t integer()
+      {
+        if (remaining() < 8)
+          throw std::runtime_error("Truncated detector checkpoint state");
+        std::uint64_t value = 0;
+        for (unsigned int i = 0; i < 8; ++i)
+          value |= static_cast<std::uint64_t>(bytes_[offset_++]) << (8 * i);
+        return value;
+      }
+      double real()
+      {
+        const std::uint64_t bits = integer();
+        double value = 0.0;
+        std::memcpy(&value, &bits, sizeof(value));
+        if (!std::isfinite(value))
+          throw std::runtime_error("Non-finite detector checkpoint state");
+        return value;
+      }
+      bool flag()
+      {
+        const std::uint64_t value = integer();
+        if (value > 1)
+          throw std::runtime_error("Invalid detector checkpoint flag");
+        return value != 0;
+      }
+      std::string text()
+      {
+        const std::uint64_t count = integer();
+        if (count > remaining())
+          throw std::runtime_error("Truncated detector checkpoint name");
+        const std::size_t length = static_cast<std::size_t>(count);
+        std::string value(bytes_.begin() + offset_,
+                          bytes_.begin() + offset_ + length);
+        offset_ += length;
+        return value;
+      }
+      ParticlePlaneRecord particle()
+      {
+        ParticlePlaneRecord value = {};
+        value.particleId = integer(); value.sourceId = integer();
+        value.time = real();
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          value.position[axis] = real();
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          value.properVelocity[axis] = real();
+        value.charge = real(); value.mass = real(); value.weight = real();
+        value.direction = flag() ? 1 : -1;
+        if (!(value.mass > 0.0) || !(value.weight > 0.0))
+          throw std::runtime_error("Invalid checkpoint validation particle");
+        return value;
+      }
+      BallisticValidationStats stats()
+      {
+        BallisticValidationStats value;
+        value.matched = integer(); value.duplicateEntries = integer();
+        value.unmatchedExits = integer(); value.invalidPredictions = integer();
+        value.transverseSquared = real(); value.timeSquared = real();
+        value.relativeProperVelocitySquared = real();
+        value.directionSquared = real(); value.maximumTransverse = real();
+        value.maximumAbsoluteTime = real();
+        value.maximumRelativeProperVelocity = real();
+        value.maximumDirection = real();
+        return value;
+      }
+    private:
+      const std::vector<unsigned char>& bytes_;
+      std::size_t offset_;
     };
 
     hid_t createFieldMemoryType()
@@ -680,6 +801,14 @@ namespace aprl
                   metadata->sourceRevision);
                 writeStringAttribute(group_, "run_manifest",
                   metadata->manifestPath);
+                if (!metadata->restartParent.empty())
+                  {
+                    writeStringAttribute(group_, "restart_parent", metadata->restartParent);
+                    writeUnsignedAttribute(group_, "restart_step", metadata->restartStep);
+                    writeDoubleAttribute(group_, "restart_time_box_s", metadata->restartTimeBox);
+                    writeStringAttribute(group_, "output_scope",
+                      "restart-segment; earlier records belong to the checkpoint parent prefixes");
+                  }
               }
             open_ = true;
           }
@@ -758,6 +887,21 @@ namespace aprl
           "Cannot update field-detector commit marker");
         times_.clear();
         fields_.clear();
+      }
+
+      void flushForCheckpoint()
+      {
+        if (!open_) throw std::runtime_error("Cannot checkpoint closed field output");
+        flush();
+        requireStatus(H5Fflush(file_, H5F_SCOPE_GLOBAL),
+          "Cannot flush checkpoint field-output prefix");
+      }
+
+      std::uint64_t checkpointPrefix() const
+      {
+        if (!open_ || !times_.empty())
+          throw std::runtime_error("Field-output checkpoint prefix needs a flush");
+        return committed_;
       }
 
       void close(bool completed)
@@ -1019,6 +1163,14 @@ namespace aprl
                   metadata->sourceRevision);
                 writeStringAttribute(group_, "run_manifest",
                   metadata->manifestPath);
+                if (!metadata->restartParent.empty())
+                  {
+                    writeStringAttribute(group_, "restart_parent", metadata->restartParent);
+                    writeUnsignedAttribute(group_, "restart_step", metadata->restartStep);
+                    writeDoubleAttribute(group_, "restart_time_box_s", metadata->restartTimeBox);
+                    writeStringAttribute(group_, "output_scope",
+                      "restart-segment; earlier records belong to the checkpoint parent prefixes");
+                  }
               }
             open_ = true;
           }
@@ -1145,6 +1297,28 @@ namespace aprl
           std::sqrt(stats.directionSquared * inverseCount));
         writeDoubleAttribute(group_, "validation_max_direction_error_rad",
           stats.maximumDirection);
+      }
+
+      void flushForCheckpoint()
+      {
+        if (!open_) throw std::runtime_error("Cannot checkpoint closed particle output");
+        flush();
+        flushValidation();
+        requireStatus(H5Fflush(file_, H5F_SCOPE_GLOBAL),
+          "Cannot flush checkpoint particle-output prefix");
+      }
+
+      std::uint64_t checkpointPrefix() const
+      {
+        if (!open_ || !buffer_.empty() || !validationBuffer_.empty())
+          throw std::runtime_error("Particle-output checkpoint prefix needs a flush");
+        return committed_;
+      }
+
+      std::uint64_t checkpointValidationPrefix() const
+      {
+        checkpointPrefix();
+        return validationCommitted_;
       }
 
       void close(bool completed)
@@ -1523,6 +1697,207 @@ namespace aprl
         }
     }
 
+    void flushForCheckpoint()
+    {
+      if (closed_ || !localCrossingEvents_.empty())
+        throw std::runtime_error(
+          "Detector checkpoint requires open outputs and a complete particle step");
+      if (rank_ != 0) return;
+      for (std::size_t i = 0; i < fieldWriters_.size(); ++i)
+        fieldWriters_[i]->flushForCheckpoint();
+      for (std::size_t i = 0; i < particleWriters_.size(); ++i)
+        particleWriters_[i]->flushForCheckpoint();
+      for (std::size_t i = 0; i < referenceWriters_.size(); ++i)
+        if (referenceWriters_[i]) referenceWriters_[i]->flushForCheckpoint();
+    }
+
+    std::vector<DetectorCheckpointPrefix> checkpointPrefixes() const
+    {
+      if (closed_ || !localCrossingEvents_.empty())
+        throw std::runtime_error("Detector checkpoint prefixes need a complete step");
+      std::vector<DetectorCheckpointPrefix> result;
+      if (rank_ != 0) return result;
+      for (std::size_t i = 0; i < fieldWriters_.size(); ++i)
+        {
+          DetectorCheckpointPrefix prefix;
+          prefix.planeName = config_.fieldPlanes[i].name;
+          prefix.filename = joinPath(config_.directory, prefix.planeName + ".h5");
+          prefix.group = "/field_plane";
+          prefix.committedRecords = fieldWriters_[i]->checkpointPrefix();
+          prefix.validationCommittedRecords = 0;
+          result.push_back(prefix);
+          if (referenceWriters_[i])
+            {
+              prefix.filename = joinPath(config_.directory,
+                prefix.planeName + "-ballistic-reference.h5");
+              prefix.group = "/ballistic_reference";
+              prefix.committedRecords = referenceWriters_[i]->checkpointPrefix();
+              prefix.validationCommittedRecords =
+                referenceWriters_[i]->checkpointValidationPrefix();
+              result.push_back(prefix);
+            }
+        }
+      for (std::size_t i = 0; i < particleWriters_.size(); ++i)
+        {
+          DetectorCheckpointPrefix prefix;
+          prefix.planeName = config_.particlePlanes[i].name;
+          prefix.filename = joinPath(config_.directory, prefix.planeName + ".h5");
+          prefix.group = "/particle_plane";
+          prefix.committedRecords = particleWriters_[i]->checkpointPrefix();
+          prefix.validationCommittedRecords = 0;
+          result.push_back(prefix);
+        }
+      return result;
+    }
+
+    std::vector<unsigned char> checkpointState() const
+    {
+      if (closed_ || !localCrossingEvents_.empty())
+        throw std::runtime_error("Detector checkpoint requires a complete step");
+      if (externalBackground_)
+        throw std::runtime_error(
+          "Detector checkpoints do not serialize an external background provider");
+      DetectorStateWriter state;
+      state.text("APRL-detector-checkpoint");
+      state.integer(1);
+      state.integer(rank_); state.integer(size_);
+      state.integer(config_.fieldPlanes.size());
+      for (std::size_t i = 0; i < config_.fieldPlanes.size(); ++i)
+        {
+          const FieldDetectorPlaneConfig& plane = config_.fieldPlanes[i];
+          state.text(plane.name); state.real(plane.z); state.real(plane.rhythm);
+          state.integer(plane.particleBackgroundReference ? 1 : 0);
+          state.integer(plane.referenceValidation ? 1 : 0);
+          if (plane.particleBackgroundReference)
+            {
+              state.real(plane.referenceEntranceZ);
+              state.real(plane.referenceDistance);
+              state.real(plane.referenceRho); state.real(plane.referenceGamma);
+            }
+          if (plane.referenceValidation)
+            state.integer(plane.referenceValidationMaximumParticles);
+          state.integer(fieldRuntime_[i].sampled ? 1 : 0);
+          state.real(fieldRuntime_[i].nextTimeLab);
+          if (rank_ == 0 && plane.referenceValidation)
+            {
+              state.stats(validationStats_[i]);
+              const ValidationEntryMap& entries = *validationEntries_[i];
+              std::vector<std::uint64_t> ids;
+              ids.reserve(entries.size());
+              for (ValidationEntryMap::const_iterator entry = entries.begin();
+                   entry != entries.end(); ++entry)
+                ids.push_back(entry->first);
+              std::sort(ids.begin(), ids.end());
+              state.integer(ids.size());
+              for (std::size_t entry = 0; entry < ids.size(); ++entry)
+                state.particle(entries.at(ids[entry]));
+            }
+        }
+      state.integer(config_.particlePlanes.size());
+      for (std::size_t i = 0; i < config_.particlePlanes.size(); ++i)
+        {
+          state.text(config_.particlePlanes[i].name);
+          state.real(config_.particlePlanes[i].z);
+        }
+      return std::move(state.bytes);
+    }
+
+    void restoreCheckpointState(const std::vector<unsigned char>& bytes)
+    {
+      if (closed_ || !localCrossingEvents_.empty() || externalBackground_)
+        throw std::runtime_error("Cannot restore this detector manager state");
+      // Restoration belongs to fresh output files, never to a running writer.
+      const std::vector<DetectorCheckpointPrefix> prefixes = checkpointPrefixes();
+      for (std::size_t i = 0; i < prefixes.size(); ++i)
+        if (prefixes[i].committedRecords || prefixes[i].validationCommittedRecords)
+          throw std::runtime_error("Detector checkpoint restore needs new output files");
+      DetectorStateReader state(bytes);
+      if (state.text() != "APRL-detector-checkpoint" || state.integer() != 1 ||
+          state.integer() != static_cast<std::uint64_t>(rank_) ||
+          state.integer() != static_cast<std::uint64_t>(size_))
+        throw std::runtime_error("Incompatible detector checkpoint schema or MPI layout");
+      if (state.integer() != config_.fieldPlanes.size())
+        throw std::runtime_error("Checkpoint field detector count changed");
+
+      std::vector<FieldPlaneRuntime> restoredRuntime(config_.fieldPlanes.size());
+      std::vector<bool> fieldSeen(config_.fieldPlanes.size(), false);
+      std::vector<std::unique_ptr<ValidationEntryMap> > restoredEntries;
+      std::vector<BallisticValidationStats> restoredStats;
+      if (rank_ == 0 && hasValidationPlanes_)
+        {
+          restoredEntries.resize(config_.fieldPlanes.size());
+          restoredStats.resize(config_.fieldPlanes.size());
+        }
+      for (std::size_t item = 0; item < config_.fieldPlanes.size(); ++item)
+        {
+          const std::string name = state.text();
+          std::size_t i = 0;
+          while (i < config_.fieldPlanes.size() && config_.fieldPlanes[i].name != name)
+            ++i;
+          if (i == config_.fieldPlanes.size() || fieldSeen[i])
+            throw std::runtime_error("Checkpoint field detector name changed or duplicated: " + name);
+          fieldSeen[i] = true;
+          const FieldDetectorPlaneConfig& plane = config_.fieldPlanes[i];
+          const double z = state.real(), rhythm = state.real();
+          const bool reference = state.flag(), validation = state.flag();
+          if (z != plane.z || rhythm != plane.rhythm ||
+              reference != plane.particleBackgroundReference ||
+              validation != plane.referenceValidation)
+            throw std::runtime_error("Checkpoint field detector definition changed: " + name);
+          if (reference)
+            {
+              const double entrance = state.real(), distance = state.real();
+              const double rho = state.real(), gamma = state.real();
+              if (entrance != plane.referenceEntranceZ ||
+                  distance != plane.referenceDistance || rho != plane.referenceRho ||
+                  gamma != plane.referenceGamma)
+                throw std::runtime_error("Checkpoint ballistic reference definition changed: " + name);
+            }
+          if (validation && state.integer() != plane.referenceValidationMaximumParticles)
+            throw std::runtime_error("Checkpoint reference validation limit changed: " + name);
+          restoredRuntime[i].sampled = state.flag();
+          restoredRuntime[i].nextTimeLab = state.real();
+          if (rank_ == 0 && validation)
+            {
+              restoredStats[i] = state.stats();
+              const std::uint64_t count = state.integer();
+              // Each explicitly packed particle consumes 13 eight-byte fields.
+              if (count > state.remaining() / 104 ||
+                  count > plane.referenceValidationMaximumParticles)
+                throw std::runtime_error("Invalid checkpoint validation entry count");
+              restoredEntries[i].reset(new ValidationEntryMap());
+              for (std::uint64_t entry = 0; entry < count; ++entry)
+                {
+                  const ParticlePlaneRecord record = state.particle();
+                  if (record.direction != 1 ||
+                      !restoredEntries[i]->insert(std::make_pair(
+                        record.particleId, record)).second)
+                    throw std::runtime_error("Invalid or duplicate checkpoint validation entry");
+                }
+            }
+        }
+      if (state.integer() != config_.particlePlanes.size())
+        throw std::runtime_error("Checkpoint particle detector count changed");
+      std::vector<bool> particleSeen(config_.particlePlanes.size(), false);
+      for (std::size_t item = 0; item < config_.particlePlanes.size(); ++item)
+        {
+          const std::string name = state.text();
+          const double z = state.real();
+          std::size_t i = 0;
+          while (i < config_.particlePlanes.size() && config_.particlePlanes[i].name != name)
+            ++i;
+          if (i == config_.particlePlanes.size() || particleSeen[i] ||
+              z != config_.particlePlanes[i].z)
+            throw std::runtime_error("Checkpoint particle detector definition changed: " + name);
+          particleSeen[i] = true;
+        }
+      if (state.remaining())
+        throw std::runtime_error("Trailing bytes in detector checkpoint state");
+      fieldRuntime_.swap(restoredRuntime);
+      validationEntries_.swap(restoredEntries);
+      validationStats_.swap(restoredStats);
+    }
+
     void close(bool completed)
     {
       if (closed_) return;
@@ -1821,6 +2196,28 @@ namespace aprl
       const EBFieldGrid& localFields, Double timeBox)
   {
     impl_->sampleFieldPlanes(localFields, timeBox);
+  }
+
+  void LabDetectorManager::flushForCheckpoint()
+  {
+    impl_->flushForCheckpoint();
+  }
+
+  std::vector<unsigned char> LabDetectorManager::checkpointState() const
+  {
+    return impl_->checkpointState();
+  }
+
+  void LabDetectorManager::restoreCheckpointState(
+      const std::vector<unsigned char>& state)
+  {
+    impl_->restoreCheckpointState(state);
+  }
+
+  std::vector<DetectorCheckpointPrefix>
+  LabDetectorManager::checkpointPrefixes() const
+  {
+    return impl_->checkpointPrefixes();
   }
 
   void LabDetectorManager::close(bool completed)
