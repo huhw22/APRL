@@ -258,6 +258,7 @@ namespace aprl
   void Simulation::loadCheckpointGeometry()
   {
     requireCheckpointWatchdog(config_.checkpoint.ioTimeoutSeconds);
+    config_.checkpoint.restartFrom=absolutePath(config_.checkpoint.restartFrom);
     if (config_.output.overwrite)
       throw std::runtime_error("Restart requires fresh output paths and output.overwrite: false");
     checkpointReader_.reset(new CheckpointArchive(
@@ -301,9 +302,17 @@ namespace aprl
     transferCheckpointScalars(bytes,true,false);
     if (!std::isfinite(timeBoxSI_) || timeBoxSI_<0 || !(totalTimeBoxSI_>timeBoxSI_))
       throw std::runtime_error("Restart mesh.duration must exceed the saved absolute box time");
+    const Double stepsReal=std::ceil(totalTimeBoxSI_/globalGeometry_.dt);
+    if (!std::isfinite(stepsReal) || stepsReal<=0 ||
+        stepsReal>=static_cast<Double>(std::numeric_limits<std::size_t>::max()))
+      throw std::runtime_error("Restart duration produces an invalid field-step count");
+    estimatedMaximumSteps_=static_cast<std::size_t>(stepsReal);
     config_.checkpoint.restartStep=step_;
     config_.checkpoint.restartTimeBox=timeBoxSI_;
     validateCheckpointBranch();
+    if (configuredStopReached())
+      throw std::runtime_error(
+        "Checkpoint already satisfies the requested physical stop; extend stop explicitly to continue");
     nextCheckpointStep_=std::upper_bound(config_.checkpoint.steps.begin(),
       config_.checkpoint.steps.end(),step_)-config_.checkpoint.steps.begin();
     nextCheckpointTime_=std::upper_bound(config_.checkpoint.times.begin(),

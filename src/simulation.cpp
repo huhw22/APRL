@@ -510,7 +510,7 @@ namespace aprl
     runMetadata_ = initializeRunMetadata(config_, communicator_,
       hasLongitudinalLayoutReport_ ? &longitudinalLayoutReport_ : NULL);
     validateAndReportRadiationResolution();
-    reportDurationEstimate();
+    if (config_.checkpoint.restartFrom.empty()) reportDurationEstimate();
     fields_.reset(new EBFieldGrid(localGeometry_));
     halo_.reset(new EBZSlabHaloExchange(communicator_));
     particleBoundary_.reset(new ParticleOpenBoundary(
