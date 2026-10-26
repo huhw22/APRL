@@ -1,0 +1,35 @@
+模拟快照与同MPI布局续跑：验收通过（2026-10-26）
+
+用户要求：任意完整boost场步保存状态，允许束头在下游、束尾仍在波荡器/held；不等全束离开磁场，不加传播距离/窗口；之后从同状态比较近场方法和未来粒子吸收层。同步写入完成后继续原运行；默认关闭低开销。
+
+交付程序 /public/home/wfollowm/APRL_Workspace/build/checkpoint-final-20261026/aprl
+compiled revision f50c605c2898425939d34e17bd78fc23de0488c2
+SHA256 6dd331bd96130c7b0a52fb9d7e8f8221ec22236fbd98c334284d68eaa3ce1401
+计算核心与d4110c0相同；后续源码提交只追加验收工具/记录。source/aprl位于独立功能分支wfollowm_dev/checkpoint-20261026，旧程序build/candidate和cluster.env保持。
+
+实现：
+checkpoint.steps或times触发，times继承输入time单位并表示绝对boost时间；取第一个达到目标的完整场步，未插值/改步长。同一步只写一份step-000000XXXXXX.h5。默认关闭每步仅一个稳定条件分支，不进行快照通信/分配/读写。
+一个parallel HDF5文件，各rank直接写自身E/B、CPML历史、粒子（held/id/顺序等）及两类载流子；不聚集全场到root、不压缩、不降低精度，分块限制64MiB/rank。J下一步会清零因此不保存。原生long double能量积分有效位保留，ABI和同MPI/slab严格检查。
+保存精确timeBox/步数、frame原点、自动解析纵格/子步、边界计数、ledger初始值/累积、诊断节拍、未匹配近场入口等；恢复跳过原始粒子读入/boost和初场Poisson，不重复注入已有TF/SF场。
+先写.partial，所有rank成功flush/close后原子且不覆盖地发布正式文件。拒绝半文件、冲突路径、不同MPI/不兼容物理等；独立I/O watchdog默认3600s，原600/60s收尾保护保持。
+续跑必须新输出目录（overwrite false）；保存父诊断文件的精确提交前缀。postprocess/checkpoint_segments.py可递归列出/核验历史切片，不复制巨大场，不自动混合重设的诊断定义。原父文件仍须保留以分析快照之前的历史记录；恢复动力学本身不需原粒子输入文件。
+allow_retirement_change显式允许未来退休几何分支，但旧退休必须尚未发生且新入口尚未被任何保留粒子越过；这与全束是否出磁场无关。reset_diagnostics显式从当前slice开始新诊断，新ballistic参考仍需尚未错过入口记录。默认精确续跑保留采样相位和累积，不重复快照时刻样本。
+
+验收证据：
+1. clean最终程序required72/72通过，62.16s；required-final。
+2. science-final：18组对比，21成功运行/9预期拒绝；147科学H5、319数据集配对和1884科学attrs独立逐位一致。覆盖step0、非采样时刻、时间触发、held、退休进行中/清空后、非零CPML历史、入口验证、无原始粒子文件、二代快照。
+3. branches-final：7正向分支，15成功运行/1已达stop拒绝；64科学H5，71输出数据集/489attrs/711核心块独立逐位一致。实际磁场中途快照64粒子中17仍在磁区、47已下游，snapshot前规定场做功3.091152733791402e-19J；非零CPML载流子8；退休前长度10→12um、新/移动探测面、新近场参考、自动纵格、非零Yee TF/SF均通过。
+4. parallel-final：Slurm18923 COMPLETED0，node5/node8，同256MPI×1，128×128×2048格/32768固定种子generated粒子，严格12步duration限制（模拟子步预期exit1，父验收exit0），113s完成。第9步连续与续跑70数据集、原生标量有效位一致，场及ledger严格等于父prefix之后的后缀；所有H5可读且提交完整。三次快照有效载荷约1.75GiB，耗时9.949075、8.928514、10.408021s，有效0.175596、0.195667、0.167861GiB/s。包含诊断flush/metadata/close/发布等待。
+5. fault-r1同计算核心：指定一个rank在H5创建或写入阻塞20s，4rank各约2.998s真实本地_exit124，无正式文件发布（write保留partial）；错误父目录明确拒绝。无MPI网络/系统配置修改；未注入真实节点故障，本轮故障测试在gnode1。
+6. disabled-performance-final：固定gnode1 4MPI×4线程，原8ad/5edd三优化程序对关闭快照的新程序；28run，2卡各5配对，profiling全部关闭。grid128中位43.274422→42.417565ms/步（-1.9801%），配对变化-2.7253%至+0.8611%；粒子重102.704320→101.763055ms（-0.9165%），配对变化-7.6910%至+1.7493%；两卡均4快1慢，慢样本保留。峰RSS中位分别+0.559MiB/+0.703MiB。84H5/280数据集/1316科学attrs直接复核一致。结论为未观察到稳定额外推进耗时，不宣传1–2%加速或严格零成本。
+
+适用边界：
+本版固定MPI数量/分片，换节点可以，改rank自动重分区未实现。不能用新设置重写快照之前的物理历史或复活已吸收粒子。诊断文件是续跑段，完整历史通过父prefix取得。整个功能不改变用户几何、传播距离、停止条件及现有近场物理算法；不是近场方案的物理收敛验收。
+双节点I/O只测了约1.75GiB级受控工况，存储缓存/负载会影响时间；没有写原始完整ELEGANT几十GiB快照，不将秒数线性外推。此中等卡CPML历史/载流子为零，非零状态覆盖来自小卡矩阵。关闭功能的计时只覆盖gnode1两卡，不证明所有硬件严格零开销。
+早期测试卡/验收过滤问题和对应失败均保留，详见TEST_ITERATIONS.txt；没有修改数值容差来制造通过。
+
+使用：在现有卡增加checkpoint: {directory: /abs/run/checkpoints, steps: [1000]}。
+下一次复制卡、为全部输出指定新目录，再设checkpoint: {restart_from: /abs/run/checkpoints/step-000000001000.h5}，mesh.duration仍是原时间轴绝对终点。
+完整配置与分支说明：source/aprl/docs/zh_CN/SIMULATION_CHECKPOINT.md。
+
+本轮没有重启/修改18893；只读发现它主程序在34214步到达原设定物理终点并完成MPI_Finalize，批任务因后续full-cohort检查发现1粒子提前经CPML离开而状态FAILED1。不是快照测试中断生产；结果需另作物理分析，本轮未展开。
