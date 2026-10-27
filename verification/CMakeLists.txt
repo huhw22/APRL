@@ -5,6 +5,15 @@ option(APRL_BUILD_WINDOW_FEASIBILITY
   "Build bounded moving-window research probes; no production window changes" OFF)
 option(APRL_BUILD_COWAN_INITIALIZER_CHECKS
   "Build distributed Cowan initializer checks against the small-grid DST oracle" OFF)
+option(APRL_BUILD_STREAMING_BUNCH_PROBE
+  "Build the experimental charged-bunch moving-window validation probe" OFF)
+if(APRL_BUILD_STREAMING_BUNCH_PROBE)
+  add_executable(aprl_streaming_bunch_probe
+    streaming_bunch_probe.cpp streaming_reference_boundary.cpp)
+  target_link_libraries(aprl_streaming_bunch_probe PRIVATE direct_eb_core)
+  target_compile_options(aprl_streaming_bunch_probe PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+endif()
 if(APRL_BUILD_WINDOW_FEASIBILITY OR APRL_BUILD_COWAN_INITIALIZER_CHECKS)
   find_path(APRL_VERIFY_FFTW_INCLUDE_DIR fftw3.h)
   find_library(APRL_VERIFY_FFTW_LIBRARY NAMES fftw3)
