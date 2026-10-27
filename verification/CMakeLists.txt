@@ -15,6 +15,10 @@ if(APRL_BUILD_STREAMING_CPML_PROBE)
   add_executable(aprl_streaming_cpml_probe streaming_cpml_bunch_probe.cpp
     streaming_cpml_boundary.cpp streaming_reference_boundary.cpp moving_window_remap.cpp)
   target_link_libraries(aprl_streaming_cpml_probe PRIVATE direct_eb_core)
+  add_executable(aprl_streaming_cpml_residual_checks streaming_cpml_residual_checks.cpp
+    streaming_cpml_boundary.cpp streaming_reference_boundary.cpp moving_window_remap.cpp)
+  target_link_libraries(aprl_streaming_cpml_residual_checks PRIVATE direct_eb_core)
+  target_compile_options(aprl_streaming_cpml_residual_checks PRIVATE -O2 -Wall -Wextra -Wpedantic)
   target_compile_options(aprl_streaming_cpml_probe PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
 endif()

@@ -282,8 +282,8 @@ void particleRow(std::ofstream& out,const RelativisticParticleSI& p,
 }
 
 void run(const std::string& directory,double beta,unsigned guard,const std::string& mode) {
-  const bool full=mode=="full",zero=mode=="zero";
-  require(full||mode=="cpml"||zero,"Unknown mode");
+  const bool full=mode=="full",zero=mode=="zero",residual=mode=="residual";
+  require(full||mode=="cpml"||zero||residual,"Unknown mode");
   require(beta==0.||std::abs(beta-.23)<1e-15,"Use beta 0 or .23");
   require(guard==16||guard==24||guard==40,"Use the fixed nonabsorbing guards 16/24/40");
   if(mkdir(directory.c_str(),0755)!=0)require(errno==EEXIST,"Cannot create result directory");
@@ -348,7 +348,7 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
       for(std::size_t k=0;k<f.nz();++k)for(std::size_t j=0;j<f.ny();++j)
         for(std::size_t i=0;i<f.nx();++i)f(i,j,k)=reference.value(a,i,j,offset+k,0.);
     }
-    boundary=new ReferenceFedCPML(grid->geometry(),cpmlParameters,reference,offset,zero);
+    boundary=new ReferenceFedCPML(grid->geometry(),cpmlParameters,reference,offset,zero,residual);
     grid->setBoundary(std::unique_ptr<aprl::EBBoundaryOperator>(boundary));
     mover.reset(new MovingWindowRemap(grid->geometry(),cpmlParameters,{-1},
                                       MovingWindowHistoryPolicy::WorldPosition));
@@ -624,6 +624,10 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
   metrics<<"{\n\"format\":\"aprl-streaming-cpml-bunch-probe-v1\",\"completed\":true,\"mode\":\""<<mode<<"\",\"beta_box\":"<<beta
     <<",\"guard_cells\":"<<guard<<",\"steps\":"<<STEPS<<",\"dt_s\":"<<dt<<",\"nx\":"<<NX<<",\"ny\":"<<NY
     <<",\"history_policy\":\"world-position\",\"cpml_cells\":[0,0,20],\"cpml_z_cells\":20"
+    <<",\"cpml_input\":\""<<(residual?"residual":"total")<<"\""
+    <<",\"residual_reference_work_bytes\":"<<(boundary?boundary->residualWorkBytes():0)
+    <<",\"residual_reference_input_values\":"<<(boundary?boundary->residualInputValues():0)
+    <<",\"residual_reference_input_wall_s\":"<<(boundary?boundary->residualInputSeconds():0)
     <<",\"physical_full_nz\":"<<PHYSICAL_NZ<<",\"full_origin_z_m\":"<<ZORIGIN
     <<",\"physical_window_nz\":"<<width-2*CPML_Z<<",\"inner_guard_cells\":"<<guard
     <<",\"cpml_history_peak_abs\":"<<count.cpmlHistoryPeak
@@ -677,7 +681,7 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
     <<",\"storage_accounting\":\"known live numerical arrays and vector capacities; vector<bool> flags estimated from bit capacity; excludes allocator/object/stream/MPI overhead; initialization CG temporary bytes and full-grid construction peak reported separately\""
     <<",\"source_contract\":\"generated Gaussian input; held x/y/u fixed until common fixed-lab release; full and window use identical prescribed release paths; short-window outgoing particles become ballistic only after detector\""
     <<",\"particle_detector_contract\":\"position and proper velocity are linearly interpolated on the crossed held/active segment for diagnostics; not an exact intermediate Boris trajectory solution\""
-    <<",\"limitations\":[\"One MPI rank; transverse PEC retained to isolate longitudinal CPML; no production checkpoint integration\",\"Frozen reference is one initial full-domain Cowan solve plus linear native-field translation, not evolving full-domain history\",\"Full initial solve/cache and input table remain O(total bunch length/particle count), explicitly included in cost\",\"Original total-field CPML with frozen-reference outer face/halo/new-layer feed; not residual CPML; outgoing exterior evolution after removal is omitted\",\"No Gauss correction or reference-source mismatch correction is applied; post-detector ballistic full-charge paths cross CPML before removal\",\"Ordinary field energy is not the exact Cowan invariant; no pure radiation or full-scale speed claim\"]}\n";
+    <<",\"limitations\":[\"One MPI rank; transverse PEC retained to isolate longitudinal CPML; no production checkpoint integration\",\"Frozen reference is one initial full-domain Cowan solve plus linear native-field translation, not evolving full-domain history\",\"Full initial solve/cache and input table remain O(total bunch length/particle count), explicitly included in cost\",\"Total-field Cowan and particle update; CPML correction input selected by cpml_input; reference outer face/halo/new-layer feed; outgoing exterior evolution after removal is omitted\",\"No Gauss correction or reference-source mismatch correction is applied; post-detector ballistic full-charge paths cross CPML before removal\",\"Ordinary field energy is not the exact Cowan invariant; no pure radiation or full-scale speed claim\"]}\n";
   require(metrics.good(),"Metrics output write failed");
   std::cout<<"Streaming CPML bunch probe complete: "<<mode<<" beta="<<beta<<" guard="<<guard
     <<" crossings="<<PARTICLES<<" steps="<<STEPS<<" max_continuity="<<count.maxContinuity<<'\n';
@@ -689,7 +693,7 @@ int main(int argc,char** argv) {
   int rank=0,size=1;MPI_Comm_rank(MPI_COMM_WORLD,&rank);MPI_Comm_size(MPI_COMM_WORLD,&size);
   try {
     require(size==1,"Streaming bunch research probe requires one MPI rank");
-    require(argc==5,"Usage: aprl_streaming_cpml_probe OUT beta inner_guard full|cpml|zero");
+    require(argc==5,"Usage: aprl_streaming_cpml_probe OUT beta inner_guard full|cpml|zero|residual");
     run(argv[1],std::stod(argv[2]),static_cast<unsigned>(std::stoul(argv[3])),argv[4]);
     MPI_Finalize();return 0;
   } catch(const std::exception& error) {
