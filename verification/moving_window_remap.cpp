@@ -127,13 +127,18 @@ struct MovingWindowRemap::Impl {
   };
 
   EBGridGeometry geometry;
+  MovingWindowHistoryPolicy historyPolicy;
   std::array<std::array<std::size_t, 3>, 9> shapes;
   std::array<MovingWindowHistoryLayout, 12> layouts;
   std::vector<Plan> plans;
   double setupSeconds = 0.0;
 
   Impl(const EBGridGeometry& geometryValue, const EBCPMLParameters& parameters,
-       const std::vector<int>& supportedShifts) : geometry(geometryValue) {
+       const std::vector<int>& supportedShifts, MovingWindowHistoryPolicy policy)
+    : geometry(geometryValue), historyPolicy(policy) {
+    if (historyPolicy != MovingWindowHistoryPolicy::WorldPosition &&
+        historyPolicy != MovingWindowHistoryPolicy::BoundaryRelativeZ)
+      throw std::invalid_argument("Unknown moving-window CPML history policy");
     validateParameters(geometry, parameters);
     for (unsigned int c = 0; c < 9; ++c) {
       shapes[c] = shape(geometry, c);
@@ -205,6 +210,13 @@ struct MovingWindowRemap::Impl {
       const MovingWindowHistoryLayout& layout = layouts[h];
       const unsigned int axis = layout.derivativeAxis;
       HistoryPlan& hp = result.histories[h];
+      if (axis == 2 && historyPolicy == MovingWindowHistoryPolicy::BoundaryRelativeZ) {
+        // These four compressed arrays stay attached to the same relative
+        // boundary slots. Empty operation lists make shift leave every value
+        // untouched without adding a per-value branch or allocating storage.
+        result.summary.historyRetainedBytes += layout.values * sizeof(Double);
+        continue;
+      }
       if (axis != 2) {
         const std::size_t row = layout.dimensions[axis == 0 ? 1 : 0];
         const std::size_t strip = row * layout.dimensions[2];
@@ -277,10 +289,10 @@ struct MovingWindowRemap::Impl {
 
 MovingWindowRemap::MovingWindowRemap(
     const EBGridGeometry& geometry, const EBCPMLParameters& parameters,
-    const std::vector<int>& supportedShifts)
+    const std::vector<int>& supportedShifts, MovingWindowHistoryPolicy historyPolicy)
   : impl_() {
   const Clock::time_point start = Clock::now();
-  impl_.reset(new Impl(geometry, parameters, supportedShifts));
+  impl_.reset(new Impl(geometry, parameters, supportedShifts, historyPolicy));
   impl_->setupSeconds = elapsed(start);
 }
 
@@ -337,6 +349,7 @@ MovingWindowShiftReport MovingWindowRemap::shift(
   report.historyMovedBytes = plan.summary.historyMovedBytes;
   report.historyZeroedBytes = plan.summary.historyZeroedBytes;
   report.historyDiscardedBytes = report.historyZeroedBytes;
+  report.historyRetainedBytes = plan.summary.historyRetainedBytes;
   report.historyMoveBlocks = plan.summary.historyMoveBlocks;
   report.historyZeroBlocks = plan.summary.historyZeroBlocks;
   report.historyWallSeconds = elapsed(historyStart);

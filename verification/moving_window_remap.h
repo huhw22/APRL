@@ -17,6 +17,13 @@ enum class MovingWindowCurrentPolicy {
   Reset     // Move E/B, then clear all J; do not call the provider for J.
 };
 
+// Alternative CPML history attachment conventions for explicit comparison.
+// Neither changes the existing CPML coefficients or field-update formulas.
+enum class MovingWindowHistoryPolicy {
+  WorldPosition,     // Preserve history only at overlapping active world points.
+  BoundaryRelativeZ // Keep z-derivative histories in their original boundary slots.
+};
+
 // Allocation-free callback descriptor. Components are Ex,Ey,Ez,Bx,By,Bz,
 // Jx,Jy,Jz (0..8); i,j,k refer to each component's native Yee lattice in the
 // NEW window. The caller supplies the correct stagger and stored time level.
@@ -44,6 +51,9 @@ struct MovingWindowShiftReport {
   std::uint64_t historyMovedBytes = 0;
   std::uint64_t historyZeroedBytes = 0;
   std::uint64_t historyDiscardedBytes = 0;
+  // Stored history retained in place, with no value reads/writes by remap.
+  // Nonzero only for BoundaryRelativeZ on a nonzero shift; not bus traffic.
+  std::uint64_t historyRetainedBytes = 0;
   std::uint64_t fieldMoveBlocks = 0;
   std::uint64_t historyMoveBlocks = 0;
   std::uint64_t historyZeroBlocks = 0;
@@ -73,6 +83,7 @@ struct MovingWindowPlanSummary {
   std::uint64_t fieldIncomingBytes = 0;
   std::uint64_t historyMovedBytes = 0;
   std::uint64_t historyZeroedBytes = 0;
+  std::uint64_t historyRetainedBytes = 0; // Preserved in place, not copied.
   std::size_t historyMoveBlocks = 0;
   std::size_t historyZeroBlocks = 0;
 };
@@ -86,9 +97,13 @@ struct MovingWindowPlanSummary {
 //
 // New origin = old origin + signedCells*dz; new[k] = old[k+signedCells]
 // wherever both arrays contain that world position. Overlap is moved without
-// arithmetic or interpolation. CPML histories retain a world-position value
-// only where BOTH old and new derivative profiles are active; all other new
-// history slots are zero. No history is copied between derivative terms.
+// arithmetic or interpolation. Under the default WorldPosition policy, CPML
+// histories retain a world-position value only where BOTH old and new
+// derivative profiles are active; all other new history slots are zero.
+// BoundaryRelativeZ instead leaves the four z-derivative histories (checkpoint
+// indices 1,2,7,8) untouched at their relative boundary slots. Its other eight
+// histories still follow WorldPosition. E/B/J remapping is identical under
+// both policies, and no history is copied between derivative terms.
 //
 // Only constructor-approved shifts are accepted. The constructor precomputes
 // all compressed-history operations; shift performs no allocation, no full-
@@ -98,14 +113,16 @@ struct MovingWindowPlanSummary {
 // and supplies newOriginZ; the helper does not accumulate floating origins.
 //
 // IMPORTANT: moving a CPML profile changes its physical location and the
-// coefficient history experienced by a point. This migration rule does not
-// establish equivalence to a stationary physical absorbing boundary and does
-// not supply exterior sources or prove moving-boundary stability.
+// coefficient history experienced by a point. Neither migration policy
+// establishes equivalence to a stationary physical absorbing boundary,
+// supplies exterior sources, or proves moving-boundary stability.
 class MovingWindowRemap {
 public:
   MovingWindowRemap(const EBGridGeometry& geometry,
                     const EBCPMLParameters& parameters,
-                    const std::vector<int>& supportedShifts = {-3, -1, 1, 3});
+                    const std::vector<int>& supportedShifts = {-3, -1, 1, 3},
+                    MovingWindowHistoryPolicy historyPolicy =
+                        MovingWindowHistoryPolicy::WorldPosition);
   ~MovingWindowRemap();
   MovingWindowRemap(const MovingWindowRemap&) = delete;
   MovingWindowRemap& operator=(const MovingWindowRemap&) = delete;

@@ -31,7 +31,17 @@ def main():
         require(digest(Path(path))==expected,'Frozen input changed: '+path)
     verification=json.loads((args.cost/'verify/metrics.json').read_text())
     require(verification['completed'] and verification['bitwise_failures']==0,'State migration failed')
-    require(verification['tagged_shift_cases']==126 and verification['particle_schedules']==4,'Missing migration coverage')
+    coverage=(verification['tagged_shift_cases'],verification['particle_schedules'])
+    require(coverage in ((126,4),(252,8)),'Missing migration coverage')
+    if coverage==(252,8):
+        policies=verification.get('history_policies',[])
+        require(len(policies)==2 and {p['policy'] for p in policies}==
+                {'world-position','boundary-relative-z'},'Missing history-policy coverage')
+        require(all(p['tagged_shift_cases']==126 and p['particle_schedules']==4 for p in policies),
+                'Incomplete per-policy migration coverage')
+        require(all(verification.get(key) is True for key in
+                    ('zero_shift_policy_identity','excited_z_history_policy_difference',
+                     'next_step_policy_field_difference')),'History-policy distinction check failed')
     result={'format':'aprl-moving-window-review-v1','source_base':plan['source_base'],
             'binary_sha256':plan['binary_sha256'],'state_migration':'PASS',
             'verification':verification,'costs':[],

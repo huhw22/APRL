@@ -21,8 +21,11 @@ import time
 WORKSPACE = Path('/public/home/wfollowm/APRL_Workspace')
 SOURCE = WORKSPACE / 'source/aprl'
 DEFAULT_CASE_NAMES = ('verify', 'bench64', 'bench128', 'bench256')
-WAVE_CASE_NAMES = ('wave', 'wave-static', 'wave20', 'wave-static20')
-CASE_NAMES = DEFAULT_CASE_NAMES + WAVE_CASE_NAMES
+LONG_WAVE_CASE_NAMES = ('wave-long20', 'wave-boundary-long20', 'wave-long', 'wave-boundary-long')
+WAVE_CASE_NAMES = ('wave', 'wave-static', 'wave20', 'wave-static20',
+                   'wave-boundary', 'wave-boundary20') + LONG_WAVE_CASE_NAMES
+BOUNDARY_BENCH_NAMES = ('bench-boundary64', 'bench-boundary128', 'bench-boundary256')
+CASE_NAMES = DEFAULT_CASE_NAMES + WAVE_CASE_NAMES + BOUNDARY_BENCH_NAMES
 
 
 def require(ok, message):
@@ -54,7 +57,8 @@ def prepare(args):
     names = args.case or list(DEFAULT_CASE_NAMES)
     require(len(names) == len(set(names)), 'Duplicate case')
     cases = [{'name': name, 'arguments': [name] if name == 'verify' or name in WAVE_CASE_NAMES
-              else ['bench', name[len('bench'):]]} for name in names]
+              else (['bench-boundary', name[len('bench-boundary'):]] if name in BOUNDARY_BENCH_NAMES
+                    else ['bench', name[len('bench'):]])} for name in names]
     snapshots = [SOURCE / 'verification' / name for name in
                  ('moving_window_probe.cpp', 'moving_window_remap.h',
                   'moving_window_remap.cpp', 'moving_window_wave.h',
@@ -239,9 +243,20 @@ def run(args):
                         'No state checks executed')
                 require(type(metrics.get('bitwise_failures')) is int and
                         metrics['bitwise_failures'] == 0, 'State-copy equality gate failed')
+                require(metrics.get('tagged_shift_cases') == 252 and
+                        metrics.get('particle_schedules') == 8 and
+                        metrics.get('zero_shift_policy_identity') is True and
+                        metrics.get('excited_z_history_policy_difference') is True and
+                        metrics.get('next_step_policy_field_difference') is True,
+                        'Two-policy state/effect gates incomplete')
             elif case['arguments'][0] in WAVE_CASE_NAMES:
                 require(metrics.get('mode') == case['arguments'][0] and metrics.get('finite') is True,
                         'Incomplete finite vacuum-wave comparison')
+                extended = case['arguments'][0] in LONG_WAVE_CASE_NAMES
+                expected_steps = 384 if extended else 176
+                require(metrics.get('extended_observation') is extended and
+                        metrics.get('steps') == expected_steps,
+                        'Vacuum-wave observation duration differs from request')
                 require(metrics.get('initial_overlap_values_checked', 0) > 0 and
                         metrics.get('initial_overlap_bitwise_failures') == 0,
                         'Vacuum-wave initial overlap gate failed')
@@ -250,14 +265,26 @@ def run(args):
                         'Vacuum-wave comparison did not exercise CPML history')
                 require(metrics.get('plane_frames') == metrics.get('steps', -1) + 1,
                         'Incomplete vacuum-wave history')
+                require(metrics.get('late_start_step') == 100 and
+                        metrics.get('late_frames') == expected_steps - 100 + 1,
+                        'Vacuum-wave late-observation range changed')
                 with (directory / 'wave-plane.csv').open() as stream:
                     require(sum(1 for _ in stream) == metrics['plane_frames'] + 1,
                             'Truncated vacuum-wave plane CSV')
                 z_cells = 20 if case['arguments'][0].endswith('20') else 8
+                expected_policy = ('boundary-relative-z' if 'boundary' in case['name'] else 'world-position')
+                require(metrics.get('history_policy') == expected_policy,
+                        'Requested CPML history policy was not executed')
+                if expected_policy == 'boundary-relative-z':
+                    require(metrics.get('history_retained_bytes', 0) > 0,
+                            'No longitudinal CPML history retained at relative slots')
+                else:
+                    require(metrics.get('history_retained_bytes') == 0,
+                            'Original policy unexpectedly kept relative history slots')
                 require(metrics.get('cpml_cells') == [6, 0, z_cells],
                         'Vacuum-wave CPML thickness control changed')
-                require(metrics.get('full_nz') == 512 and
-                        metrics.get('full_origin_global_k') == -192,
+                require(metrics.get('full_nz') == (1024 if extended else 512) and
+                        metrics.get('full_origin_global_k') == (-512 if extended else -192),
                         'Vacuum-wave large reference geometry changed')
                 require(metrics.get('cpml_polynomial_order') == 3 and
                         metrics.get('cpml_kappa_max') == 8 and
@@ -276,14 +303,20 @@ def run(args):
                                 'history_moved_bytes', 'history_zeroed_bytes'):
                         require(metrics.get(key) == 0, 'Fixed control remapped state: ' + key)
                 else:
+                    expected_origin = -((4 * expected_steps + 4) // 5)
                     require(metrics.get('window_nz') == 128 + z_cells - 8 and
                             metrics.get('window_initial_origin_global_k') == 0 and
+                            metrics.get('window_final_origin_global_k') == expected_origin and
+                            metrics.get('shifts') == -expected_origin and
                             metrics.get('window_initial_cpml_inner_upper_global_k') == 120 and
                             metrics.get('window_beta') == .8,
                             'Moving-wave upper entrance or geometry changed')
             else:
                 require(metrics.get('numerical_status') == 'PASS',
                         'Benchmark same-width moving-state equality gate failed')
+                require(metrics.get('history_policy') ==
+                        ('boundary-relative-z' if case['arguments'][0] == 'bench-boundary' else 'world-position'),
+                        'Benchmark history policy differs from request')
             results.append({'case': case['name'], 'metrics_sha256': digest(metrics_path)})
         save(root / 'COMPLETED.json', {'unix_time': time.time(), 'cases': results,
              'state_and_cost_probe_gates': 'COMPLETED',
@@ -298,9 +331,9 @@ def main():
     prep = sub.add_parser('prepare')
     prep.add_argument('--root', type=Path, required=True)
     prep.add_argument('--binary', type=Path, default=WORKSPACE /
-                      'build/moving-window-20261027/verification/aprl_moving_window_probe')
+                      'build/moving-window-history-long-20261027/verification/aprl_moving_window_probe')
     prep.add_argument('--case', action='append', choices=CASE_NAMES,
-                      help='Optional bounded subset, including wave/wave-static and their 20-cell controls; default: verify, bench64, bench128, bench256')
+                      help='Optional bounded subset, including wave controls and 384-step long observations; default: verify, bench64, bench128, bench256')
     run_parser = sub.add_parser('run')
     run_parser.add_argument('--root', type=Path, required=True)
     args = parser.parse_args()

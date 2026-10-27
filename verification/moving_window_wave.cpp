@@ -122,7 +122,7 @@ void initialize(EBFieldGrid& fields, int origin) {
 }
 
 std::uint64_t verifyInitialOverlap(const EBFieldGrid& full, const EBFieldGrid& window,
-                                   int windowOrigin) {
+                                   int fullOrigin, int windowOrigin) {
   std::uint64_t checked = 0;
   for (unsigned c = 0; c < 6; ++c) {
     const YeeComponent& a = component(full,c);
@@ -132,7 +132,7 @@ std::uint64_t verifyInitialOverlap(const EBFieldGrid& full, const EBFieldGrid& w
         for (std::size_t i = 0; i < b.nx(); ++i) {
           const double actual = b(i,j,k);
           const double expected = a(i,j,static_cast<std::size_t>(
-              windowOrigin+static_cast<int>(k)-FULL_ORIGIN));
+              windowOrigin+static_cast<int>(k)-fullOrigin));
           require(std::memcmp(&actual, &expected, sizeof(double)) == 0,
                   "Wave initial overlapping native fields differ");
           ++checked;
@@ -237,7 +237,7 @@ double rootRatio(long double numerator, long double denominator) {
   return value;
 }
 
-Norms plane(const EBFieldGrid& full, const EBFieldGrid& window, int origin,
+Norms plane(const EBFieldGrid& full, const EBFieldGrid& window, int fullOrigin, int origin,
             unsigned step, std::ofstream& csv) {
   Norms result;
   const double z = DETECTOR_INITIAL-WINDOW_BETA*step;
@@ -246,7 +246,7 @@ Norms plane(const EBFieldGrid& full, const EBFieldGrid& window, int origin,
     for (std::size_t i = 6; i < NX-6; ++i)
       for (unsigned c = 0; c < 6; ++c) {
         const double scale = c < 3 ? 1. : SI::c;
-        const double a = sample(full,FULL_ORIGIN,c,i+.5,j+.5,z)*scale;
+        const double a = sample(full,fullOrigin,c,i+.5,j+.5,z)*scale;
         const double b = sample(window,origin,c,i+.5,j+.5,z)*scale;
         const unsigned group = c < 3 ? 0 : 1;
         const long double d = static_cast<long double>(b)-a;
@@ -259,7 +259,7 @@ Norms plane(const EBFieldGrid& full, const EBFieldGrid& window, int origin,
   result.peakReferencePlane = std::sqrt(result.totalReference()/pixels);
   result.peakCandidatePlane = std::sqrt(result.totalCandidate()/pixels);
   result.peakErrorPlane = std::sqrt(result.totalError()/pixels);
-  const double refEy = sample(full,FULL_ORIGIN,1,NX*.5,NY*.5,z);
+  const double refEy = sample(full,fullOrigin,1,NX*.5,NY*.5,z);
   const double winEy = sample(window,origin,1,NX*.5,NY*.5,z);
   const double dt = DZ/SI::c;
   csv << step << ',' << step*dt << ',' << (step-.5)*dt << ',' << origin << ',' << z*DZ;
@@ -284,24 +284,36 @@ void emitArray(std::ofstream& stream, const std::array<std::uint64_t,12>& values
 
 } // namespace
 
-void runMovingWindowWave(const std::string& directory, bool staticControl, unsigned zCells) {
+void runMovingWindowWave(const std::string& directory, bool staticControl, unsigned zCells,
+                         MovingWindowHistoryPolicy historyPolicy, bool extendedObservation) {
   const auto begin = Clock::now();
   require(zCells == 8 || zCells == 20,
           "Wave control supports only original 8 or production-longitudinal 20 CPML cells");
+  require(!extendedObservation || !staticControl,
+          "Extended observation is available only for a moving candidate");
   require(::mkdir(directory.c_str(),0775) == 0 || errno == EEXIST,
           "Cannot create wave directory");
   const std::size_t candidateNz = (staticControl ? 296 : WINDOW_NZ) + zCells - 8;
   const int initialOrigin = staticControl ? FULL_ORIGIN : 0;
+  const unsigned steps = extendedObservation ? 384 : STEPS;
+  const std::size_t fullNz = extendedObservation ? 1024 : FULL_NZ;
+  const int fullOrigin = extendedObservation ? -512 : FULL_ORIGIN;
+  const bool boundaryRelative = historyPolicy == MovingWindowHistoryPolicy::BoundaryRelativeZ;
+  require(!staticControl || !boundaryRelative, "Static history-policy comparison is covered by zero-shift state verification");
   const char* mode = staticControl ? (zCells == 20 ? "wave-static20" : "wave-static")
-                                   : (zCells == 20 ? "wave20" : "wave");
-  EBFieldGrid full(geometry(FULL_NZ)), window(geometry(candidateNz));
+                     : (extendedObservation
+                        ? (boundaryRelative ? (zCells == 20 ? "wave-boundary-long20" : "wave-boundary-long")
+                                            : (zCells == 20 ? "wave-long20" : "wave-long"))
+                        : (boundaryRelative ? (zCells == 20 ? "wave-boundary20" : "wave-boundary")
+                                            : (zCells == 20 ? "wave20" : "wave")));
+  EBFieldGrid full(geometry(fullNz)), window(geometry(candidateNz));
   const EBCPMLParameters p = parameters(zCells);
   attachCpml(full,p); attachCpml(window,p);
-  initialize(full,FULL_ORIGIN); initialize(window,initialOrigin);
-  const std::uint64_t initialChecks = verifyInitialOverlap(full,window,initialOrigin);
+  initialize(full,fullOrigin); initialize(window,initialOrigin);
+  const std::uint64_t initialChecks = verifyInitialOverlap(full,window,fullOrigin,initialOrigin);
   std::unique_ptr<MovingWindowRemap> remap;
   if (!staticControl)
-    remap.reset(new MovingWindowRemap(window.geometry(),p,std::vector<int>{-1}));
+    remap.reset(new MovingWindowRemap(window.geometry(),p,std::vector<int>{-1},historyPolicy));
   auto csv = fresh(directory+"/wave-plane.csv");
   csv << "step,time_E_box_s,time_B_box_s,window_origin_global_k,detector_z_box_m,"
       << "E_reference_rms_V_m,E_candidate_rms_V_m,E_difference_rms_V_m,"
@@ -312,13 +324,14 @@ void runMovingWindowWave(const std::string& directory, bool staticControl, unsig
   StateAudit fullAudit, windowAudit;
   double fullAdvance = 0., windowAdvance = 0., remapSeconds = 0.;
   std::uint64_t shifts = 0, moved = 0, incoming = 0, historyMoved = 0, historyZeroed = 0;
+  std::uint64_t historyRetained = 0;
   int origin = initialOrigin;
-  for (unsigned step = 0; step <= STEPS; ++step) {
+  for (unsigned step = 0; step <= steps; ++step) {
     audit(full,fullAudit); audit(window,windowAudit);
-    const Norms observed = plane(full,window,origin,step,csv);
+    const Norms observed = plane(full,window,fullOrigin,origin,step,csv);
     all.add(observed);
     if (step >= LATE_START) late.add(observed);
-    if (step == STEPS) break;
+    if (step == steps) break;
     auto start = Clock::now();
     full.advanceMagnetic(); full.advanceElectric();
     fullAdvance += elapsed(start);
@@ -334,6 +347,7 @@ void runMovingWindowWave(const std::string& directory, bool staticControl, unsig
       incoming += report.fieldIncomingBytes;
       historyMoved += report.historyMovedBytes;
       historyZeroed += report.historyZeroedBytes;
+      historyRetained += report.historyRetainedBytes;
       remapSeconds += report.totalWallSeconds;
       origin = nextOrigin;
     }
@@ -347,12 +361,14 @@ void runMovingWindowWave(const std::string& directory, bool staticControl, unsig
   auto metrics = fresh(directory+"/metrics.json");
   metrics << "{\n\"format\":\"aprl-moving-window-vacuum-wave-v1\",\n"
     << "\"completed\":true,\"mode\":\"" << mode << "\","
+    << "\"history_policy\":\"" << (boundaryRelative ? "boundary-relative-z" : "world-position") << "\","
     << "\"physical_status\":\"MEASURED; no physical error threshold or production acceptance imposed\",\n"
-    << "\"steps\":" << STEPS << ",\"plane_frames\":" << STEPS+1
+    << "\"extended_observation\":" << (extendedObservation ? "true" : "false")
+    << ",\"steps\":" << steps << ",\"plane_frames\":" << steps+1
     << ",\"pixels_per_plane\":" << (NX-12)*NY << ",\"nx\":" << NX << ",\"ny\":" << NY
-    << ",\"full_nz\":" << FULL_NZ << ",\"window_nz\":" << candidateNz
+    << ",\"full_nz\":" << fullNz << ",\"window_nz\":" << candidateNz
     << ",\"dx_m\":" << DX << ",\"dy_m\":" << DY << ",\"dz_m\":" << DZ
-    << ",\"dt_s\":" << DZ/SI::c << ",\"full_origin_global_k\":" << FULL_ORIGIN
+    << ",\"dt_s\":" << DZ/SI::c << ",\"full_origin_global_k\":" << fullOrigin
     << ",\"window_initial_origin_global_k\":" << initialOrigin
     << ",\"window_final_origin_global_k\":" << origin
     << ",\"window_beta\":" << (staticControl ? 0. : WINDOW_BETA)
@@ -382,7 +398,7 @@ void runMovingWindowWave(const std::string& directory, bool staticControl, unsig
     << ",\"max_component_difference_over_reference_peak\":" << all.errorPeak/all.referencePeak
     << ",\"peak_plane_difference_over_reference_peak_plane\":" << all.peakErrorPlane/all.peakReferencePlane
     << ",\"late_start_step\":" << LATE_START
-    << ",\"late_frames\":" << STEPS-LATE_START+1
+    << ",\"late_frames\":" << steps-LATE_START+1
     << ",\"late_reference_l2_over_full_reference_l2\":" << rootRatio(late.totalReference(),all.totalReference())
     << ",\"late_candidate_l2_over_full_reference_l2\":" << rootRatio(late.totalCandidate(),all.totalReference())
     << ",\"late_difference_l2_over_full_reference_l2\":" << rootRatio(late.totalError(),all.totalReference())
@@ -392,6 +408,7 @@ void runMovingWindowWave(const std::string& directory, bool staticControl, unsig
     << ",\"shifts\":" << shifts << ",\"field_moved_bytes\":" << moved
     << ",\"incoming_zero_bytes\":" << incoming << ",\"history_moved_bytes\":" << historyMoved
     << ",\"history_zeroed_bytes\":" << historyZeroed
+    << ",\"history_retained_bytes\":" << historyRetained
     << ",\"full_grid_and_cpml_bytes\":" << full.memoryFootprint().totalBytes()
     << ",\"window_grid_and_cpml_bytes\":" << window.memoryFootprint().totalBytes()
     << ",\"remap_helper_bytes\":" << (remap ? remap->memoryBytes() : 0)
@@ -400,7 +417,8 @@ void runMovingWindowWave(const std::string& directory, bool staticControl, unsig
     << ",\"remap_wall_s\":" << remapSeconds << ",\"overall_wall_s\":" << elapsed(begin)
     << ",\n\"field_time_contract\":\"Native box E(t_n), B(t_n-dt/2), both sampled at z_plane(t_n); no simultaneous lab-field transform\","
     << "\"plane_contract\":\"z_box/dz=100-0.8*n, fixed lab plane for boost beta=0.8 gamma=5/3; x cell centers6.5..25.5 and y0.5..3.5\","
-    << "\"late_contract\":\"Step100..176 fixed before running; late response and difference are not an isolated reflection coefficient\","
+    << "\"late_contract\":\"Step" << LATE_START << ".." << steps
+    << " fixed before running; late response and difference are not an isolated reflection coefficient\","
     << "\"source_contract\":\"Common compact discrete-A initial fields, zero current; "
     << (staticControl ? "stationary candidate with no remap or layer insertion"
                       : "zero incoming vacuum layers") << "; no full-reference replay\","

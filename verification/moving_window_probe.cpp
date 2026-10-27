@@ -34,6 +34,9 @@ void require(bool ok,const std::string& message) {
 }
 double elapsed(Clock::time_point t){return std::chrono::duration<double>(Clock::now()-t).count();}
 bool sameDouble(const double& a,const double& b){return std::memcmp(&a,&b,sizeof(double))==0;}
+const char* policyName(MovingWindowHistoryPolicy policy) {
+  return policy==MovingWindowHistoryPolicy::WorldPosition?"world-position":"boundary-relative-z";
+}
 YeeComponent& field(EBFieldGrid& f,unsigned a) {
   switch(a){case 0:return f.ex();case 1:return f.ey();case 2:return f.ez();
     case 3:return f.bx();case 4:return f.by();case 5:return f.bz();
@@ -94,13 +97,16 @@ struct Oracle {
   };
   std::array<std::vector<double>,9> oldField;
   std::array<History,12> histories;
+  MovingWindowHistoryPolicy historyPolicy;
   std::size_t memoryBytes() const {
     std::size_t n=sizeof(*this);
     for(const auto& v:oldField)n+=v.capacity()*sizeof(double);
     for(const auto& h:histories)n+=h.old.capacity()*sizeof(double)+h.ordinal.capacity()*sizeof(long)+h.coordinate.capacity()*sizeof(std::array<std::size_t,3>);
     return n;
   }
-  Oracle(EBFieldGrid& f,const EBCPMLParameters& p) {
+  Oracle(EBFieldGrid& f,const EBCPMLParameters& p,
+         MovingWindowHistoryPolicy policy=MovingWindowHistoryPolicy::WorldPosition)
+    : historyPolicy(policy) {
     for(unsigned a=0;a<9;++a)oldField[a].resize(field(f,a).size());
     const unsigned axes[6]={1,2,2,0,0,1},comps[6]={0,0,1,1,2,2};
     const std::size_t global[3]={f.geometry().nx,f.geometry().ny,f.geometry().nz};
@@ -140,7 +146,12 @@ struct Oracle {
     for(unsigned h=0;h<12;++h) {
       auto& meta=histories[h];auto& v=cpml(f).checkpointHistory(h);std::copy(v.begin(),v.end(),meta.old.begin());
       for(std::size_t n=0;n<v.size();++n) {
-        const auto xyz=meta.coordinate[n];const long from=meta.index(xyz[0],xyz[1],static_cast<long>(xyz[2])+s);
+        const auto xyz=meta.coordinate[n];
+        // This oracle reads an independent full snapshot. The alternate
+        // contract retains the same LOCAL slot only for z derivatives;
+        // all other terms still follow the shared world coordinate.
+        const long from=historyPolicy==MovingWindowHistoryPolicy::BoundaryRelativeZ&&meta.axis==2?
+          static_cast<long>(n):meta.index(xyz[0],xyz[1],static_cast<long>(xyz[2])+s);
         v[n]=from<0?0.:meta.old[from];
       }
     }
@@ -177,16 +188,76 @@ double maxDifference(EBFieldGrid& a,EBFieldGrid& b) {
   return out;
 }
 
+void verifyPolicyDifference(std::ofstream& log) {
+  const auto g=geometry(24,24,96);EBCPMLParameters p;p.cells[0]=p.cells[1]=6;p.cells[2]=8;
+  MovingWindowRemap world(g,p,{-1,1},MovingWindowHistoryPolicy::WorldPosition);
+  MovingWindowRemap layer(g,p,{-1,1},MovingWindowHistoryPolicy::BoundaryRelativeZ);
+  auto a=makeGrid(g,p),b=makeGrid(g,p);seedWork(*a);clone(*a,*b);
+  // Vacuum fields exercise the existing CPML recurrences, without particles
+  // or a different Maxwell update. Zero shift must remain the same method.
+  for(unsigned step=0;step<4;++step) {
+    a->clearCurrent();b->clearCurrent();a->advance();b->advance();
+    world.shift(*a,0,0.);layer.shift(*b,0,0.);
+    equal(*a,*b,"Vacuum zero-shift history-policy identity");
+  }
+  log<<"both,vacuum_zero_shift_policy_identity,"<<checks<<'\n';
+  const unsigned zHistories[4]={1,2,7,8};
+  double zHistoryMax=0.;std::uint64_t zHistoryBytes=0,totalHistoryBytes=0;
+  for(unsigned h=0;h<12;++h)totalHistoryBytes+=cpml(*a).checkpointHistory(h).size()*sizeof(Double);
+  for(unsigned h:zHistories) {
+    const auto& history=cpml(*a).checkpointHistory(h);zHistoryBytes+=history.size()*sizeof(Double);
+    for(double value:history)zHistoryMax=std::max(zHistoryMax,std::abs(value));
+  }
+  require(zHistoryMax>0.,"Policy distinction did not excite longitudinal CPML history");
+  for(int s:{-1,1}) {
+    auto movedWorld=makeGrid(g,p),movedLayer=makeGrid(g,p);clone(*a,*movedWorld);clone(*a,*movedLayer);
+    const auto rw=world.shift(*movedWorld,s,s*g.dz);
+    const auto rl=layer.shift(*movedLayer,s,s*g.dz);
+    require(rw.historyRetainedBytes==0,"World policy unexpectedly retained local history slots");
+    require(rl.historyRetainedBytes==zHistoryBytes,"Boundary policy retained wrong history extent");
+    require(rw.historyMovedBytes+rw.historyZeroedBytes+rw.historyRetainedBytes==totalHistoryBytes,
+            "World history byte accounting incomplete");
+    require(rl.historyMovedBytes+rl.historyZeroedBytes+rl.historyRetainedBytes==totalHistoryBytes,
+            "Boundary history byte accounting incomplete");
+    for(unsigned c=0;c<9;++c) {
+      const auto& x=field(*movedWorld,c);const auto& y=field(*movedLayer,c);
+      require(std::memcmp(x.data(),y.data(),x.size()*sizeof(Double))==0,
+              "History policy changed field/current remap");
+    }
+    bool longitudinalDifference=false;
+    for(unsigned h=0;h<12;++h) {
+      const auto& x=cpml(*movedWorld).checkpointHistory(h);
+      const auto& y=cpml(*movedLayer).checkpointHistory(h);
+      const bool same=x.empty()||std::memcmp(x.data(),y.data(),x.size()*sizeof(Double))==0;
+      const bool longitudinal=h==1||h==2||h==7||h==8;
+      if(longitudinal) {
+        const auto& original=cpml(*a).checkpointHistory(h);
+        require(y.empty()||std::memcmp(y.data(),original.data(),y.size()*sizeof(Double))==0,
+                "Boundary-relative longitudinal history did not retain local slots");
+        longitudinalDifference=longitudinalDifference||!same;
+      } else require(same,"History policies differ outside the four z-derivative terms");
+    }
+    require(longitudinalDifference,"Two policy implementations did not differ on excited z history");
+    movedWorld->clearCurrent();movedLayer->clearCurrent();movedWorld->advance();movedLayer->advance();
+    require(maxDifference(*movedWorld,*movedLayer)>0.,"History-policy difference had no next-step field effect");
+    finite(*movedWorld);finite(*movedLayer);
+    log<<"both,nonzero_z_history_policy_distinction_shift_"<<s<<','<<checks<<'\n';
+  }
+}
+
 void verify(const std::string& root) {
-  auto log=fresh(root+"/checks.csv");log<<"test,checks_after\n";
+  auto log=fresh(root+"/checks.csv");log<<"history_policy,test,checks_after\n";
   unsigned cases=0;
+  std::array<unsigned,2> policyCases={{0,0}},policySchedules={{0,0}};unsigned policyIndex=0;
+  for(auto historyPolicy:{MovingWindowHistoryPolicy::WorldPosition,MovingWindowHistoryPolicy::BoundaryRelativeZ}) {
+  const unsigned casesBefore=cases;
   for(unsigned axes=1;axes<8;++axes) {
     auto g=geometry(11,10,19);EBCPMLParameters p;
     p.cells[0]=(axes&1)?2:0;p.cells[1]=(axes&2)?3:0;p.cells[2]=(axes&4)?4:0;
     const std::vector<int> shifts={-19,-18,-3,-1,0,1,3,18,19};
-    MovingWindowRemap mover(g,p,shifts);
+    MovingWindowRemap mover(g,p,shifts,historyPolicy);
     for(int s:shifts)for(auto policy:{MovingWindowCurrentPolicy::Preserve,MovingWindowCurrentPolicy::Reset}) {
-      auto a=makeGrid(g,p),b=makeGrid(g,p);seedTags(*a);clone(*a,*b);Oracle oracle(*b,p);
+      auto a=makeGrid(g,p),b=makeGrid(g,p);seedTags(*a);clone(*a,*b);Oracle oracle(*b,p,historyPolicy);
       const auto before=addresses(*a);const double origin=s*g.dz;
       const auto r=mover.shift(*a,s,origin,provider(),policy);oracle.shift(*b,s,origin,provider(),policy);
       equal(*a,*b,"tag shift");require(addresses(*a)==before,"Migration reallocated storage");
@@ -195,22 +266,23 @@ void verify(const std::string& root) {
     auto a=makeGrid(g,p),b=makeGrid(g,p);seedTags(*a);clone(*a,*b);
     bool rejected=false;try{mover.shift(*a,2,0.);}catch(const std::invalid_argument&){rejected=true;}
     require(rejected,"Unprepared shift accepted");equal(*a,*b,"Rejected shift unchanged");
-    rejected=false;try{MovingWindowRemap invalid(g,p,{20});}catch(const std::invalid_argument&){rejected=true;}
+    rejected=false;try{MovingWindowRemap invalid(g,p,{20},historyPolicy);}catch(const std::invalid_argument&){rejected=true;}
     require(rejected,"Too-large planned shift accepted");
   }
-  log<<"tagged_native_fields_and_all_history_supports,"<<checks<<'\n';
+  policyCases[policyIndex]=cases-casesBefore;
+  log<<policyName(historyPolicy)<<",tagged_native_fields_and_all_history_supports,"<<checks<<'\n';
   const auto g=geometry(24,24,96);EBCPMLParameters p;p.cells[0]=p.cells[1]=6;p.cells[2]=8;
   // Independent equivalence over actual core updates; a missing-history negative
   // control must differ immediately and contaminate the very next core step.
   auto a=makeGrid(g,p),b=makeGrid(g,p),bad=makeGrid(g,p);seedWork(*a);a->advance();a->advance();
-  clone(*a,*b);clone(*a,*bad);MovingWindowRemap mover(g,p);Oracle oracle(*b,p);
+  clone(*a,*b);clone(*a,*bad);MovingWindowRemap mover(g,p,{-3,-1,1,3},historyPolicy);Oracle oracle(*b,p,historyPolicy);
   mover.shift(*a,-1,-g.dz,provider());oracle.shift(*b,-1,-g.dz,provider());equal(*a,*b,"Warm nonzero CPML");
   mover.shift(*bad,-1,-g.dz,provider());
   double historyMax=0;for(unsigned h=0;h<12;++h)for(double x:cpml(*bad).checkpointHistory(h))historyMax=std::max(historyMax,std::abs(x));
   require(historyMax>0,"CPML negative control never excited history");
   for(unsigned h=0;h<12;++h)std::fill(cpml(*bad).checkpointHistory(h).begin(),cpml(*bad).checkpointHistory(h).end(),0.);
   a->advance();bad->advance();require(maxDifference(*a,*bad)>0,"Clearing CPML history was not detected");
-  log<<"history_omission_negative_control,"<<checks<<'\n';
+  log<<policyName(historyPolicy)<<",history_omission_negative_control,"<<checks<<'\n';
 
   SimulationConfig config;config.beam.type=BeamInputType::GeneratedGaussian;
   config.beam.macroparticles=256;config.beam.electrons=.1e-12/SI::elementaryCharge;
@@ -226,7 +298,7 @@ void verify(const std::string& root) {
   EBGaussFieldInitializer::initialize(*seed,g,0,baseOrigin,initial,InitialSelfFieldModel::CowanRelativisticPoisson,
                                     1e-8,guard,1e-10,3000,MPI_COMM_WORLD);
   for(unsigned schedule=0;schedule<4;++schedule) {
-    a=makeGrid(g,p);b=makeGrid(g,p);clone(*seed,*a);clone(*seed,*b);Oracle reference(*b,p);
+    a=makeGrid(g,p);b=makeGrid(g,p);clone(*seed,*a);clone(*seed,*b);Oracle reference(*b,p,historyPolicy);
     auto pa=initial,pb=initial;long offset=0;FieldVector<double> origin=baseOrigin;
     const unsigned steps=schedule==3?64:24;
     for(unsigned step=0;step<steps;++step) {
@@ -249,18 +321,28 @@ void verify(const std::string& root) {
       for(std::size_t i=0;i<pa.size();++i)for(unsigned d=0;d<3;++d)
         require(sameDouble(pa[i].position[d],pb[i].position[d]),"World particle moved with array");
     }
-    finite(*a);log<<"PIC_schedule_"<<schedule<<','<<checks<<'\n';
+    finite(*a);++policySchedules[policyIndex];
+    log<<policyName(historyPolicy)<<",PIC_schedule_"<<schedule<<','<<checks<<'\n';
   }
+  ++policyIndex;
+  }
+  verifyPolicyDifference(log);
   auto m=fresh(root+"/metrics.json");m<<"{\"completed\":true,\"checks\":"<<checks<<",\"bitwise_failures\":0,\"tagged_shift_cases\":"<<cases
-    <<",\"particle_schedules\":4,\"particles\":256,\"status\":\"state migration and unchanged-core equivalence only\"}\n";
+    <<",\"particle_schedules\":"<<policySchedules[0]+policySchedules[1]<<",\"particles\":256"
+    <<",\"history_policies\":[{\"policy\":\"world-position\",\"tagged_shift_cases\":"<<policyCases[0]
+    <<",\"particle_schedules\":"<<policySchedules[0]<<"},{\"policy\":\"boundary-relative-z\",\"tagged_shift_cases\":"<<policyCases[1]
+    <<",\"particle_schedules\":"<<policySchedules[1]<<"}]"
+    <<",\"zero_shift_policy_identity\":true,\"excited_z_history_policy_difference\":true"
+    <<",\"next_step_policy_field_difference\":true,\"status\":\"state migration and unchanged-core equivalence only\"}\n";
 }
 
-void benchmark(const std::string& root,unsigned width) {
+void benchmark(const std::string& root,unsigned width,
+               MovingWindowHistoryPolicy historyPolicy=MovingWindowHistoryPolicy::WorldPosition) {
   require(width==64||width==128||width==256,"Unsupported bounded benchmark width");
   const auto g=geometry(40,40,width);EBCPMLParameters p;p.cells[0]=p.cells[1]=6;p.cells[2]=8;
   const unsigned steps=64,repeats=3;
   {
-    auto a=makeGrid(g,p),b=makeGrid(g,p);seedWork(*a);clone(*a,*b);MovingWindowRemap mover(g,p,{-1});Oracle oracle(*b,p);
+    auto a=makeGrid(g,p),b=makeGrid(g,p);seedWork(*a);clone(*a,*b);MovingWindowRemap mover(g,p,{-1},historyPolicy);Oracle oracle(*b,p,historyPolicy);
     long offset=0;
     for(unsigned step=0;step<8;++step) {
       a->clearCurrent();b->clearCurrent();a->advance();b->advance();
@@ -276,8 +358,8 @@ void benchmark(const std::string& root,unsigned width) {
     auto f=makeGrid(g,p);seedWork(*f);
     std::unique_ptr<MovingWindowRemap> fast;std::unique_ptr<Oracle> slow;
     const auto setupStart=Clock::now();
-    if(mode==1)fast.reset(new MovingWindowRemap(g,p,{-1}));
-    if(mode==2)slow.reset(new Oracle(*f,p));
+    if(mode==1)fast.reset(new MovingWindowRemap(g,p,{-1},historyPolicy));
+    if(mode==2)slow.reset(new Oracle(*f,p,historyPolicy));
     const double setupSeconds=mode?elapsed(setupStart):0.;
     const std::size_t auxBytes=fast?fast->memoryBytes():(slow?slow->memoryBytes():0);
     for(unsigned warm=0;warm<4;++warm){f->clearCurrent();f->advance();}
@@ -305,6 +387,7 @@ void benchmark(const std::string& root,unsigned width) {
   }
   auto m=fresh(root+"/metrics.json");m<<"{\"completed\":true,\"numerical_status\":\"PASS\",\"width\":"<<width
     <<",\"steps\":"<<steps<<",\"repeats\":"<<repeats<<",\"bitwise_preflight_steps\":8,\"largest_timed_run_s\":"<<largest
+    <<",\"history_policy\":\""<<policyName(historyPolicy)<<"\""
     <<",\"scope\":\"synthetic kernel and migration cost; no production speedup or physical-domain acceptance\"}\n";
 }
 }
@@ -312,15 +395,22 @@ int main(int argc,char** argv) {
   int provided=0;MPI_Init_thread(&argc,&argv,MPI_THREAD_FUNNELED,&provided);
   int size=0;MPI_Comm_size(MPI_COMM_WORLD,&size);
   try {
-    require(size==1,"One MPI rank required");require(argc>=3,"Usage: probe OUT verify|bench WIDTH|wave");
+    require(size==1,"One MPI rank required");require(argc>=3,"Usage: probe OUT verify|bench WIDTH|bench-boundary WIDTH|wave");
     require(mkdir(argv[1],0755)==0||errno==EEXIST,"Cannot create result directory");
     const std::string mode=argv[2];
     if(mode=="verify")verify(argv[1]);
     else if(mode=="bench"){require(argc==4,"Benchmark width missing");benchmark(argv[1],std::stoul(argv[3]));}
+    else if(mode=="bench-boundary"){require(argc==4,"Benchmark width missing");benchmark(argv[1],std::stoul(argv[3]),MovingWindowHistoryPolicy::BoundaryRelativeZ);}
     else if(mode=="wave")aprl::verification::runMovingWindowWave(argv[1]);
     else if(mode=="wave-static")aprl::verification::runMovingWindowWave(argv[1],true);
     else if(mode=="wave20")aprl::verification::runMovingWindowWave(argv[1],false,20);
+    else if(mode=="wave-boundary")aprl::verification::runMovingWindowWave(argv[1],false,8,MovingWindowHistoryPolicy::BoundaryRelativeZ);
+    else if(mode=="wave-boundary20")aprl::verification::runMovingWindowWave(argv[1],false,20,MovingWindowHistoryPolicy::BoundaryRelativeZ);
     else if(mode=="wave-static20")aprl::verification::runMovingWindowWave(argv[1],true,20);
+    else if(mode=="wave-long20")aprl::verification::runMovingWindowWave(argv[1],false,20,MovingWindowHistoryPolicy::WorldPosition,true);
+    else if(mode=="wave-boundary-long20")aprl::verification::runMovingWindowWave(argv[1],false,20,MovingWindowHistoryPolicy::BoundaryRelativeZ,true);
+    else if(mode=="wave-long")aprl::verification::runMovingWindowWave(argv[1],false,8,MovingWindowHistoryPolicy::WorldPosition,true);
+    else if(mode=="wave-boundary-long")aprl::verification::runMovingWindowWave(argv[1],false,8,MovingWindowHistoryPolicy::BoundaryRelativeZ,true);
     else throw std::runtime_error("Unknown mode");
     std::cout<<"Completed "<<mode<<"; checks="<<checks<<'\n';MPI_Finalize();return 0;
   }catch(const std::exception& e){std::cerr<<e.what()<<'\n';MPI_Abort(MPI_COMM_WORLD,1);return 1;}
