@@ -131,6 +131,141 @@ namespace
                 << std::endl;
   }
 
+  void checkCowanInitialField(MPI_Comm communicator, int rank, int size)
+  {
+    require(size == 1,
+      "cowan-initial-field verification requires exactly one MPI rank");
+    const aprl::EBGridGeometry geometry(
+      12, 10, 14, 0.15, 0.12, 0.1, 0.1 / aprl::SI::c,
+      aprl::EBMaxwellSolver::CowanZ);
+    const aprl::FieldVector<double> origin(0.0);
+    const std::size_t guards[3] = {0, 0, 0};
+    const double positions[3][3] = {
+      {0.66, 0.43, 0.65}, {0.91, 0.71, 0.88}, {0.81, 0.62, 0.44}
+    };
+    const double velocities[2] = {0.0, 0.23};
+    for (double beta : velocities)
+      {
+        aprl::EBFieldGrid fields(geometry);
+        std::vector<aprl::RelativisticParticleSI> particles(3);
+        for (std::size_t index = 0; index < particles.size(); ++index)
+          {
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              particles[index].position[axis] = positions[index][axis];
+            particles[index].properVelocity[2] =
+              beta / std::sqrt(1.0 - beta * beta);
+            particles[index].charge = -1.0e-12 * (index + 1);
+            particles[index].mass = aprl::SI::electronMass * (index + 1);
+            particles[index].weight = index + 1;
+            particles[index].id = index + 10;
+            particles[index].sourceId = index + 20;
+          }
+        const std::vector<aprl::RelativisticParticleSI> original(particles);
+        const aprl::EBGaussInitializationReport report =
+          aprl::EBGaussFieldInitializer::initialize(
+            fields, geometry, 0, origin, particles,
+            aprl::InitialSelfFieldModel::CowanRelativisticPoisson,
+            1.0e-8, guards, 1.0e-11, 2000, communicator);
+        require(report.relativeResidual < 4.0e-11,
+          "Cowan initial field failed its physical Gauss check");
+        require(std::abs(report.meanBetaZ - beta) < 2.0e-15,
+          "Cowan initial field did not retain the mean source velocity");
+        require(std::isfinite(report.initialElectricEnergy) &&
+                report.initialElectricEnergy > 0.0,
+          "Cowan initial field has no finite electric energy");
+        for (std::size_t index = 0; index < particles.size(); ++index)
+          {
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              require(particles[index].position[axis] ==
+                        original[index].position[axis] &&
+                      particles[index].properVelocity[axis] ==
+                        original[index].properVelocity[axis],
+                "Cowan initialization changed a particle position or momentum");
+            require(particles[index].charge == original[index].charge &&
+                    particles[index].mass == original[index].mass &&
+                    particles[index].weight == original[index].weight &&
+                    particles[index].id == original[index].id &&
+                    particles[index].sourceId == original[index].sourceId &&
+                    particles[index].frozen == original[index].frozen &&
+                    particles[index].frozenBetaZ == original[index].frozenBetaZ,
+              "Cowan initialization changed particle source or held state");
+          }
+
+        if (beta == 0.0)
+          {
+            require(report.initialMagneticEnergy == 0.0,
+              "Stationary Cowan source initialized a magnetic field");
+            const aprl::YeeComponent* electric[3] = {
+              &fields.ex(), &fields.ey(), &fields.ez()
+            };
+            const aprl::YeeComponent* magnetic[3] = {
+              &fields.bx(), &fields.by(), &fields.bz()
+            };
+            std::vector<double> before[3];
+            double electricScale = 0.0;
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              {
+                before[axis].assign(electric[axis]->data(),
+                  electric[axis]->data() + electric[axis]->size());
+                for (double value : before[axis])
+                  electricScale = std::max(electricScale, std::abs(value));
+              }
+            require(electricScale > 0.0,
+              "Stationary Cowan invariant has a vacuous zero-field source");
+            // A static charge distribution with J=0 must remain static under
+            // the production Maxwell update, including PEC boundary cells.
+            // This tests curl compatibility without reproducing its stencil.
+            fields.clearCurrent();
+            fields.advance();
+            double electricChange = 0.0;
+            double magneticMaximum = 0.0;
+            for (unsigned int axis = 0; axis < 3; ++axis)
+              {
+                for (std::size_t index = 0;
+                     index < electric[axis]->size(); ++index)
+                  {
+                    require(std::isfinite(electric[axis]->data()[index]),
+                      "Stationary Cowan advance produced a non-finite electric field");
+                    electricChange = std::max(electricChange,
+                      std::abs(electric[axis]->data()[index] -
+                               before[axis][index]));
+                  }
+                for (std::size_t index = 0;
+                     index < magnetic[axis]->size(); ++index)
+                  {
+                    require(std::isfinite(magnetic[axis]->data()[index]),
+                      "Stationary Cowan advance produced a non-finite magnetic field");
+                    magneticMaximum = std::max(magneticMaximum,
+                      std::abs(magnetic[axis]->data()[index]));
+                  }
+              }
+            const double relativeElectricChange = electricChange / electricScale;
+            const double relativeMagneticField =
+              aprl::SI::c * magneticMaximum / electricScale;
+            require(relativeElectricChange < 5.0e-12 &&
+                    relativeMagneticField < 5.0e-12,
+              "Stationary Cowan initial field changed under zero-current Maxwell advance");
+            if (rank == 0)
+              std::cout << std::setprecision(12)
+                        << "cowan_static_relative_e_change="
+                        << relativeElectricChange
+                        << " cowan_static_relative_cB="
+                        << relativeMagneticField << std::endl;
+          }
+        else
+          require(std::isfinite(report.initialMagneticEnergy) &&
+                  report.initialMagneticEnergy > 0.0,
+            "Moving Cowan source did not initialize a finite magnetic field");
+        if (rank == 0)
+          std::cout << std::setprecision(12)
+                    << "cowan_initial_beta=" << beta
+                    << " physical_gauss_residual=" << report.relativeResidual
+                    << " electric_energy=" << report.initialElectricEnergy
+                    << " magnetic_energy=" << report.initialMagneticEnergy
+                    << std::endl;
+      }
+  }
+
   void checkCpmlParticleInitialField(MPI_Comm communicator, int rank)
   {
     const aprl::EBGridGeometry geometry(
@@ -1137,7 +1272,8 @@ int main(int argc, char** argv)
           "Usage: aprl_core_checks <lorentz-elegant|boris-phase|"
           "longitudinal-layout|charge-continuity|cowan-dispersion|"
           "current-filter|cpml-reflection|runtime-defaults|"
-          "initial-field-transverse|hdf5-versions|sase-generator-file> [path]");
+          "initial-field-transverse|cowan-initial-field|"
+          "hdf5-versions|sase-generator-file> [path]");
       const std::string check(argv[1]);
       if (check == "lorentz-elegant")
         checkLorentzAndElegant(MPI_COMM_WORLD, rank, size);
@@ -1165,6 +1301,8 @@ int main(int argc, char** argv)
         }
       else if (check == "initial-field-cpml-particles")
         checkCpmlParticleInitialField(MPI_COMM_WORLD, rank);
+      else if (check == "cowan-initial-field")
+        checkCowanInitialField(MPI_COMM_WORLD, rank, size);
       else if (check == "hdf5-versions")
         {
           if (argc != 3)

@@ -599,9 +599,11 @@ namespace aprl
         return InitialSelfFieldModel::RelativisticPoisson;
       if (value == "electrostatic-poisson" || value == "legacy")
         return InitialSelfFieldModel::ElectrostaticPoisson;
+      if (value == "cowan-relativistic-poisson")
+        return InitialSelfFieldModel::CowanRelativisticPoisson;
       throw configError(node,
-        "initial_self_field model must be relativistic-poisson or "
-        "electrostatic-poisson");
+        "initial_self_field model must be relativistic-poisson, "
+        "electrostatic-poisson or cowan-relativistic-poisson");
     }
 
     bool validDetectorName(const std::string& name)
@@ -1736,6 +1738,12 @@ namespace aprl
       throw configError(mesh["ballistic_outside_transverse"],
         "ballistic transverse boundary injection requires at least two "
         "CPML cells on both x and y");
+    if (result.initialSelfField.model ==
+          InitialSelfFieldModel::CowanRelativisticPoisson &&
+        result.mesh.fieldSolver != EBMaxwellSolver::CowanZ)
+      throw configError(initialSelfField["model"],
+        "initial_self_field.model: cowan-relativistic-poisson requires "
+        "mesh.field_solver: cowan-z");
     if (result.initialSelfField.includeTransverseCpmlParticles &&
         (!result.initialSelfField.enabled ||
          !result.mesh.ballisticOutsideTransverse ||

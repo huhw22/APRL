@@ -156,10 +156,13 @@ CowanMagneticDivergenceReport cowanMagneticDivergence(const EBFieldGrid& fields)
 
 CowanReferenceReport initializeCowanReference(EBFieldGrid& fields,
     const FieldVector<double>& origin,
-    const std::vector<RelativisticParticleSI>& particles,double beta) {
+    const std::vector<RelativisticParticleSI>& particles,double beta,
+    MPI_Comm communicator) {
   const auto start=std::chrono::steady_clock::now();
   int ranks=0;
-  MPI_Comm_size(MPI_COMM_WORLD,&ranks);
+  if(communicator==MPI_COMM_NULL)
+    throw std::invalid_argument("Cowan reference communicator cannot be null");
+  MPI_Comm_size(communicator,&ranks);
   const auto& g=fields.geometry();
   if(ranks!=1||g.solver!=EBMaxwellSolver::CowanZ)
     throw std::invalid_argument("Cowan reference requires one MPI rank and CowanZ");

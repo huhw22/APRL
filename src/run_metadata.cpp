@@ -207,8 +207,11 @@ namespace aprl
                    << config.runtime.shutdownWatchdogFinalizeTimeoutSeconds
                    << "\n"
                    << std::setprecision(17)
-                   << "resolved_initial_self_field:\n"
-                   << "  enabled: "
+                   << "resolved_initial_self_field:\n";
+            if (config.initialSelfField.model ==
+                InitialSelfFieldModel::CowanRelativisticPoisson)
+              stream << "  model: cowan-relativistic-poisson\n";
+            stream << "  enabled: "
                    << (config.initialSelfField.enabled ? "true" : "false")
                    << "\n"
                    << "  include_transverse_cpml_particles: "

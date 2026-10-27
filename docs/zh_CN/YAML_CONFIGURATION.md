@@ -197,7 +197,9 @@ initial_self_field:
 
 块可省略，默认如上。启用后以生产 CIC 形状沉积 boost 后束团，求和 MPI 共享顶点平面，并在第一个物理步前求离散相对论 Poisson。默认 `relativistic-poisson` 由代表质量加权平均轴向速度构造 Vay 刚性束椭圆算符，同时初始化 Yee E 与相应 B。`electrostatic-poisson` 仅保留作 B=0 控制回归。所得 Yee 边 E 用相同电荷沉积检查；不收敛或后残差超容差是硬错误。`maximum_iterations` 必须为正，容差严格位于 `(0,1)`。
 
-`maximum_mean_transverse_beta` 限制 boost 后计算系内按代表质量加权的**平均横向速度大小除以光速**，默认 `1e-8`，必须是 `[0,1)` 内有限值。它是 `relativistic-poisson` 刚性束模型的适用性检查，**不是** Poisson 收敛参数 `relative_tolerance`，也不是单粒子发散角上限。对于已量化的极小质心倾角，可显式设为例如 `1.0e-7`；初场构造仍只采用平均轴向速度，需自行验证这种近似对目标物理量足够准确。
+可选 `cowan-relativistic-poisson` 用生产 Cowan 空间算符构造准稳态刚性束参考场，要求 `mesh.field_solver: cowan-z`。粒子位置、动量和 held 释放条件保持原值；有限时间步运动与有限边界仍是需要对照 held 评估的近似。该 CG 模型还检查平滑符号的保守正定充分条件，可能拒绝某些实际正定的有限网格算子；具体范围见[初始自场](INITIAL_SELF_FIELD.md)。
+
+`maximum_mean_transverse_beta` 限制 boost 后计算系内按代表质量加权的**平均横向速度大小除以光速**，默认 `1e-8`，必须是 `[0,1)` 内有限值。它是 `relativistic-poisson` 和 `cowan-relativistic-poisson` 刚性束模型的适用性检查，**不是** Poisson 收敛参数 `relative_tolerance`，也不是单粒子发散角上限。对于已量化的极小质心倾角，可显式设为例如 `1.0e-7`；初场构造仍只采用平均轴向速度，需自行验证这种近似对目标物理量足够准确。
 
 默认情况下，CPML 下静态求解零势面是**CPML 内表面**，CPML 内 E/B 从零开始，避免非辐射 Coulomb 尾给零记忆变量充电后回流。若任一 CIC 电荷权重触及该面则停止；应把粒子至少移动到物理区内、距 CPML 入口一整个单元，或增大物理 padding，不能静默丢电荷。
 

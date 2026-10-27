@@ -37,6 +37,13 @@ namespace aprl
    * a scalar potential in the evolution state. Charge is deposited with the
    * production CIC shape. A distributed matrix-free relativistic-Poisson
    * solve enforces div(E)=rho/epsilon0 and B=beta x E/c on the Yee lattice.
+   * The opt-in Cowan model uses -div[(D* - a zhat D_z)phi]=rho/epsilon0,
+   * a=v_z^2 epsilon0 mu0, and B=v_z epsilon0 mu0 zhat x E with the same
+   * rigid-translation half-step interpolation. Its 27-point distributed
+   * CG solve retains one halo; field construction reuses a CG vector and
+   * exchanges filtered potentials rather than allocating another volume.
+   * Positive S_x, S_y and S_z-a over all transverse cosine arguments are
+   * required as a conservative sufficient positive-definiteness bound.
    * Normally the CPML entrance is the static zero-potential surface. The
    * opt-in transverse CPML-source solve instead pads a temporary Poisson
    * lattice and retains only physical-region E/B; evolving CPML fields and

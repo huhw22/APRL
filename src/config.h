@@ -94,7 +94,8 @@ namespace aprl
   enum class InitialSelfFieldModel
   {
     RelativisticPoisson,
-    ElectrostaticPoisson
+    ElectrostaticPoisson,
+    CowanRelativisticPoisson
   };
 
   struct InitialSelfFieldConfig

@@ -1076,6 +1076,9 @@ namespace aprl
           << (config_.initialSelfField.model ==
                 InitialSelfFieldModel::RelativisticPoisson ?
                 "relativistic-Poisson rigid-beam" :
+              config_.initialSelfField.model ==
+                InitialSelfFieldModel::CowanRelativisticPoisson ?
+                "Cowan relativistic-Poisson quasi-steady rigid-beam" :
                 "legacy electrostatic-Poisson")
           << " construction "
           << "converged in " << report.iterations
@@ -1117,6 +1120,13 @@ namespace aprl
                      "common-velocity bunch; velocity-spread and "
                      "kinetic-equilibrium errors require separate "
                      "convergence tests.";
+        else if (config_.initialSelfField.model ==
+                 InitialSelfFieldModel::CowanRelativisticPoisson)
+          message << "The Cowan model matches the spatial Cowan operator "
+                     "for a common axial velocity; finite-step translation, "
+                     "velocity-spread and kinetic-equilibrium errors remain "
+                     "approximations. Particle positions, momenta and held "
+                     "release conditions are unchanged.";
         else
           message << "The legacy model deliberately omits the moving-bunch "
                      "magnetic field and is retained only for regression.";

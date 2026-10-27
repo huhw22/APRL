@@ -371,7 +371,16 @@ equation before the first physical step. `relativistic-poisson` is the default:
 it derives the represented-mass-weighted mean axial velocity in the simulation
 frame, uses the Vay rigid-beam elliptic operator, and initializes both Yee E
 and the associated B field. `electrostatic-poisson` retains the old B=0
-construction only for controlled regression. The resulting Yee-edge E field
+construction only for controlled regression. The opt-in
+`cowan-relativistic-poisson` uses the production Cowan spatial operator for a
+quasi-steady rigid-beam reference and requires `mesh.field_solver: cowan-z`.
+It preserves particle positions, momenta and held release conditions; moving
+finite-step and finite-boundary errors remain approximations to compare with
+held. See [Initial particle self-field](INITIAL_SELF_FIELD.md).
+The Cowan CG model also checks conservative sufficient bounds on its
+smoothing symbols for positive definiteness; these can reject some otherwise
+positive finite-grid operators, as detailed in that document.
+The resulting Yee-edge E field
 is checked against the same charge deposition. Non-convergence and a
 post-check residual above the configured tolerance are hard errors;
 `maximum_iterations` must be positive and `relative_tolerance` must lie
@@ -379,7 +388,8 @@ strictly between zero and one.
 
 `maximum_mean_transverse_beta` is the largest allowed magnitude of the
 represented-mass-weighted **mean transverse velocity divided by c in the
-boosted simulation frame** for `relativistic-poisson`. It defaults to `1e-8`
+boosted simulation frame** for `relativistic-poisson` and
+`cowan-relativistic-poisson`. It defaults to `1e-8`
 and must be finite in `[0, 1)`. This is an approximation guard, not the
 Poisson solver's `relative_tolerance` or an input-beam emittance limit. A
 small nonzero centroid tilt can be allowed explicitly, for example

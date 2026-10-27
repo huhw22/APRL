@@ -220,6 +220,168 @@ namespace aprl
         }
     }
 
+    Double cowanTransverseDelta(const EBCowanCoefficients& coefficient,
+                                unsigned int axis)
+    {
+      return axis == 0 ? coefficient.deltaYZ :
+        (axis == 1 ? coefficient.deltaZX : coefficient.deltaXY);
+    }
+
+    struct CowanPoissonOperator
+    {
+      EBCowanCoefficients coefficient;
+      Double translationCoefficient;
+      Double stencil[3][3][3];
+
+      CowanPoissonOperator(const EBGridGeometry& geometry, Double meanBetaZ)
+        : coefficient(EBCowanCoefficients::forZDispersion(
+            geometry.dx, geometry.dy, geometry.dz)),
+          translationCoefficient(0.0), stencil{}
+      {
+        const Double velocity = meanBetaZ * SI::c;
+        translationCoefficient = velocity * velocity *
+          SI::epsilon0 * SI::mu0;
+        const Double spacing[3] = {
+          geometry.dx, geometry.dy, geometry.dz
+        };
+        for (unsigned int axis = 0; axis < 3; ++axis)
+          {
+            const unsigned int transverseA = (axis + 1) % 3;
+            const unsigned int transverseB = (axis + 2) % 3;
+            const Double delta = cowanTransverseDelta(coefficient, axis);
+            Double minimumSymbol = std::numeric_limits<Double>::infinity();
+            for (int a = -1; a <= 1; a += 2)
+              for (int b = -1; b <= 1; b += 2)
+                minimumSymbol = std::min(minimumSymbol,
+                  coefficient.alpha[axis] +
+                  2.0 * coefficient.beta[transverseA] * a +
+                  2.0 * coefficient.beta[transverseB] * b +
+                  4.0 * delta * a * b);
+            if (axis == 2) minimumSymbol -= translationCoefficient;
+            /* Each S_i is bilinear in its two transverse cosines. Its
+             * minimum on [-1,1]^2 is attained at a corner. Requiring all
+             * S_x, S_y and S_z-a to be positive is a conservative,
+             * grid-size-independent sufficient condition for SPD. */
+            if (!(minimumSymbol >
+                  64.0 * std::numeric_limits<Double>::epsilon()))
+              {
+                std::ostringstream message;
+                message << std::setprecision(12)
+                  << "Initial Cowan-Poisson operator fails the sufficient "
+                     "positive-definiteness bound on axis " << axis
+                  << ": minimum smoothing symbol"
+                  << (axis == 2 ? " minus v^2*epsilon0*mu0" : "")
+                  << "=" << minimumSymbol
+                  << "; choose boost_gamma closer to the bunch mean gamma "
+                     "or a grid aspect ratio with positive Cowan symbols";
+                throw std::runtime_error(message.str());
+              }
+
+            const Double inverseSpacing2 =
+              1.0 / (spacing[axis] * spacing[axis]);
+            for (int a = -1; a <= 1; ++a)
+              for (int b = -1; b <= 1; ++b)
+                {
+                  const Double weight = a == 0 ?
+                    (b == 0 ? coefficient.alpha[axis] :
+                     coefficient.beta[transverseB]) :
+                    (b == 0 ? coefficient.beta[transverseA] : delta);
+                  int point[3] = {1, 1, 1};
+                  point[transverseA] += a;
+                  point[transverseB] += b;
+                  stencil[point[2]][point[1]][point[0]] +=
+                    2.0 * weight * inverseSpacing2;
+                  --point[axis];
+                  stencil[point[2]][point[1]][point[0]] -=
+                    weight * inverseSpacing2;
+                  point[axis] += 2;
+                  stencil[point[2]][point[1]][point[0]] -=
+                    weight * inverseSpacing2;
+                }
+          }
+        const Double translationZ = translationCoefficient /
+          (geometry.dz * geometry.dz);
+        stencil[1][1][1] -= 2.0 * translationZ;
+        stencil[0][1][1] += translationZ;
+        stencil[2][1][1] += translationZ;
+      }
+    };
+
+    void applyNegativeCowanLaplacian(
+        ScalarSlab& input, ScalarSlab& output,
+        const ScalarDomain& domain, std::size_t localZOffset,
+        const CowanPoissonOperator& poisson,
+        int rank, int size, MPI_Comm communicator)
+    {
+      exchangeScalarGhosts(input, rank, size, communicator);
+      output.fill(0.0);
+      /* Sum_i S_i L_i - a L_z, where L_i is the ordinary negative
+       * second difference. The transverse smoothing expands this to 27
+       * points, but never beyond one z halo. All boundary vertices in the
+       * CG vectors remain zero; no periodic or clamped extension enters
+       * the Dirichlet solve. */
+      for (std::size_t p = 1; p <= input.ownedZ(); ++p)
+        {
+          const std::size_t globalK = localZOffset + p - 1;
+          if (globalK <= domain.lower[2] ||
+              globalK >= domain.upper[2]) continue;
+          for (std::size_t j = domain.lower[1] + 1;
+               j < domain.upper[1]; ++j)
+            for (std::size_t i = domain.lower[0] + 1;
+                 i < domain.upper[0]; ++i)
+              {
+                Double value = 0.0;
+                for (std::size_t z = 0; z < 3; ++z)
+                  for (std::size_t y = 0; y < 3; ++y)
+                    for (std::size_t x = 0; x < 3; ++x)
+                      value += poisson.stencil[z][y][x] *
+                        input(i - 1 + x, j - 1 + y, p - 1 + z);
+                output(i, j, p) = value;
+              }
+        }
+    }
+
+    Double cowanSmoothedPotential(const ScalarSlab& potential,
+                                  const EBCowanCoefficients& coefficient,
+                                  unsigned int axis, std::size_t i,
+                                  std::size_t j, std::size_t p)
+    {
+      const unsigned int transverseA = (axis + 1) % 3;
+      const unsigned int transverseB = (axis + 2) % 3;
+      Double value = coefficient.alpha[axis] * potential(i, j, p);
+      for (int sign = -1; sign <= 1; sign += 2)
+        {
+          std::size_t a[3] = {i, j, p};
+          std::size_t b[3] = {i, j, p};
+          if (sign < 0)
+            {
+              --a[transverseA];
+              --b[transverseB];
+            }
+          else
+            {
+              ++a[transverseA];
+              ++b[transverseB];
+            }
+          value += coefficient.beta[transverseA] *
+            potential(a[0], a[1], a[2]);
+          value += coefficient.beta[transverseB] *
+            potential(b[0], b[1], b[2]);
+        }
+      const Double delta = cowanTransverseDelta(coefficient, axis);
+      for (int a = -1; a <= 1; a += 2)
+        for (int b = -1; b <= 1; b += 2)
+          {
+            std::size_t point[3] = {i, j, p};
+            if (a < 0) --point[transverseA];
+            else ++point[transverseA];
+            if (b < 0) --point[transverseB];
+            else ++point[transverseB];
+            value += delta * potential(point[0], point[1], point[2]);
+          }
+      return value;
+    }
+
     long double globalDot(
         const ScalarSlab& left, const ScalarSlab& right,
         const ScalarDomain& domain, std::size_t localZOffset,
@@ -314,6 +476,82 @@ namespace aprl
        * interpolation therefore also supplies the required half-time
        * staggering without allocating another field copy. */
       const Double magneticScale = meanBetaZ / SI::c;
+      const Double upperWeight = 0.5 + 0.5 * meanBetaZ * SI::c *
+        g.dt / g.dz;
+      const Double lowerWeight = 1.0 - upperWeight;
+      if (upperWeight < 0.0 || upperWeight > 1.0)
+        throw std::runtime_error(
+          "Initial B half-step shift exceeds one longitudinal cell");
+      for (std::size_t k = 0; k < g.nz; ++k)
+        for (std::size_t j = 0; j < g.ny; ++j)
+          for (std::size_t i = 0; i <= g.nx; ++i)
+            fields.bx()(i, j, k) = -magneticScale *
+              (lowerWeight * fields.ey()(i, j, k) +
+               upperWeight * fields.ey()(i, j, k + 1));
+      for (std::size_t k = 0; k < g.nz; ++k)
+        for (std::size_t j = 0; j <= g.ny; ++j)
+          for (std::size_t i = 0; i < g.nx; ++i)
+            fields.by()(i, j, k) = magneticScale *
+              (lowerWeight * fields.ex()(i, j, k) +
+               upperWeight * fields.ex()(i, j, k + 1));
+      fields.bz().fill(0.0);
+    }
+
+    void fieldsFromCowanPotential(
+        EBFieldGrid& fields, ScalarSlab& potential, ScalarSlab& scratch,
+        const ScalarDomain& domain, std::size_t localZOffset,
+        Double meanBetaZ, const CowanPoissonOperator& poisson,
+        std::size_t transversePaddingCells,
+        int rank, int size, MPI_Comm communicator)
+    {
+      exchangeScalarGhosts(potential, rank, size, communicator);
+      const EBGridGeometry& g = fields.geometry();
+      const std::size_t pad = transversePaddingCells;
+      const Double spacing[3] = {g.dx, g.dy, g.dz};
+      YeeComponent* electric[3] = {
+        &fields.ex(), &fields.ey(), &fields.ez()
+      };
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          /* A zero Dirichlet potential is extended oddly across each
+           * domain surface. S_i phi is consequently zero on the same
+           * surfaces, so only interior filtered vertices are needed.
+           * Reuse a CG vector instead of allocating another volume.
+           * Filtering owned nodes before exchanging them is essential:
+           * Ex/Ey on the shared top plane otherwise need a second halo
+           * of phi, including when a rank owns just one z cell. */
+          scratch.fill(0.0);
+          for (std::size_t p = 1; p <= potential.ownedZ(); ++p)
+            {
+              const std::size_t globalK = localZOffset + p - 1;
+              if (globalK <= domain.lower[2] ||
+                  globalK >= domain.upper[2]) continue;
+              for (std::size_t j = domain.lower[1] + 1;
+                   j < domain.upper[1]; ++j)
+                for (std::size_t i = domain.lower[0] + 1;
+                     i < domain.upper[0]; ++i)
+                  scratch(i, j, p) = cowanSmoothedPotential(
+                    potential, poisson.coefficient, axis, i, j, p) -
+                    (axis == 2 ? poisson.translationCoefficient *
+                     potential(i, j, p) : 0.0);
+            }
+          exchangeScalarGhosts(scratch, rank, size, communicator);
+          YeeComponent& component = *electric[axis];
+          for (std::size_t k = 0; k < component.nz(); ++k)
+            for (std::size_t j = 0; j < component.ny(); ++j)
+              for (std::size_t i = 0; i < component.nx(); ++i)
+                component(i, j, k) =
+                  -(scratch(i + pad + (axis == 0),
+                            j + pad + (axis == 1),
+                            k + 1 + (axis == 2)) -
+                    scratch(i + pad, j + pad, k + 1)) / spacing[axis];
+        }
+
+      /* Keep the existing rigid-translation interpolation to B(-dt/2),
+       * but use the same epsilon0*mu0 as the Cowan elliptic operator and
+       * Maxwell advance rather than assuming c^-2 is exactly equal. */
+      const Double magneticScale = meanBetaZ * SI::c *
+        SI::epsilon0 * SI::mu0;
       const Double upperWeight = 0.5 + 0.5 * meanBetaZ * SI::c *
         g.dt / g.dz;
       const Double lowerWeight = 1.0 - upperWeight;
@@ -617,6 +855,13 @@ namespace aprl
       throw std::invalid_argument(
         "Invalid initial self-field maximum mean transverse beta");
     const EBGridGeometry& local = fields.geometry();
+    const bool cowanModel =
+      model == InitialSelfFieldModel::CowanRelativisticPoisson;
+    if (cowanModel &&
+        (local.solver != EBMaxwellSolver::CowanZ ||
+         globalGeometry.solver != EBMaxwellSolver::CowanZ))
+      throw std::invalid_argument(
+        "cowan-relativistic-poisson requires the cowan-z Maxwell solver");
     if (local.nx != globalGeometry.nx || local.ny != globalGeometry.ny ||
         localZOffset + local.nz > globalGeometry.nz)
       throw std::invalid_argument(
@@ -668,12 +913,13 @@ namespace aprl
     meanVelocity(particles, communicator, meanBetaZ,
                  meanBetaTransverse,
                  holdTransverseUntilActivation, frame);
-    if (model == InitialSelfFieldModel::RelativisticPoisson &&
+    if ((model == InitialSelfFieldModel::RelativisticPoisson || cowanModel) &&
         meanBetaTransverse > maximumMeanTransverseBeta)
       {
         std::ostringstream message;
         message << std::setprecision(12)
-          << "relativistic-poisson mean beta_box_transverse="
+          << (cowanModel ? "cowan-relativistic-poisson" :
+              "relativistic-poisson") << " mean beta_box_transverse="
           << meanBetaTransverse
           << " exceeds initial_self_field.maximum_mean_transverse_beta="
           << maximumMeanTransverseBeta
@@ -683,16 +929,21 @@ namespace aprl
         throw std::runtime_error(message.str());
       }
     const Double appliedBetaZ =
-      model == InitialSelfFieldModel::RelativisticPoisson ?
+      (model == InitialSelfFieldModel::RelativisticPoisson || cowanModel) ?
       meanBetaZ : 0.0;
     const Double longitudinalCoefficient =
       std::fma(-appliedBetaZ, appliedBetaZ, 1.0);
-    if (!(longitudinalCoefficient >
+    if (!cowanModel && !(longitudinalCoefficient >
           64.0 * std::numeric_limits<Double>::epsilon()))
       throw std::runtime_error(
         "Initial relativistic-Poisson operator is ill-conditioned because "
         "the bunch remains too relativistic in the simulation frame; choose "
         "boost_gamma closer to the bunch mean gamma");
+
+    std::unique_ptr<CowanPoissonOperator> cowanPoisson;
+    if (cowanModel)
+      cowanPoisson.reset(new CowanPoissonOperator(
+        poissonGeometry, appliedBetaZ));
 
     ScalarSlab potential(poissonGeometry.nx + 1, poissonGeometry.ny + 1,
                          local.nz);
@@ -773,9 +1024,13 @@ namespace aprl
     for (std::size_t iteration = 0;
          iteration < maximumIterations; ++iteration)
       {
-        applyNegativeLaplacian(direction, image, poissonGeometry, domain,
-          localZOffset, longitudinalCoefficient,
-          rank, size, communicator);
+        if (cowanModel)
+          applyNegativeCowanLaplacian(direction, image, domain,
+            localZOffset, *cowanPoisson, rank, size, communicator);
+        else
+          applyNegativeLaplacian(direction, image, poissonGeometry, domain,
+            localZOffset, longitudinalCoefficient,
+            rank, size, communicator);
         const long double denominator = globalDot(
           direction, image, domain, localZOffset, communicator);
         if (!(denominator > 0.0L) ||
@@ -815,9 +1070,14 @@ namespace aprl
         "initial_self_field.maximum_iterations, relax its relative_tolerance, "
         "or reduce the grid aspect ratio");
 
-    fieldsFromPotential(fields, potential, appliedBetaZ,
-      longitudinalCoefficient, transversePaddingCells,
-      rank, size, communicator);
+    if (cowanModel)
+      fieldsFromCowanPotential(fields, potential, image, domain,
+        localZOffset, appliedBetaZ, *cowanPoisson,
+        transversePaddingCells, rank, size, communicator);
+    else
+      fieldsFromPotential(fields, potential, appliedBetaZ,
+        longitudinalCoefficient, transversePaddingCells,
+        rank, size, communicator);
     if (includeTransverseCpmlParticles)
       clearCpmlFields(fields, globalGeometry, localZOffset,
                       staticFieldGuardCells);

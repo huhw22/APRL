@@ -4,6 +4,8 @@
 #include <cstddef>
 #include <vector>
 
+#include <mpi.h>
+
 #include "eb_field.h"
 #include "eb_particles.h"
 
@@ -42,7 +44,7 @@ struct CowanMagneticDivergenceReport {
 CowanMagneticDivergenceReport cowanMagneticDivergence(
     const EBFieldGrid& fields);
 
-// Research-only, one MPI rank, complete PEC box and CowanZ geometry.
+// Research-only, one rank in communicator, complete PEC box and CowanZ geometry.
 // Deposits the unmodified particles with the production CIC shape. A DST-I
 // solves -div(D*phi-a zhat Dz phi)=rho/epsilon0 with phi=0 on every face.
 // Here D* is the actual Cowan derivative and a=v^2 epsilon0 mu0.
@@ -64,7 +66,8 @@ CowanReferenceReport initializeCowanReference(
     EBFieldGrid& fields,
     const FieldVector<double>& origin,
     const std::vector<RelativisticParticleSI>& particles,
-    double beta);
+    double beta,
+    MPI_Comm communicator = MPI_COMM_WORLD);
 
 }  // namespace verification
 }  // namespace aprl

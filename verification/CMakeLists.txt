@@ -3,6 +3,15 @@ option(APRL_ENABLE_PHYSICS_ANALYSIS
 
 option(APRL_BUILD_WINDOW_FEASIBILITY
   "Build bounded moving-window research probes; no production window changes" OFF)
+option(APRL_BUILD_COWAN_INITIALIZER_CHECKS
+  "Build distributed Cowan initializer checks against the small-grid DST oracle" OFF)
+if(APRL_BUILD_WINDOW_FEASIBILITY OR APRL_BUILD_COWAN_INITIALIZER_CHECKS)
+  find_path(APRL_VERIFY_FFTW_INCLUDE_DIR fftw3.h)
+  find_library(APRL_VERIFY_FFTW_LIBRARY NAMES fftw3)
+  if(NOT APRL_VERIFY_FFTW_INCLUDE_DIR OR NOT APRL_VERIFY_FFTW_LIBRARY)
+    message(FATAL_ERROR "Cowan reference verification requires FFTW3 headers and library")
+  endif()
+endif()
 if(APRL_BUILD_WINDOW_FEASIBILITY)
   foreach(probe window_streaming pic_dependency window_analytic startup_self_field)
     add_executable(aprl_${probe}_probe ${probe}_probe.cpp)
@@ -10,14 +19,27 @@ if(APRL_BUILD_WINDOW_FEASIBILITY)
     target_compile_options(aprl_${probe}_probe PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
   endforeach()
-  find_path(APRL_VERIFY_FFTW_INCLUDE_DIR fftw3.h)
-  find_library(APRL_VERIFY_FFTW_LIBRARY NAMES fftw3)
-  if(NOT APRL_VERIFY_FFTW_INCLUDE_DIR OR NOT APRL_VERIFY_FFTW_LIBRARY)
-    message(FATAL_ERROR "Cowan reference research probe requires FFTW3 headers and library")
-  endif()
   target_sources(aprl_startup_self_field_probe PRIVATE cowan_reference_field.cpp)
   target_include_directories(aprl_startup_self_field_probe PRIVATE ${APRL_VERIFY_FFTW_INCLUDE_DIR})
   target_link_libraries(aprl_startup_self_field_probe PRIVATE ${APRL_VERIFY_FFTW_LIBRARY})
+endif()
+
+if(APRL_BUILD_COWAN_INITIALIZER_CHECKS)
+  add_executable(aprl_cowan_initializer_checks
+    cowan_initializer_checks.cpp cowan_reference_field.cpp)
+  target_include_directories(aprl_cowan_initializer_checks PRIVATE ${APRL_VERIFY_FFTW_INCLUDE_DIR})
+  target_link_libraries(aprl_cowan_initializer_checks PRIVATE
+    direct_eb_core ${APRL_VERIFY_FFTW_LIBRARY})
+  target_compile_options(aprl_cowan_initializer_checks PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+  foreach(ranks 1 2 4)
+    add_test(NAME cowan.initializer.distributed-${ranks}
+      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
+        ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_cowan_initializer_checks>
+        ${MPIEXEC_POSTFLAGS})
+    set_tests_properties(cowan.initializer.distributed-${ranks} PROPERTIES
+      LABELS "functional;mpi;cowan-initializer" TIMEOUT 120 PROCESSORS ${ranks})
+  endforeach()
 endif()
 
 add_executable(aprl_core_checks core_checks.cpp)
@@ -261,6 +283,9 @@ aprl_required_test(required.initial-field.transverse-limit
 
 aprl_required_test(required.initial-field.cpml-particles
   $<TARGET_FILE:aprl_core_checks> initial-field-cpml-particles)
+
+aprl_required_test(required.initial-field.cowan
+  $<TARGET_FILE:aprl_core_checks> cowan-initial-field)
 
 aprl_required_test(required.charge-continuity
   $<TARGET_FILE:aprl_core_checks> charge-continuity)

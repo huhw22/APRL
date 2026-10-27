@@ -9,7 +9,7 @@ radiation. The default initialization therefore constructs a rigid-beam E/B
 field once and then discards every potential/solver work array. The evolution
 state remains direct SI E/B; A/phi never enters the time advance.
 
-## Discrete construction
+## Default discrete construction
 
 1. Each boosted-frame particle deposits charge on Yee vertices with the same
    first-order CIC shape used by the charge-conserving trajectory depositor.
@@ -56,6 +56,51 @@ and post-check phases. Startup reports iterations, Gauss residuals, charge,
 mean velocity, electric/magnetic energy, RMS resolution, padding and temporary
 memory per rank, including transient CIC charge lattices.
 
+## Cowan quasi-steady reference field
+
+The opt-in `model: cowan-relativistic-poisson` uses the spatial derivatives of
+`mesh.field_solver: cowan-z`. Selecting it with another Maxwell solver is a
+configuration error. It leaves the default model, particle positions and
+momenta, held release conditions, mesh dimensions and propagation settings
+unchanged.
+
+Let `D*` be the Cowan modified gradient, `D` the ordinary Yee gradient,
+`v = beta_bar*c` the represented-mass-weighted mean axial velocity in the
+simulation frame, and `a = v*v*epsilon0*mu0`. The distributed CG solve uses
+
+```text
+-div[(D* - a z_hat Dz) phi] = rho / epsilon0
+E = -D* phi + a z_hat Dz phi
+B = v epsilon0 mu0 z_hat cross E
+```
+
+The same CIC charge and ordinary Yee electric divergence are used for the
+Gauss post-check. The B field retains the rigid-translation interpolation to
+`-dt/2`. The modified derivative follows the production Cowan stencil; see
+[Cowan-z and CPML](MAXWELL_COWAN_CPML.md).
+
+This supplies a quasi-steady reference compatible with the spatial Cowan
+operator, not an exact discrete moving equilibrium. Finite-step translation,
+velocity spread, finite boundaries and subsequent space-charge expansion
+still cause particle/field energy exchange. Compare that exchange, beam
+expansion and energy spread with the existing held initialization on matched
+small cases. Agreement need only be adequate for the intended observable;
+the initializer does not impose a new empirical held-agreement threshold.
+CG convergence and the Gauss post-check remain required numerical checks.
+In particular, the Cowan magnetic constraint uses its modified divergence;
+ordinary Yee `div(B)` alone is not the corresponding zero-residual criterion.
+
+Before CG, the implementation requires `min(S_x) > 64*epsilon`,
+`min(S_y) > 64*epsilon` and `min(S_z)-a > 64*epsilon`, where `epsilon` is
+floating-point machine precision and `S_i` is the transverse smoothing
+symbol for direction `i`. Each symbol is bilinear in two transverse cosines,
+so its minimum over `[-1,1]^2` is evaluated at the four corners. This is a
+conservative, grid-size-independent sufficient condition for positive
+definiteness, not a necessary condition: some finite grids with a positive
+complete elliptic spectrum can be rejected. A rejection reports the axis and
+bound; it does not establish that the physical beam is invalid. The existing
+Maxwell grid and boost choices must also be suitable for this CG model.
+
 ## Input
 
 ```yaml
@@ -69,13 +114,15 @@ initial_self_field:
 ```
 
 The block is optional and defaults to these values. The legacy comparison is
-selected with `model: electrostatic-poisson`. An enabled solve is a hard
+selected with `model: electrostatic-poisson`; the Cowan reference is selected
+with `model: cowan-relativistic-poisson`. An enabled solve is a hard
 preflight: non-convergence or a failed post-check aborts with a correction
 suggestion. Disabling it is allowed only for controlled zero-field/regression
 comparisons and prints a prominent warning.
 
 `maximum_mean_transverse_beta` controls the represented-mass-weighted mean
-transverse `|beta|` guard in the boosted frame. The default remains `1e-8`;
+transverse `|beta|` guard in the boosted frame for both rigid-beam models.
+The default remains `1e-8`;
 setting a larger value does not rotate the rigid-beam initial field or change
 the deposited charge. Record and justify any relaxation when comparing runs.
 
