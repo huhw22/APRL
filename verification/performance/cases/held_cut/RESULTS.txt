@@ -1,0 +1,44 @@
+2026-10-28 accepted scope: bounded held-inlet/right-cut prototype validation
+
+Full record:
+/public/home/wfollowm/APRL_Workspace/results/held_cut_20261028/RESULT_REVIEW.txt
+
+Production-anchored constants and unchanged original kernels; only shorter
+Gaussian source/fewer particles/short horizon. See README.txt for exact scope.
+
+Right-cut operator equality and two deliberately broken controls passed.
+Independent 40-step-per-side native-stencil causal bounds passed. This does not
+prove independence of the elliptic initial field from its finite-domain edges.
+
+Slurm jobs18947/18948/18949 completed0:0 on node8, no node pinning. Each reserved
+one exclusive128CPU node, actually used1MPIx16 physical cores,600s per case.
+The earlier gnode1 science preflight hit180s during the serial initializer;
+the scientific constants/tolerance were retained and the time-limited test
+moved to Slurm. All old binaries/failure evidence remain.
+
+90steps,64particles, all released and observed at the auxiliary local plane:
+                        E relativeL2     B relativeL2    particle energy RMS
+live held reference     5.924e-14         4.636e-14       roundoff (~1e-12eV)
+frozen16-step prewarm    17.031%           19.215%         2.122eV
+frozen64-step prewarm    17.548%           32.410%         3.753eV
+
+Live auxiliary particle records are identical; final positions identical and
+one momentum component differs in its final bit. Live full control is byte
+identical to the matched frozen control. The earlier64-step physical prefix
+also replays exactly (excluding two audit-only continuity fields).
+
+Frozen reference already disagrees at recordedstep4, before first release at
+41.01steps; the copied entry slice equals its supplied reference exactly.
+16->64 preparation did not improve the result; no claim about arbitrarily
+longer preparations. The reference's time dependence remains the blocker.
+
+Complete measured live online cost24.598s vs full15.902s, including donor.
+Frozen online11.303/11.290s vs full15.847/15.919s, but science not accepted.
+Initializer~138s, preparation, diagnostics and output separately recorded.
+No accepted production speedup or complexity reduction claimed.
+
+Structural reviewer PASS is not physical acceptance. Reference cache is NOT
+accepted. Native plane differences are not collocated lab E/B or radiative
+Poynting power. Auxiliary plane is not production4.5m detector. These cases
+do not exercise actual right-particle exits or multi-rank communication.
+Source, default executable and production remain unchanged. No remote push.

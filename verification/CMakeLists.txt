@@ -11,6 +11,22 @@ option(APRL_BUILD_MOVING_WINDOW_PROBE
   "Build integer moving-window state/cost checks with unchanged CPML kernels" OFF)
 option(APRL_BUILD_STREAMING_CPML_PROBE
   "Build charged-bunch/reference-feed integration with original CPML and world-position remap" OFF)
+option(APRL_BUILD_HELD_CUT_PROBE
+  "Build production-parameter held-inflow/causal-cut probes with transverse CPML" OFF)
+if(APRL_BUILD_HELD_CUT_PROBE)
+  add_executable(aprl_held_cut_probe held_cut_bunch_probe.cpp
+    held_cut_boundary.cpp moving_window_remap.cpp)
+  target_link_libraries(aprl_held_cut_probe PRIVATE direct_eb_core)
+  target_compile_options(aprl_held_cut_probe PRIVATE -O2 -Wall -Wextra -Wpedantic)
+  add_executable(aprl_held_cut_boundary_checks held_cut_boundary_checks.cpp
+    held_cut_boundary.cpp moving_window_remap.cpp)
+  target_link_libraries(aprl_held_cut_boundary_checks PRIVATE direct_eb_core)
+  target_compile_options(aprl_held_cut_boundary_checks PRIVATE -O2 -Wall -Wextra -Wpedantic)
+  add_executable(aprl_held_cut_causality_checks held_cut_causality_checks.cpp
+    moving_window_remap.cpp)
+  target_link_libraries(aprl_held_cut_causality_checks PRIVATE direct_eb_core)
+  target_compile_options(aprl_held_cut_causality_checks PRIVATE -O2 -Wall -Wextra -Wpedantic)
+endif()
 if(APRL_BUILD_STREAMING_CPML_PROBE)
   add_executable(aprl_streaming_cpml_probe streaming_cpml_bunch_probe.cpp
     streaming_cpml_boundary.cpp streaming_reference_boundary.cpp moving_window_remap.cpp)
