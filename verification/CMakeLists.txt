@@ -9,6 +9,15 @@ option(APRL_BUILD_STREAMING_BUNCH_PROBE
   "Build the experimental charged-bunch moving-window validation probe" OFF)
 option(APRL_BUILD_MOVING_WINDOW_PROBE
   "Build integer moving-window state/cost checks with unchanged CPML kernels" OFF)
+option(APRL_BUILD_STREAMING_CPML_PROBE
+  "Build charged-bunch/reference-feed integration with original CPML and world-position remap" OFF)
+if(APRL_BUILD_STREAMING_CPML_PROBE)
+  add_executable(aprl_streaming_cpml_probe streaming_cpml_bunch_probe.cpp
+    streaming_cpml_boundary.cpp streaming_reference_boundary.cpp moving_window_remap.cpp)
+  target_link_libraries(aprl_streaming_cpml_probe PRIVATE direct_eb_core)
+  target_compile_options(aprl_streaming_cpml_probe PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+endif()
 if(APRL_BUILD_MOVING_WINDOW_PROBE)
   add_executable(aprl_moving_window_probe moving_window_probe.cpp
     moving_window_remap.cpp moving_window_wave.cpp)
