@@ -70,3 +70,50 @@ self-consistent particle admission in a moving window, moving CPML, distributed
 repartition, streaming checkpoints, production speedup or end-to-end O(nlogn).
 The next gate is independent, constraint-consistent supply for a known moving
 charge distribution plus a weak wave, followed by actual held current crossing.
+
+Release-state startup study (user clarification, 2026-10-27)
+---------------------------------------------------------
+The physical target is now explicitly quasi-steady accuracy, not reproduction
+of the old held transient. Prescribed release x/p must stay fixed. An initial
+self-field must preserve normal space-charge expansion without imposing an
+excessive field-building energy transfer on the released particles.
+
+aprl_startup_self_field_probe uses the same accepted core, generated-gaussian
+seed710271, 4096 macro particles, -1pC, rest sigma4um, beta0 or0.23. All particles
+are released at t0. Same x/p/Q/m across modes and meshes; no held interval,
+external device, moving boundary or production input. base48^3 at1um,
+wide64^3 at1um, fine96^3 at0.5um, all15um/c physical duration. Fine also halves
+dt; fixed particle count is not a particle-number convergence study.
+
+CLI: OUT MODE BETA GRID; MODE=qs,zero,scale0.9,scale1.1,fieldonly;
+GRID=base,wide,fine. fieldonly requires beta0 and keeps all sources stationary
+with J=0. Zero/scaled fields violate initial Gauss for the same rho and are
+negative controls, not candidate physical models. qs uses ordinary production
+relativistic-Poisson at1e-10 tolerance; core physics is unchanged.
+
+run_startup.sh BUILD FRESH_RESULT MODE BETA GRID runs on explicitly authorized
+gnode1 only, after1x1 core binding, with180s per case and the shared CPU lock.
+review_startup.py ROOT independently checks initial/final particle records,
+stable deltaK, Gaussian force moments, constraints and observations.
+plot_startup.py ROOT --require-complete writes the eight primary-case figure.
+
+Results: results/startup_self_field_20261027/{PLAN.json,REVIEW.json,
+RESULT_REVIEW.txt,startup.png/pdf}. r1 contains ten coupled/control cases and
+its frozen pre-fieldonly binary/source. r2 contains three zero-current static
+source isolations, separately planned after energy diagnostics failed.
+All cases finish and functional checks pass; physical energy acceptance FAILS:
+moving-beam deltaK changes18.3% on refinement versus the predeclared5% screen,
+and standard field-energy closure fails the10% exchange-scale screen. Normal
+expansion is restored; zero-field moving startup gives large unphysical loss.
+Do not relabel functional checks as physical PASS or infer production errors.
+
+Ordinary-Poisson E=-grad(phi) satisfies Gauss but generally not Cowan's modified
+curl(E)=0. With particles fixed and J=0, field state and standard field energy
+still change; the standard energy is not an exact Cowan invariant. Its change
+is not by itself proof of real physical energy creation. Particle-grid work,
+field-grid work, native and centered B diagnostics must remain separate.
+This study has not implemented/accepted reference injection, a discrete steady
+moving-beam solution, streaming PIC, energy-precision production acceptance or
+an asymptotic speedup. The next research target is a quasi-steady reference
+compatible with the actual field/deposition operators, then release and weak
+wave tests, rather than a longer window or exact old-held replay.

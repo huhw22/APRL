@@ -4,7 +4,7 @@ option(APRL_ENABLE_PHYSICS_ANALYSIS
 option(APRL_BUILD_WINDOW_FEASIBILITY
   "Build bounded moving-window research probes; no production window changes" OFF)
 if(APRL_BUILD_WINDOW_FEASIBILITY)
-  foreach(probe window_streaming pic_dependency window_analytic)
+  foreach(probe window_streaming pic_dependency window_analytic startup_self_field)
     add_executable(aprl_${probe}_probe ${probe}_probe.cpp)
     target_link_libraries(aprl_${probe}_probe PRIVATE direct_eb_core)
     target_compile_options(aprl_${probe}_probe PRIVATE
