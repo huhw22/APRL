@@ -4,6 +4,7 @@
 // constraint-inconsistent negative/sensitivity controls, not physical models.
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -16,6 +17,7 @@
 #include "eb_deposition.h"
 #include "eb_initial_field.h"
 #include "particle_initializer.h"
+#include "cowan_reference_field.h"
 
 namespace {
 using aprl::Double;
@@ -197,15 +199,17 @@ std::array<double,3> forceMoment(const std::vector<RelativisticParticleSI>& part
 
 void run(const std::string& root,const std::string& mode,double beta,const std::string& grid) {
   if(beta!=0.&&std::abs(beta-.23)>1e-12)throw std::runtime_error("beta must be 0 or .23");
-  const bool staticSourceOnly=mode=="fieldonly";
+  const bool cowanReference=mode=="cowan"||mode=="cowan-fieldonly";
+  const bool staticSourceOnly=mode=="fieldonly"||mode=="cowan-fieldonly";
   if(staticSourceOnly&&beta!=0.)throw std::runtime_error("fieldonly requires beta=0 and J=0");
   const std::size_t n=grid=="base"?48:(grid=="wide"?64:(grid=="fine"?96:0));
   if(!n)throw std::runtime_error("grid must be base, wide, or fine");
   const double spacing=grid=="fine"?.5e-6:1e-6;
   const unsigned steps=grid=="fine"?30:15;
+  const unsigned heldSteps=mode=="held50"?steps:(mode=="held100"?2*steps:0);
   double scale=1.;
   if(mode=="zero")scale=0.;else if(mode=="scale0.9")scale=.9;else if(mode=="scale1.1")scale=1.1;
-  else if(mode!="qs"&&!staticSourceOnly)throw std::runtime_error("mode must be zero, qs, scale0.9, scale1.1, or fieldonly");
+  else if(mode!="qs"&&!staticSourceOnly&&!heldSteps&&!cowanReference)throw std::runtime_error("unknown initialization mode");
   const aprl::EBGridGeometry g(n,n,n,spacing,spacing,spacing,spacing/aprl::SI::c,aprl::EBMaxwellSolver::CowanZ);
   aprl::EBFieldGrid fields(g);fields.clearFields();fields.clearCurrent();
   FieldVector<double> origin(-.5*n*spacing);
@@ -226,15 +230,74 @@ void run(const std::string& root,const std::string& mode,double beta,const std::
         throw std::runtime_error("Particle lacks one-cell initial guard");
   }
   const auto initial=particles;particlesCsv(root+"/initial-particles.csv",initial);
+  // Prescribed negative-time trajectories use the same fixed release state.
+  // At the last prehistory step remaining==0, so the actual deposited endpoint
+  // is exactly p0; there is no post-deposition position reset or momentum kick.
+  const auto prescribedPosition = [&](std::size_t index,unsigned remaining) {
+    FieldVector<double> position(initial[index].position);
+    const double inverseGamma=1/static_cast<double>(gamma(initial[index].properVelocity));
+    for(unsigned a=0;a<3;++a)position[a]-=
+      remaining*g.dt*aprl::SI::c*initial[index].properVelocity[a]*inverseGamma;
+    return position;
+  };
+  if(heldSteps) {
+    for(std::size_t i=0;i<particles.size();++i) {
+      particles[i].position=prescribedPosition(i,heldSteps);
+      for(unsigned a=0;a<3;++a)
+        if(!(particles[i].position[a]>origin[a]+spacing&&particles[i].position[a]<-origin[a]-spacing))
+          throw std::runtime_error("Held prehistory reaches the particle guard");
+    }
+    particlesCsv(root+"/held-start-particles.csv",particles);
+  }
   const std::size_t guards[3]={0,0,0};
   aprl::EBGaussInitializationReport initialReport;
-  if(scale!=0.)initialReport=aprl::EBGaussFieldInitializer::initialize(fields,g,0,origin,particles,
+  aprl::verification::CowanReferenceReport cowanReport={};
+  const auto initialBegin=std::chrono::steady_clock::now();
+  if(cowanReference)cowanReport=aprl::verification::initializeCowanReference(fields,origin,particles,beta);
+  else if(scale!=0.)initialReport=aprl::EBGaussFieldInitializer::initialize(fields,g,0,origin,particles,
     aprl::InitialSelfFieldModel::RelativisticPoisson,1e-8,guards,1e-10,3000,MPI_COMM_WORLD);
+  const double initialSeconds=std::chrono::duration<double>(std::chrono::steady_clock::now()-initialBegin).count();
   for(YeeComponent* c:{&fields.ex(),&fields.ey(),&fields.ez(),&fields.bx(),&fields.by(),&fields.bz()})
     for(std::size_t i=0;i<c->size();++i)c->data()[i]*=scale;
   aprl::ChargeConservingCurrentDepositor depositor(fields,origin);
   YeeComponent rho(g.nx+1,g.ny+1,g.nz+1),nextRho(g.nx+1,g.ny+1,g.nz+1);
   rho.fill(0.);for(const auto& p:particles)depositor.depositCharge(p.position,p.charge,rho);
+  long double heldGridWork=0;
+  double heldContinuityMax=0;
+  const auto heldBegin=std::chrono::steady_clock::now();
+  if(heldSteps) {
+    auto hold=fresh(root+"/held-history.csv");
+    hold<<"step,time_s,UE_J,UB_native_minus_half_J,Gauss_relative_max,Gauss_relative_L2,continuity_relative_rho_over_dt,JdotE_cumulative_J\n";
+    double continuityRelative=0;
+    for(unsigned h=0;h<=heldSteps;++h) {
+      const auto beforeB=copyComponents(fields.bx(),fields.by(),fields.bz());
+      const auto en=energy(fields,beforeB);const auto gc=gauss(fields,rho);
+      hold<<h<<','<<-static_cast<double>(heldSteps-h)*g.dt<<','<<en.electric<<','<<en.magneticNative
+          <<','<<gc.relativeMax<<','<<gc.relativeL2<<','<<continuityRelative<<','<<heldGridWork<<'\n';
+      if(h==heldSteps)break;
+      const auto oldE=copyComponents(fields.ex(),fields.ey(),fields.ez());
+      fields.advanceMagnetic();fields.clearCurrent();nextRho.fill(0.);
+      for(std::size_t i=0;i<particles.size();++i) {
+        const auto before=particles[i].position;
+        particles[i].position=prescribedPosition(i,heldSteps-h-1);
+        depositor.depositSegment(before,particles[i].position,particles[i].charge);
+        depositor.depositCharge(particles[i].position,particles[i].charge,nextRho);
+      }
+      const double residual=aprl::ChargeConservingCurrentDepositor::maxContinuityResidual(fields,rho,nextRho);
+      double sourceScale=0;for(std::size_t i=0;i<rho.size();++i)
+        sourceScale=std::max(sourceScale,std::max(std::abs(rho.data()[i]),std::abs(nextRho.data()[i]))/g.dt);
+      continuityRelative=residual/sourceScale;heldContinuityMax=std::max(heldContinuityMax,continuityRelative);
+      fields.advanceElectric();heldGridWork+=currentWork(fields,oldE);
+      std::copy(nextRho.data(),nextRho.data()+nextRho.size(),rho.data());
+    }
+    for(std::size_t i=0;i<particles.size();++i)for(unsigned a=0;a<3;++a)
+      if(particles[i].position[a]!=initial[i].position[a]||particles[i].properVelocity[a]!=initial[i].properVelocity[a])
+        throw std::runtime_error("Held trajectory did not reproduce exact release x/p");
+    if(!hold)throw std::runtime_error("Held history output failed");
+    fields.clearCurrent();
+  }
+  const double heldSeconds=heldSteps?std::chrono::duration<double>(std::chrono::steady_clock::now()-heldBegin).count():0.;
+  particlesCsv(root+"/release-particles.csv",particles);
   const aprl::SIFieldSourceSet emptySources;aprl::BoostFrameTransform identity;
   identity.setFromGamma(1.,aprl::SI::c,0.);
   auto csv=fresh(root+"/history.csv");
@@ -243,11 +306,13 @@ void run(const std::string& root,const std::string& mode,double beta,const std::
   csv<<",UE_J,UB_centered_J,UB_native_plus_half_J,Gauss_max_V_m2,Gauss_relative_max,Gauss_relative_L2,continuity_max_C_m3_s,continuity_relative_rho_over_dt,JdotE_step_J,JdotE_cumulative_J\n";
   long double cumulativeWork=0,stepWork=0;double continuity=0,continuityRelative=0;
   std::array<double,3> analyticMoment={{0,0,0}},gridMoment={{0,0,0}};
+  aprl::verification::CowanMagneticDivergenceReport initialMagneticDivergence={},finalMagneticDivergence={};
   for(unsigned step=0;step<=steps;++step) {
     auto oldB=copyComponents(fields.bx(),fields.by(),fields.bz());
     fields.advanceMagnetic(); // At the final step this is diagnostic centering only.
     const auto s=moments(particles,initial);const auto en=energy(fields,oldB);const auto gc=gauss(fields,rho);
-    if(step==0){analyticMoment=forceMoment(particles,fields,origin,true,beta);gridMoment=forceMoment(particles,fields,origin,false,beta);}
+    if(step==0){analyticMoment=forceMoment(particles,fields,origin,true,beta);gridMoment=forceMoment(particles,fields,origin,false,beta);initialMagneticDivergence=aprl::verification::cowanMagneticDivergence(fields);}
+    if(step==steps)finalMagneticDivergence=aprl::verification::cowanMagneticDivergence(fields);
     csv<<step<<','<<step*g.dt<<','<<s.kinetic<<','<<s.deltaK<<','<<s.charge<<','<<s.mass;
     for(const long double* group:{s.x,s.u,s.varianceX,s.varianceU,s.xu})for(unsigned a=0;a<3;++a)csv<<','<<group[a];
     csv<<','<<en.electric<<','<<en.magneticCentered<<','<<en.magneticNative<<','<<gc.max<<','<<gc.relativeMax<<','<<gc.relativeL2<<','<<continuity<<','<<continuityRelative<<','<<stepWork<<','<<cumulativeWork<<'\n';
@@ -281,6 +346,30 @@ void run(const std::string& root,const std::string& mode,double beta,const std::
       <<",\"analytic_sampled_force_covariance_m_per_s\":["<<analyticMoment[0]<<','<<analyticMoment[1]<<','<<analyticMoment[2]<<"]"
       <<",\"grid_sampled_force_covariance_m_per_s\":["<<gridMoment[0]<<','<<gridMoment[1]<<','<<gridMoment[2]<<"]"
       <<",\"static_source_only\":"<<(staticSourceOnly?"true":"false")
+      <<",\"held_prehistory_steps\":"<<heldSteps<<",\"held_prehistory_duration_s\":"<<heldSteps*g.dt
+      <<",\"held_grid_work_J\":"<<heldGridWork<<",\"held_max_continuity_relative\":"<<heldContinuityMax
+      <<",\"initialization_wall_s\":"<<initialSeconds<<",\"held_prehistory_wall_s\":"<<heldSeconds
+      <<",\"cowan_reference\":"<<(cowanReference?"true":"false")
+      <<",\"cowan_transforms\":"<<cowanReport.transforms
+      <<",\"cowan_relative_gauss_L2\":"<<cowanReport.relativeGaussL2
+      <<",\"cowan_maximum_gauss_residual\":"<<cowanReport.maximumGaussResidual
+      <<",\"cowan_minimum_denominator\":"<<cowanReport.minimumDenominator
+      <<",\"cowan_minimum_smoothing_symbol\":"<<cowanReport.minimumSmoothingSymbol
+      <<",\"cowan_minimum_longitudinal_symbol\":"<<cowanReport.minimumLongitudinalSymbol
+      <<",\"cowan_source_charge_C\":"<<cowanReport.sourceCharge
+      <<",\"magnetic_divergence_samples\":"<<initialMagneticDivergence.samples
+      <<",\"release_ordinary_divB_max_T_per_m\":"<<initialMagneticDivergence.ordinaryMaximum
+      <<",\"release_modified_divB_max_T_per_m\":"<<initialMagneticDivergence.modifiedMaximum
+      <<",\"release_ordinary_divB_relative_L2\":"<<initialMagneticDivergence.ordinaryRelativeL2
+      <<",\"release_modified_divB_relative_L2\":"<<initialMagneticDivergence.modifiedRelativeL2
+      <<",\"final_ordinary_divB_max_T_per_m\":"<<finalMagneticDivergence.ordinaryMaximum
+      <<",\"final_modified_divB_max_T_per_m\":"<<finalMagneticDivergence.modifiedMaximum
+      <<",\"final_ordinary_divB_relative_L2\":"<<finalMagneticDivergence.ordinaryRelativeL2
+      <<",\"final_modified_divB_relative_L2\":"<<finalMagneticDivergence.modifiedRelativeL2
+      <<",\"initial_field_model\":\""<<(cowanReference?"Cowan-compatible semidiscrete rigid reference":
+          (heldSteps?"ordinary relativistic-Poisson followed by prescribed held history":
+          (scale==0.?"zero-field negative control":"ordinary relativistic-Poisson")))<<"\""
+      <<",\"held_reference_scope\":\"prescribed straight trajectories and production current deposition; synchronized t0 release, not production lab-plane crossing events; held source work excluded from release deltaK\""
       <<",\"completed\":true,\"physical_acceptance\":\"not_assessed_by_probe\",\"boundary\":\"PEC, zero-potential initialization; assess domain convergence\",\"release\":\"all at t0 except fieldonly, which fixes stationary sources with J=0; no held lab-plane interval\",\"energy_note\":\"Yee dual-volume E energy and centered B=(Bminus+Bplus)/2; not an exact Cowan discrete invariant\",\"control_note\":\"zero and scaled fields deliberately violate initial Gauss, not admissible candidates\",\"continuity_normalization\":\"max(abs(rho_before),abs(rho_after))/dt\",\"final_B_update\":\"diagnostic time centering only; particles/E stop at stated time\"}\n";
   if(!csv||!json)throw std::runtime_error("Output write failed");
   std::cout<<"startup_self_field_probe completed mode="<<mode<<" beta="<<beta<<" grid="<<grid<<" steps="<<steps<<"; physical acceptance requires independent review\n";

@@ -117,3 +117,49 @@ moving-beam solution, streaming PIC, energy-precision production acceptance or
 an asymptotic speedup. The next research target is a quasi-steady reference
 compatible with the actual field/deposition operators, then release and weak
 wave tests, rather than a longer window or exact old-held replay.
+
+Cowan reference and controlled held comparison (2026-10-27)
+----------------------------------------------------------
+User authorized this next step and explicitly accepts controlled differences
+from held; exact agreement is not the goal. cowan_reference_field.{h,cpp} is a
+single-rank PEC research initializer, linked only into the optional startup
+probe. It implements Cowan et al.2013 sectionV equations27-30 using two FFTW
+DST-I transforms. With D_i*=S_i D_i and a=v^2 epsilon0 mu0, solve
+  -div(D*phi-a zhat Dz phi)=rho/epsilon0,
+then E=-D*phi+a zhat Dz phi and B=v epsilon0 mu0 zhat cross E. B uses the old
+linear half-time translation. Static Gauss/curl* are consistent to roundoff;
+moving reference remains semi-discrete and does not model exact CIC temporal
+aliasing. The paper also distinguishes ordinary and modified magnetic
+divergences; both are measured, not silently identified.
+Primary source: https://doi.org/10.1103/PhysRevSTAB.16.041303
+
+Probe adds cowan/cowan-fieldonly and held50/held100. The held branches start
+15um/c or30um/c before release, initialize ordinary Poisson at that location,
+then use prescribed straight trajectories, actual Cowan/current deposition,
+and no self-force feedback. Their final deposited endpoint is exactly the
+requested release x/p, not reset after deposition. Negative-time source work
+and preparation cost have separate outputs. This is synchronized release of
+a rigid beam; it is NOT the full production per-particle lab-plane held path.
+
+results/cowan_reference_20261027/: 30 cases (24 release comparisons,6 static
+isolations), same Gaussian/seed/Q/N/duration as preceding study. All complete
+on gnode1 1x1;507 functional checks pass and all six old-qs histories/final
+particles match the preceding experiment byte-for-byte. No core/production
+changes. review_cowan.py ROOT --require-complete writes independent review;
+plot_cowan.py ROOT --require-complete --require-all-grids writes both figures.
+
+Static Cowan fields remain stationary at roundoff while source x/p and J stay
+fixed, eliminating the previous0.92--3.97pJ field relaxation. Moving candidate
+vsheld100 orbit differences stay below0.56%, energy-spread differences below
+0.42%; mean energy-history differences reach2.70--3.40pJ (same1pC bunch).
+Five of six provisional comparisons pass; moving wide fails its energy screen
+(2.697pJ vs1.177pJ allowed). No threshold was changed. This comparison screen
+uses held-history sensitivity plus5% of the held exchange amplitude; it is not
+a physical error bound. The original convergence/energy limitations remain.
+Candidate mean energy vsheld is not closer than ordinary Poisson, although
+static field relaxation is removed. Moving ordinary energy-budget residual
+remains nonzero and is only a convergence diagnostic. Held itself changes
+strongly with preparation duration and domain, so no single held run is truth.
+Single-run preparation times are reported separately, without a production
+throughput claim. No actual moving-window source handoff, weak-wave spectral
+acceptance or parallel production integration has been implemented.
