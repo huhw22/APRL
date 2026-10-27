@@ -53,6 +53,14 @@ def analyze(root):
     plan = json.loads((root / 'run-plan.json').read_text())
     history = json.loads(Path(plan['historical_plan']).read_text())
     card = yaml.safe_load((root / 'run.yaml').read_text())
+    variant = plan.get('case_variant', 'undulator')
+    require(variant in ('undulator', 'free-drift'), 'Unknown field-only case variant')
+    if variant == 'free-drift':
+        require(card['sources'].get('magnetic_elements') == [] and
+                card['sources'].get('incident_waves') == [], 'Free drift must have no prescribed sources')
+        require(plan['field_plane_z_m'] == .5, 'Free-drift field plane must be at 0.5 m')
+        require(not card.get('checkpoint') and not plan.get('checkpoint_steps', []),
+                'Free-drift comparison does not request a checkpoint')
     mesh, ref = card['mesh'], card['beam']['reference']
     require(card['units'] == {'length': 'm', 'time': 's'}, 'Planner expects SI card units')
     require(mesh['field_solver'] == 'cowan-z' and mesh['cells'][2] == 'auto', 'Expected automatic Cowan grid')
@@ -198,7 +206,8 @@ def analyze(root):
         'checkpoint_step_inside_estimated_run': all(0 < n < estimated_steps for n in plan.get('checkpoint_steps', [])),
     }
     result = {
-        'format': 'aprl-held-field-only-geometry-v1', 'pass': all(checks.values()), 'checks': checks,
+        'format': 'aprl-held-field-only-geometry-v1', 'case_variant': variant,
+        'pass': all(checks.values()), 'checks': checks,
         'input_file': str(path), 'input_sha256': sha, 'records': count, 'input_weight_sum': float(weight),
         'frame_origin_lab_time_s': t0, 'frame_origin_lab_z_m': z_input,
         'recomputed_common_time_s': recomputed_common,
@@ -222,10 +231,13 @@ def analyze(root):
             'The final step is selected by surviving evolved particles crossing the field location; no particle-plane file is needed.',
             'Estimated ballistic steps are not a prescribed final step or a proof of quiet field tail.',
             'No added100fs quiet tail,20fs dynamics allowance,retirement distance or arbitrary enlarged guard.',
-            'Held origin depends on input and activation plane only; changing field plane/mesh translation does not change scheduled boost checkpoint time.',
-            'Checkpoint leading-particle position is estimated from prior held trajectories and must be checked from its saved state.',
+            'Held origin depends on input and activation plane only; changing field plane/mesh translation does not change boost time.',
         ],
     }
+    if plan.get('checkpoint_steps'):
+        result['assumptions'].append('Checkpoint leading-particle position is estimated from prior held trajectories and must be checked from its saved state.')
+    if variant == 'free-drift':
+        result['assumptions'].append('No prescribed magnetic or incident field is present. Held startup and self-consistent particle motion prevent a claim of exactly zero radiation.')
     output.write_text(json.dumps(result, indent=2, allow_nan=False) + '\n')
     require(result['pass'], 'Geometry preflight failed; inspect checks in ' + str(output))
     print(f'PASS geometry: Nz={nz}, initial-ballistic steps={estimated_steps}, final stop remains dynamic', flush=True)

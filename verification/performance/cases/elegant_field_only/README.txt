@@ -1,5 +1,37 @@
 Held ELEGANT, independent field-plane output, no retirement — 2026-10-27
 
+Free-drift background variant
+----------------------------
+The additional user-authorized comparison removes all magnetic elements and
+incident waves, and places the single raw laboratory field plane at exactly0.5m.
+prepare_case.py --free-drift --reference REFERENCE_ROOT --workspace WORKSPACE
+--root FRESH_ROOT --smoke PASSED_DRIFT_SMOKE copies the frozen4.5m held reference.
+First prepare/run smoke.py with its --free-drift option on an authorized small
+CPU allocation. The free-drift production still uses2exclusive128-CPU nodes,
+256MPIx1, the same accepted executable and complete original particle input.
+Submit run.sbatch with --job-name=elegant-held-drift and the fresh root.
+
+Input, boost, held convention, field resolution/cadence, self-field solver,
+feedback, CPML and compact64/128guards are unchanged. Actual longitudinal bounds
+are re-resolved for0.5m; the finite-domain Poisson initial field is consequently
+not guaranteed identical to the4.5m run. With no magnetic period the existing
+program automatically uses1Boris substep instead of5; field/current timesteps
+stay unchanged. No dummy zero-strength magnet is inserted. No checkpoint is
+requested in this background run; the original front-exit snapshot remains
+part of the undulator production. reference-comparison.json records these
+intentional differences and provenance. This is a free-drift background, not
+a proof of zero radiation: held startup, self-consistent motion and boundaries
+still matter, and direct subtraction cannot certify pure radiation.
+
+The small variant checks real held activation, finite nonzero fields, zero
+prescribed-field work, no checkpoint, and normal stop after the final field
+plane. Full-input geometry, binding and final output validation remain required.
+0.5m is the requested approximate downstream distance: the reference nominal
+undulator exit is3.978m and its field plane is4.5m; no position is silently adjusted.
+
+Original undulator production
+----------------------------
+
 User-authorized production: full original41732775-particle input, held startup,
 2exclusive128-CPU nodes,256MPIx1,accepted optimized/MPI-sampling-fixed executable.
 Field detector is at4.5m. All particle planes, ballistic-reference subtraction,

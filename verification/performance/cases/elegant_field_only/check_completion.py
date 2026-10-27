@@ -97,6 +97,15 @@ def check(root):
     try:
         card = yaml.safe_load((root / 'run.yaml').read_text())
         plan = json.loads((root / 'run-plan.json').read_text())
+        variant = plan.get('case_variant', 'undulator')
+        require(variant in ('undulator', 'free-drift'), 'Unknown field-only case variant')
+        report['case_variant'] = variant
+        if variant == 'free-drift':
+            require(card['sources'].get('magnetic_elements') == [] and
+                    card['sources'].get('incident_waves') == [], 'Free drift must have no prescribed sources')
+            require(plan['field_plane_z_m'] == .5, 'Free-drift plane must be at 0.5 m')
+            require(not card.get('checkpoint') and not plan.get('checkpoint_steps', []),
+                    'Unexpected free-drift checkpoint configuration')
         geometry = json.loads(Path(plan['geometry_report']).read_text())
         require(geometry['pass'], 'Full-input geometry did not pass')
         manifest = yaml.safe_load((root / 'run-manifest.yaml').read_text())
@@ -180,6 +189,8 @@ def check(root):
             require(int(group['complete'][()]) == 1 and count == len(records) and count > 0,
                     'Energy ledger incomplete')
             finite(records, 'ledger')
+            if variant == 'free-drift':
+                require(np.all(records['prescribed_work_J'] == 0), 'Nonzero prescribed-field work in free drift')
             require(int(records[-1]['step']) == final_step and
                     np.all(np.diff(records['step'].astype(np.int64)) > 0), 'Ledger step coverage differs')
             require(np.isclose(float(records[-1]['time_box_s']), final_step * dt, rtol=2e-12, atol=0),
@@ -188,7 +199,8 @@ def check(root):
         checkpoint_dir = Path(plan['checkpoint_directory'])
         expected_paths = [checkpoint_dir / f'step-{step:012d}.h5' for step in plan['checkpoint_steps']]
         require(sorted(checkpoint_dir.glob('*.h5')) == sorted(expected_paths), 'Unexpected or missing checkpoint file')
-        require(card['checkpoint']['steps'] == plan['checkpoint_steps'], 'Checkpoint schedule changed')
+        require(card.get('checkpoint', {}).get('steps', []) == plan['checkpoint_steps'], 'Checkpoint schedule changed')
+        require(not list(checkpoint_dir.glob('*.partial*')), 'Uncommitted checkpoint artifact remains')
         report['checkpoints'] = []
         for step, checkpoint_path in zip(plan['checkpoint_steps'], expected_paths):
             require(step < final_step, 'Checkpoint was not taken before final state')
@@ -198,8 +210,11 @@ def check(root):
                       particle_boundary_reports=[line for line in log.splitlines() if line.startswith(
                           ('Frozen lab-plane injection:', 'CPML physical-domain exits:', 'Direct outer-domain exits:'))],
                       limitations=['Dynamic stop follows surviving particle state; no particle diagnostic file is required.',
-                                   'This validates configured stop and recorded field coverage, not quiet tail, pure radiation or grid convergence.',
-                                   'Scheduled snapshot time was estimated from a previous held run; actual leading-particle position needs separate state analysis.'])
+                                   'This validates configured stop and recorded field coverage, not quiet tail, pure radiation or grid convergence.'])
+        if plan['checkpoint_steps']:
+            report['limitations'].append('Scheduled snapshot time was estimated from a previous held run; actual leading-particle position needs separate state analysis.')
+        if variant == 'free-drift':
+            report['limitations'].append('No undulator or incident wave is prescribed; held startup and self-consistent motion mean this is a background comparison, not a validated zero-radiation solution.')
     except (ValueError, KeyError, OSError, TypeError, IndexError) as error:
         report['error'] = str(error) or type(error).__name__
     (root / 'completion-check.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')

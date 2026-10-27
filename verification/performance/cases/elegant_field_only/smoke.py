@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Bounded held field-only acceptance; no submission and no core changes.
 
-The two four-rank runs differ only in particle-plane output. Both stop after
+The default two four-rank runs differ only in particle-plane output. Both stop after
 all surviving particles cross the final field plane, without a paired-plane
 requirement. This is a small diagnostic regression, not radiation validation.
+The free-drift variant runs one held field-only card with no prescribed sources
+or checkpoints and validates its independent detector endpoint.
 """
 import argparse
 import copy
@@ -15,6 +17,7 @@ import re
 import socket
 import time
 import h5py
+import numpy as np
 
 HERE = Path(__file__).resolve().parent
 SPEC = importlib.util.spec_from_file_location(
@@ -57,20 +60,28 @@ def prepare(args):
     card['detectors']['particle_planes'] = [{
         'name': 'paired-particles', 'z': 60, 'buffer_records': 16,
         'compression': 0}]
-    common.write_card(root / 'paired', card, {
-        'directory': str(root / 'paired/checkpoints'),
-        'steps': [10], 'io_timeout_seconds': 60})
-    only = copy.deepcopy(card)
-    only['detectors']['particle_planes'] = []
-    common.write_card(root / 'field-only', only, {
-        'directory': str(root / 'field-only/checkpoints'),
-        'steps': [10], 'io_timeout_seconds': 60})
+    if args.free_drift:
+        card['sources'] = {'incident_waves': [], 'magnetic_elements': []}
+        card['detectors']['particle_planes'] = []
+        common.write_card(root / 'field-only', card)
+    else:
+        common.write_card(root / 'paired', card, {
+            'directory': str(root / 'paired/checkpoints'),
+            'steps': [10], 'io_timeout_seconds': 60})
+        only = copy.deepcopy(card)
+        only['detectors']['particle_planes'] = []
+        common.write_card(root / 'field-only', only, {
+            'directory': str(root / 'field-only/checkpoints'),
+            'steps': [10], 'io_timeout_seconds': 60})
     plan = {
         'format': 'aprl-held-field-only-smoke-v1', 'binary': str(binary),
         'binary_sha256': common.digest(binary), 'launcher': launcher,
         'ranks': 4, 'threads': 1, 'timeout_seconds': 180,
         'expected_input_particles': 64,
-        'scope': 'Identical held model; particle output present versus absent',
+        'case_variant': 'free-drift' if args.free_drift else 'undulator',
+        'run_names': ['field-only'] if args.free_drift else ['paired', 'field-only'],
+        'scope': ('Held full-self-field drift without prescribed sources, particle planes or checkpoints'
+                  if args.free_drift else 'Identical held model; particle output present versus absent'),
         'physical_stop': 'after-last-element; final field plane z=60 micrometres',
     }
     common.save(root / 'plan.json', plan)
@@ -103,13 +114,14 @@ def run(args):
         common.require(common.digest(Path(path)) == expected,
                        'Prepared input changed: ' + path)
     plan = json.loads((root / 'plan.json').read_text())
+    free_drift = plan.get('case_variant', 'undulator') == 'free-drift'
     common.require(common.digest(Path(plan['binary'])) == plan['binary_sha256'],
                    'Executable changed after preparation')
     common.save(root / 'RUN_STARTED.json', {
         'host': host, 'slurm_job_id': os.environ.get('SLURM_JOB_ID'),
         'started_unix': time.time()})
     launches, coverage, stops, snapshots = {}, {}, [], {}
-    for name in ('paired', 'field-only'):
+    for name in plan.get('run_names', ['paired', 'field-only']):
         directory = root / name
         launches[name] = common.launch(root, plan, directory)
         text = (directory / 'aprl.log').read_text()
@@ -121,6 +133,8 @@ def run(args):
                        'Held transverse startup missing: ' + name)
         matches = re.findall(r'Configured stop reached:.*', text)
         common.require(len(matches) == 1, 'Missing unique physical stop: ' + name)
+        common.require(re.search(r'all 64 valid particles passed .* z=6e-05 m', matches[0]),
+                       'Small run did not stop after the full cohort crossed the field plane')
         stops.append(matches[0])
         expected = 1 if name == 'paired' else 0
         common.require(f'Laboratory detector planes active: fields=1, particles={expected};' in text,
@@ -134,6 +148,28 @@ def run(args):
             'held_activated': int(held[1]), 'cross_rank_activation_pushes': int(held[2]),
             'still_held': int(held[3]), 'field_samples': len(fields['time_s']),
             'detector_files': sorted(names)}
+        if free_drift:
+            manifest = common.yaml.safe_load((directory / 'run-manifest.yaml').read_text())
+            actual = common.yaml.safe_load(manifest['configuration_yaml'])
+            common.require(actual['sources'] == {'incident_waves': [], 'magnetic_elements': []},
+                           'Free-drift manifest contains prescribed sources')
+            common.require(actual['initial_self_field']['enabled'] and
+                           actual['mesh']['self_field_feedback'], 'Free drift lost self-field physics')
+            common.require(not actual.get('checkpoint') and
+                           not list(directory.glob('checkpoints/*')), 'Unexpected free-drift snapshot')
+            common.require('Initial particle self-field: relativistic-Poisson rigid-beam construction converged' in text,
+                           'Free-drift initial Poisson solve did not converge')
+            common.require('Particle subcycling:' not in text,
+                           'Unexpected prescribed-device particle subcycling in free drift')
+            _, ledger, _ = common.inspect_file(directory / 'ledger/energy-ledger.h5')
+            common.require(np.all(ledger['records']['prescribed_work_J'] == 0),
+                           'Free drift recorded nonzero prescribed-field work')
+            common.require(any(np.any(fields['fields'][component] != 0)
+                               for component in fields['fields'].dtype.names),
+                           'Free drift unexpectedly lost all measured fields')
+            coverage[name]['prescribed_work_zero'] = True
+            coverage[name]['field_nonzero'] = True
+            continue
         checkpoint = common.checkpoint_path(directory, 10)
         common.require(list((directory / 'checkpoints').glob('step-*.h5')) == [checkpoint],
                        'Expected exactly one complete step-10 checkpoint')
@@ -144,6 +180,16 @@ def run(args):
         common.require(snapshots[name]['particles'] == 64 and
                        snapshots[name]['retirement_carriers'] == 0,
                        'Full snapshot must retain all particles without retirement')
+    if free_drift:
+        common.save(root / 'RESULT.json', {
+            'status': 'PASS', 'case_variant': 'free-drift', 'launches': launches,
+            'coverage': coverage, 'physical_stop': stops[0],
+            'prescribed_sources': [], 'checkpoint_requested': False,
+            'limitations': ['Small same-four-rank held diagnostic test',
+                            'No full-scale runtime or exact-zero-radiation claim']})
+        (root / 'PASS').write_text('Held free drift with self field, no prescribed sources, and independent field-plane stop passed.\n')
+        print(root / 'RESULT.json')
+        return
     common.require(stops[0] == stops[1], 'Removing particle output changed physical stop')
     checked = {}
     for path in ('detectors/field.h5', 'ledger/energy-ledger.h5'):
@@ -180,6 +226,7 @@ def main():
     setup.add_argument('--root', type=Path, required=True)
     setup.add_argument('--binary', type=Path, required=True)
     setup.add_argument('--launcher-json', required=True)
+    setup.add_argument('--free-drift', action='store_true')
     execute = sub.add_parser('run')
     execute.add_argument('--root', type=Path, required=True)
     execute.add_argument('--allow-gnode1', action='store_true')

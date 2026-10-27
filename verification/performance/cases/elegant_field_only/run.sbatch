@@ -40,6 +40,8 @@ def digest(path):
 assert (Path(plan['preflight_result'])/'PASS').is_file(), 'Held field-only smoke has not passed'
 smoke=json.loads((Path(plan['preflight_result'])/'plan.json').read_text())
 assert smoke['binary_sha256']==plan['binary_sha256'], 'Smoke used a different program'
+assert plan.get('case_variant','undulator') in ('undulator','free-drift'), 'Unknown field-only case variant'
+assert smoke.get('case_variant','undulator')==plan.get('case_variant','undulator'), 'Smoke tested a different field-only variant'
 assert (plan['nodes'],plan['ranks'],plan['threads_per_rank'])==(2,256,1)
 binary=Path(plan['binary']); assert binary.is_absolute() and os.access(binary,os.X_OK)
 assert digest(binary)==plan['binary_sha256'], 'Frozen executable changed'
