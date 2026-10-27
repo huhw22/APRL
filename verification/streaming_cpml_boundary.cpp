@@ -152,12 +152,17 @@ struct ReferenceFedCPML::ResidualInputWork {
 ReferenceFedCPML::ReferenceFedCPML(
     const EBGridGeometry& geometry, const EBCPMLParameters& parameters,
     StreamingReferenceCache& reference, const std::size_t& offset,
-    bool zeroFeed, bool residualInput)
+    bool zeroFeed, bool residualInput,
+    StreamingReferenceCache* diagnosticCpmlReference)
   : EBConvolutionalPML(geometry, geometry.nz, 0, parameters, true, true),
     feed_(reference, offset, zeroFeed ? StreamingBoundaryMode::ZeroFeed :
                                      StreamingBoundaryMode::ReferenceClamp),
     residual_(residualInput ? new ResidualInputWork(
-        geometry, parameters, reference, offset, zeroFeed) : nullptr) {}
+        geometry, parameters, diagnosticCpmlReference ? *diagnosticCpmlReference : reference,
+        offset, zeroFeed) : nullptr) {
+  if(diagnosticCpmlReference && !residualInput)
+    throw std::invalid_argument("Diagnostic CPML reference requires residual mode");
+}
 
 ReferenceFedCPML::~ReferenceFedCPML() = default;
 
@@ -202,6 +207,12 @@ void ReferenceFedCPML::afterElectricUpdate(EBFieldGrid& fields) {
 
 std::size_t ReferenceFedCPML::memoryBytes() const {
   return EBConvolutionalPML::memoryBytes() + feed_.memoryBytes()+residualWorkBytes();
+}
+
+void ReferenceFedCPML::refreshAfterRemap(
+    EBFieldGrid& fields, unsigned int stateStep) {
+  if(residual_)residual_->requireIdle();
+  feed_.refreshAfterRemap(fields,stateStep);
 }
 
 std::uint64_t ReferenceFedCPML::boundaryValues() const {

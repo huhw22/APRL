@@ -10,8 +10,11 @@
 namespace aprl {
 namespace verification {
 
-// Frozen deep copy of one initial Cowan E/B state. It has no connection to
-// a full-domain evolving simulation. Component numbers are Ex,Ey,Ez,Bx,By,Bz.
+// Frozen deep copy of one initial Cowan E/B state. By default it has no
+// connection to a full-domain evolving simulation. A diagnostic-only callback
+// may override queries to replay native fields for error attribution; such a
+// replay is not an independent reference supply for a production simulation.
+// Component numbers are Ex,Ey,Ez,Bx,By,Bz.
 // The cached state is E(0),B(-dt/2); stateStep=n queries E(n),B(n-1/2).
 // A B query after its magnetic update therefore uses stateStep=n+1.
 // Each component is translated in z by beta*c*stateStep*dt using linear
@@ -19,9 +22,17 @@ namespace verification {
 // not asserted to reproduce a moving point-particle CIC charge distribution.
 class StreamingReferenceCache {
 public:
+  typedef Double (*DiagnosticQuery)(void* context, unsigned int component,
+      std::size_t i, std::size_t j, Double globalK, Double stateStep);
   StreamingReferenceCache(const EBFieldGrid& initial, Double beta);
   Double value(unsigned int component, std::size_t i, std::size_t j,
                Double globalK, Double stateStep) const;
+  // Diagnostic replay only. The callback receives the original native query,
+  // before frozen translation, and owns its range/time validation. Neither
+  // callback context nor its storage is owned or included in memoryBytes().
+  // A null callback restores the unchanged frozen-cache query path. Successful
+  // queries on either path contribute to the same cumulative sampleCount().
+  void setDiagnosticQuery(DiagnosticQuery query, void* context=nullptr);
   const EBGridGeometry& geometry() const;
   Double beta() const;
   std::size_t memoryBytes() const;
@@ -36,6 +47,8 @@ private:
   Double beta_;
   Component components_[6];
   mutable std::uint64_t samples_;
+  DiagnosticQuery diagnosticQuery_;
+  void* diagnosticContext_;
 };
 
 enum class StreamingBoundaryMode {
@@ -69,6 +82,9 @@ public:
   void afterMagneticUpdate(EBFieldGrid& fields,
                            const EBElectricHaloView& halo) override;
   void afterElectricUpdate(EBFieldGrid& fields) override;
+  // Re-establish the already prescribed clamp on the NEW exterior faces
+  // after an integer remap, without advancing CPML or any field equation.
+  void refreshAfterRemap(EBFieldGrid& fields, unsigned int stateStep);
   std::size_t memoryBytes() const override;
   std::uint64_t boundaryValues() const;
   std::uint64_t haloValues() const;

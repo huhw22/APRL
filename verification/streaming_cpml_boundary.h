@@ -44,7 +44,8 @@ public:
                    StreamingReferenceCache& reference,
                    const std::size_t& offset,
                    bool zeroFeed = false,
-                   bool residualInput = false);
+                   bool residualInput = false,
+                   StreamingReferenceCache* diagnosticCpmlReference = nullptr);
   ~ReferenceFedCPML() override;
 
   void beginStep(const EBFieldGrid& fields, unsigned int step);
@@ -53,6 +54,7 @@ public:
   void afterMagneticUpdate(EBFieldGrid& fields,
                            const EBElectricHaloView& halo) override;
   void afterElectricUpdate(EBFieldGrid& fields) override;
+  void refreshAfterRemap(EBFieldGrid& fields, unsigned int stateStep);
   std::size_t memoryBytes() const override;
   std::uint64_t boundaryValues() const;
   std::uint64_t haloValues() const;

@@ -28,7 +28,8 @@ YeeComponent& electricComponent(EBFieldGrid& fields,unsigned int a) {
 
 StreamingReferenceCache::StreamingReferenceCache(
     const EBFieldGrid& initial,Double beta)
-  :geometry_(initial.geometry()),beta_(beta),samples_(0) {
+  :geometry_(initial.geometry()),beta_(beta),samples_(0),
+   diagnosticQuery_(nullptr),diagnosticContext_(nullptr) {
   if(geometry_.solver!=EBMaxwellSolver::CowanZ ||
      !std::isfinite(beta_) || std::abs(beta_)>=1.)
     throw std::invalid_argument("Streaming reference requires Cowan and |beta|<1");
@@ -45,6 +46,11 @@ StreamingReferenceCache::StreamingReferenceCache(
 
 Double StreamingReferenceCache::value(unsigned int a,std::size_t i,
     std::size_t j,Double globalK,Double stateStep) const {
+  if(diagnosticQuery_) {
+    const Double result=diagnosticQuery_(diagnosticContext_,a,i,j,globalK,stateStep);
+    ++samples_;
+    return result;
+  }
   if(a>=6 || !std::isfinite(globalK) || !std::isfinite(stateStep))
     throw std::out_of_range("Invalid streaming reference query");
   const Component& component=components_[a];
@@ -73,6 +79,12 @@ Double StreamingReferenceCache::value(unsigned int a,std::size_t i,
   if(fraction==0.)return component.values[lower*plane+transverse];
   return (1.-fraction)*component.values[lower*plane+transverse]+
     fraction*component.values[upper*plane+transverse];
+}
+
+void StreamingReferenceCache::setDiagnosticQuery(
+    DiagnosticQuery query,void* context) {
+  diagnosticQuery_=query;
+  diagnosticContext_=query?context:nullptr;
 }
 
 const EBGridGeometry& StreamingReferenceCache::geometry() const {return geometry_;}
@@ -206,6 +218,25 @@ std::size_t StreamingReferenceBoundary::memoryBytes() const {
   for(unsigned int a=0;a<3;++a)
     bytes+=(lower_[a].capacity()+upper_[a].capacity())*sizeof(Double);
   return bytes;
+}
+
+void StreamingReferenceBoundary::refreshAfterRemap(
+    EBFieldGrid& fields, unsigned int stateStep) {
+  validateGeometry(fields);
+  if(prepared_ || mode_==StreamingBoundaryMode::ResidualMur)
+    throw std::logic_error("Remapped face refresh requires a completed clamp step");
+  for(unsigned int a=0;a<2;++a) {
+    YeeComponent& c=electricComponent(fields,a);
+    for(unsigned side=0;side<2;++side) {
+      const std::size_t k=side?c.nz()-1:0;
+      for(std::size_t j=0;j<c.ny();++j)
+        for(std::size_t i=0;i<c.nx();++i) {
+          c(i,j,k)=referenceValue(a,i,j,static_cast<Double>(offset_+k),stateStep);
+          ++boundaryValues_;
+        }
+    }
+  }
+  transversePec_.afterElectricUpdate(fields);
 }
 std::uint64_t StreamingReferenceBoundary::boundaryValues() const {return boundaryValues_;}
 std::uint64_t StreamingReferenceBoundary::haloValues() const {return haloValues_;}

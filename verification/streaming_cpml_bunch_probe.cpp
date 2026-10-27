@@ -2,8 +2,10 @@
  * frozen-reference input. The moving CPML acts on total fields.
  * Bounded research probe: independent frozen reference feed around a moving
  * particle/PIC window. This is deliberately not a production window switch.
- * The only full-domain fields read by a short-window run are its initial
- * Cowan solve. Incoming held trajectories are selected by a sorted queue.
+ * Ordinary short-window modes only read their initial full-domain Cowan solve.
+ * Explicit diagnostic oracle modes replay a completed full-domain history
+ * solely to isolate errors; they are not usable independent window algorithms.
+ * Incoming held trajectories are selected by a sorted queue.
  */
 #include <algorithm>
 #include <array>
@@ -31,6 +33,7 @@
 #include "particle_initializer.h"
 #include "streaming_reference_boundary.h"
 #include "streaming_cpml_boundary.h"
+#include "streaming_field_oracle.h"
 #include "moving_window_remap.h"
 #include "eb_cpml.h"
 
@@ -45,6 +48,9 @@ using aprl::verification::StreamingReferenceCache;
 using aprl::verification::ReferenceFedCPML;
 using aprl::verification::MovingWindowRemap;
 using aprl::verification::MovingWindowHistoryPolicy;
+using aprl::verification::NativeOracleConfig;
+using aprl::verification::NativeFieldOracleReader;
+using aprl::verification::NativeFieldOracleWriter;
 using Clock=std::chrono::steady_clock;
 const std::size_t NX=24,NY=24,NZ=424,PARTICLES=1024;
 const unsigned STEPS=176;
@@ -78,6 +84,78 @@ YeeComponent& component(EBFieldGrid& f,unsigned a) {
 const YeeComponent& component(const EBFieldGrid& f,unsigned a) {
   return component(const_cast<EBFieldGrid&>(f),a);
 }
+
+// Read-only, opt-in native-field snapshots for locating interface errors.
+// The binary stream contains one x-z section per component; no interpolation,
+// reference lookup, or field mutation occurs here. A record's state step is
+// n+1 for all three stages of loop n, including the mixed-time magnetic stage.
+class SectionDiagnostics {
+public:
+  SectionDiagnostics(const std::string& directory,unsigned maximumStep)
+    :directory_(directory),maximumStep_(maximumStep) {
+    static_assert(sizeof(Double)==8 && std::numeric_limits<Double>::is_iec559,
+                  "Section diagnostics require IEEE binary64 fields");
+    const std::uint16_t one=1;
+    require(*reinterpret_cast<const unsigned char*>(&one)==1,
+            "Section diagnostics currently require little-endian storage");
+    const std::string path=directory_+"/field-sections.bin";
+    require(!std::ifstream(path).good(),"Refusing to overwrite "+path);
+    output_.open(path,std::ios::out|std::ios::binary);
+    require(output_.good(),"Cannot write "+path);
+    output_.write("APRLXZ01",8);
+    require(output_.good(),"Cannot write section diagnostic header");
+  }
+
+  void record(const EBFieldGrid& fields,std::size_t offset,
+              unsigned stateStep,unsigned stage) {
+    if(stateStep>maximumStep_)return;
+    require(stage<=3 && ((stage==0)==(stateStep==0)),
+            "Invalid section diagnostic stage");
+    const std::uint64_t header[4]={stateStep,stage,offset,6};
+    output_.write(reinterpret_cast<const char*>(header),sizeof(header));
+    for(unsigned a=0;a<6;++a) {
+      const auto& c=component(fields,a);
+      const std::size_t sectionJ=NY/2+2;
+      require(sectionJ<c.ny(),"Diagnostic section outside component");
+      const std::uint64_t description[5]={a,c.nx(),c.ny(),c.nz(),sectionJ};
+      output_.write(reinterpret_cast<const char*>(description),sizeof(description));
+      for(std::size_t k=0;k<c.nz();++k)
+        output_.write(reinterpret_cast<const char*>(
+          c.data()+(k*c.ny()+sectionJ)*c.nx()),c.nx()*sizeof(Double));
+    }
+    require(output_.good(),"Field section diagnostic write failed");
+    ++records_;
+  }
+
+  void finish() {
+    require(records_==1+3*maximumStep_,"Incomplete section diagnostics");
+    output_.flush();require(output_.good(),"Field section flush failed");
+    output_.close();require(!output_.fail(),"Field section close failed");
+    auto manifest=fresh(directory_+"/field-sections.json");
+    manifest<<"{\n\"format\":\"aprl-native-field-xz-sections-v1\",\"completed\":true"
+      <<",\"binary_file\":\"field-sections.bin\",\"byte_order\":\"little\""
+      <<",\"magic_ascii\":\"APRLXZ01\",\"maximum_state_step\":"<<maximumStep_
+      <<",\"records\":"<<records_<<",\"section_j\":"<<NY/2+2
+      <<",\"record_header\":\"four uint64: state_step, stage, integer_z_offset, component_count\""
+      <<",\"component_header\":\"five uint64: component, nx, ny, nz, section_j\""
+      <<",\"component_payload\":\"nx*nz IEEE binary64, k outer and i inner; raw native values at fixed component j\""
+      <<",\"components\":[\"Ex\",\"Ey\",\"Ez\",\"Bx\",\"By\",\"Bz\"]"
+      <<",\"stages\":{\"0\":\"initial E(0), B(-1/2)\","
+        "\"1\":\"after magnetic including boundary hook: E(state_step-1), B(state_step-1/2)\","
+        "\"2\":\"after electric including boundary hook, before remap: E(state_step), B(state_step-1/2)\","
+        "\"3\":\"after remap, or unchanged if no shift: E(state_step), B(state_step-1/2)\"}"
+      <<",\"world_coordinate\":\"Use integer_z_offset+k plus each component's original Yee staggering; section is not collocated\""
+      <<",\"contract\":\"Read-only raw field records; no reference queries, interpolation, or particle changes; diagnostic timing is not performance evidence\"}\n";
+    require(manifest.good(),"Section diagnostic manifest write failed");
+  }
+
+private:
+  std::string directory_;
+  unsigned maximumStep_;
+  std::uint64_t records_=0;
+  std::ofstream output_;
+};
+
 long double gamma(const FieldVector<double>& u) {
   return std::sqrt(1.L+static_cast<long double>(u[0])*u[0]+
     static_cast<long double>(u[1])*u[1]+static_cast<long double>(u[2])*u[2]);
@@ -281,11 +359,27 @@ void particleRow(std::ofstream& out,const RelativisticParticleSI& p,
     <<','<<p.charge<<','<<dg*rest<<','<<lab*rest<<','<<(p.frozen?1:0)<<'\n';
 }
 
-void run(const std::string& directory,double beta,unsigned guard,const std::string& mode) {
-  const bool full=mode=="full",zero=mode=="zero",residual=mode=="residual";
+void run(const std::string& directory,double beta,unsigned guard,const std::string& mode,
+         unsigned diagnosticSteps=0,const std::string& suppliedOracleDirectory="") {
+  const bool prescribedReference=mode=="held-record";
+  const bool prescribedActualControl=mode=="residual-held-zero";
+  const bool prescribedMotion=prescribedReference||prescribedActualControl;
+  const bool heldReference=mode=="residual-held-reference"||prescribedActualControl;
+  const bool recording=mode=="full-record"||prescribedReference,full=mode=="full"||recording;
+  const bool oracleFeed=mode=="residual-oracle-feed"||mode=="residual-oracle-all"||heldReference;
+  const bool oracleCpml=mode=="residual-oracle-cpml"||mode=="residual-oracle-all"||heldReference;
+  const bool oracleReplay=oracleFeed||oracleCpml;
+  const bool zero=mode=="zero",refresh=mode=="residual-refresh";
+  const bool nativeB=mode=="residual-native-b";
+  const bool residual=mode=="residual"||refresh||oracleReplay||nativeB;
   require(full||mode=="cpml"||zero||residual,"Unknown mode");
   require(beta==0.||std::abs(beta-.23)<1e-15,"Use beta 0 or .23");
   require(guard==16||guard==24||guard==40,"Use the fixed nonabsorbing guards 16/24/40");
+  require(diagnosticSteps<=STEPS,"Diagnostic step limit exceeds this bounded fixture");
+  require(!oracleReplay||!suppliedOracleDirectory.empty(),"Oracle replay requires its completed recording directory");
+  require(suppliedOracleDirectory.empty()||recording||oracleReplay,"Oracle directory supplied to a non-oracle mode");
+  const std::string oracleDirectory=recording&&suppliedOracleDirectory.empty()?
+    directory+"/native-oracle":suppliedOracleDirectory;
   if(mkdir(directory.c_str(),0755)!=0)require(errno==EEXIST,"Cannot create result directory");
   auto history=fresh(directory+"/history.csv"),crossings=fresh(directory+"/detector-crossings.csv");
   auto releases=fresh(directory+"/release-particles.csv"),initialCsv=fresh(directory+"/initial-particles.csv");
@@ -298,6 +392,13 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
   require(initial.size()==PARTICLES,"Generated particle count differs");
   aprl::BoostFrameTransform frame;frame.setFromGamma(5./3.,aprl::SI::c,0.);
   const auto global=geometry(NZ);const double dt=global.dt;
+  const NativeOracleConfig oracleConfig(global,STEPS,guard,SEED,beta,TOTAL_CHARGE,
+                                        ZORIGIN,RELEASE,DETECTOR,WINDOW_BETA,
+                                        (prescribedReference||heldReference)?1:0);
+  std::unique_ptr<NativeFieldOracleReader> oracleReader;
+  std::unique_ptr<NativeFieldOracleWriter> oracleWriter;
+  if(oracleReplay)oracleReader.reset(new NativeFieldOracleReader(oracleDirectory,oracleConfig));
+  if(recording)oracleWriter.reset(new NativeFieldOracleWriter(oracleDirectory,oracleConfig));
   std::vector<std::size_t> sorted(initial.size());std::iota(sorted.begin(),sorted.end(),0);
   std::sort(sorted.begin(),sorted.end(),[&](std::size_t a,std::size_t b){return initial[a].position[2]<initial[b].position[2];});
   for(const auto& p:initial) {
@@ -330,6 +431,33 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
     gaussSourceNorm=std::sqrt(norm);require(gaussSourceNorm>0.,"Empty Gauss normalization source");
   }
   const auto cacheStart=Clock::now();StreamingReferenceCache reference(*whole,beta);
+  struct NativeBInput {
+    const StreamingReferenceCache* original;
+    double beta;
+    static double query(void* raw,unsigned a,std::size_t i,std::size_t j,double k,double state) {
+      const auto& input=*static_cast<NativeBInput*>(raw);
+      if((a!=3&&a!=4)||input.beta==0.||state==0.)
+        return input.original->value(a,i,j,k,state);
+      const auto& g=input.original->geometry();
+      const double alpha=input.beta*aprl::SI::c*g.dt/g.dz;
+      const double coordinate=k+.5-alpha*(state-.5);
+      const double scale=input.beta*aprl::SI::c*aprl::SI::epsilon0*aprl::SI::mu0;
+      return (a==3?-scale:scale)*input.original->value(a==3?1:0,i,j,coordinate,0.);
+    }
+  } nativeBInput{&reference,beta};
+  std::unique_ptr<StreamingReferenceCache> feedReference,cpmlReference;
+  if(oracleFeed) {
+    feedReference.reset(new StreamingReferenceCache(*whole,beta));
+    feedReference->setDiagnosticQuery(&NativeFieldOracleReader::query,oracleReader.get());
+  }
+  if(oracleCpml) {
+    cpmlReference.reset(new StreamingReferenceCache(*whole,beta));
+    cpmlReference->setDiagnosticQuery(&NativeFieldOracleReader::query,oracleReader.get());
+  }
+  if(nativeB) {
+    feedReference.reset(new StreamingReferenceCache(*whole,beta));
+    feedReference->setDiagnosticQuery(&NativeBInput::query,&nativeBInput);
+  }
   count.cache=elapsed(cacheStart);
   std::size_t offset=full?0:windowOffset(0,guard);
   const std::size_t width=full?NZ:16+2*guard+2*CPML_Z;
@@ -348,13 +476,23 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
       for(std::size_t k=0;k<f.nz();++k)for(std::size_t j=0;j<f.ny();++j)
         for(std::size_t i=0;i<f.nx();++i)f(i,j,k)=reference.value(a,i,j,offset+k,0.);
     }
-    boundary=new ReferenceFedCPML(grid->geometry(),cpmlParameters,reference,offset,zero,residual);
+    // Oracle channels are independent: replacing exterior feed must not
+    // silently replace the CPML subtraction reference as well.
+    boundary=new ReferenceFedCPML(grid->geometry(),cpmlParameters,
+      feedReference?*feedReference:reference,offset,zero,residual,
+      oracleReplay?(cpmlReference?cpmlReference.get():&reference):nullptr);
     grid->setBoundary(std::unique_ptr<aprl::EBBoundaryOperator>(boundary));
     mover.reset(new MovingWindowRemap(grid->geometry(),cpmlParameters,{-1},
                                       MovingWindowHistoryPolicy::WorldPosition));
     whole.reset();
   }
   EBFieldGrid& fields=*grid;
+  if(oracleWriter)oracleWriter->record(fields,0,windowOffset(0,guard)-2);
+  std::unique_ptr<SectionDiagnostics> sectionDiagnostics;
+  if(diagnosticSteps) {
+    sectionDiagnostics.reset(new SectionDiagnostics(directory,diagnosticSteps));
+    sectionDiagnostics->record(fields,offset,0,0);
+  }
   // Only the deposition J/rho use this fixed two-cell longitudinal collar.
   // Its E/B are never advanced or sampled as physical fields.
   const std::size_t collar=full?0:2;
@@ -474,6 +612,7 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
       count.boundary+=elapsed(begin);
     }
     begin=Clock::now();fields.advanceMagnetic(halo);count.fieldAdvance+=elapsed(begin);
+    if(sectionDiagnostics)sectionDiagnostics->record(fields,offset,step+1,1);
     aprl::ChargeConservingCurrentDepositor depositor(deposit,extOrigin);
     for(auto& state:active) {
       ++count.particleInspections;auto& p=state.p;const auto& seed=initial[state.index];
@@ -502,7 +641,15 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
         const auto start=p.position,startU=p.properVelocity;const double remaining=(1-activeFraction)*dt;
         const bool sampleAllowed=full||(start[2]>=fieldOrigin[2]+(CPML_Z+2)*DZ&&
           start[2]<=fieldOrigin[2]+(width-CPML_Z-2)*DZ);
-        if(sampleAllowed) {
+        if(prescribedMotion) {
+          // The donor and explicit zero-response control use prescribed
+          // sources with the original Maxwell/deposition kernels. Neither
+          // samples a PIC force; ordinary candidate modes retain their push.
+          p.position=seed.position;
+          p.position[2]=seed.position[2]+beta*DZ*(step+1);
+          p.properVelocity=seed.properVelocity;
+        }
+        else if(sampleAllowed) {
           const double clearance=std::min(start[2]-(fieldOrigin[2]+CPML_Z*DZ),
                                          fieldOrigin[2]+(width-CPML_Z)*DZ-start[2]);
           count.minPicInnerClearance=std::min(count.minPicInnerClearance,clearance);
@@ -521,6 +668,15 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
         segments[used++]=Segment(start,p.position,activeFraction,1.,startU,p.properVelocity);
       }
       require(used>0&&used<=2,"Invalid held/active path split");
+      if(prescribedMotion) {
+        // Anchor every complete prescribed state to its initial source, including
+        // a release exactly at the end of a step. Avoid accumulated drift.
+        p.position=seed.position;
+        p.position[2]=seed.position[2]+beta*DZ*(step+1);
+        p.properVelocity=seed.properVelocity;
+        segments[used-1].end=p.position;
+        segments[used-1].endU=p.properVelocity;
+      }
       for(unsigned a=0;a<3;++a)require(std::isfinite(p.position[a])&&std::isfinite(p.properVelocity[a]),"Non-finite particle state");
       require(p.position[0]>fieldOrigin[0]+DX&&p.position[0]<fieldOrigin[0]+(NX-1)*DX&&
         p.position[1]>fieldOrigin[1]+DY&&p.position[1]<fieldOrigin[1]+(NY-1)*DY,"Particle reached transverse guard");
@@ -559,6 +715,7 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
     count.maxChargeBalance=std::max(count.maxChargeBalance,static_cast<double>(std::abs(lastBalance)));
     count.deposition+=elapsed(begin);
     begin=Clock::now();fields.advanceElectric();count.fieldAdvance+=elapsed(begin);
+    if(sectionDiagnostics)sectionDiagnostics->record(fields,offset,step+1,2);
     begin=Clock::now();lastPreGauss=gauss(fields,nextRho).relative;
     count.maxGaussBeforeShift=std::max(count.maxGaussBeforeShift,lastPreGauss);
     count.diagnostics+=elapsed(begin);
@@ -568,7 +725,7 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
       struct IncomingContext {
         const StreamingReferenceCache* reference;std::size_t offset;unsigned step;bool zero;
         std::uint64_t* values;
-      } context{&reference,nextOffset,step+1,zero,&count.newLayerValues};
+      } context{feedReference?feedReference.get():&reference,nextOffset,step+1,zero,&count.newLayerValues};
       aprl::verification::MovingWindowIncoming incoming;
       incoming.context=&context;
       incoming.value=[](void* raw,unsigned a,std::size_t i,std::size_t j,std::size_t k,double)->double {
@@ -584,9 +741,12 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
       cropRho(nextExt,rho,collar-1);
       const long double added=chargePlane(nextRho,0),removed=chargePlane(nextRho,width-1);
       lastRemap=interiorCharge(rho)-oldCharge-added+removed;
-      offset=nextOffset;count.shift+=elapsed(begin);
+      offset=nextOffset;
+      if(refresh)boundary->refreshAfterRemap(fields,step+1);
+      count.shift+=elapsed(begin);
 
     } else cropRho(nextExt,rho,collar);
+    if(sectionDiagnostics)sectionDiagnostics->record(fields,offset,step+1,3);
     count.maxRemapBalance=std::max(count.maxRemapBalance,static_cast<double>(std::abs(lastRemap)));
     begin=Clock::now();lastPostGauss=gauss(fields,rho).relative;
     count.maxGaussAfterShift=std::max(count.maxGaussAfterShift,lastPostGauss);
@@ -606,8 +766,11 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
               state.p.position[2]<=origin(offset)[2]+(width-CPML_Z-2)*DZ,
               "Window shift swept an undetected PIC particle outside its interior guard");
     diagnostics(step+1);
+    if(oracleWriter)oracleWriter->record(fields,step+1,windowOffset(step+1,guard)-2);
   }
   const double evolutionSeconds=elapsed(evolutionStart);
+  if(sectionDiagnostics)sectionDiagnostics->finish();
+  if(oracleWriter)oracleWriter->finish();
   require(std::count(released.begin(),released.end(),true)==static_cast<long>(PARTICLES),"Not all fixed-cohort particles released");
   require(std::count(detected.begin(),detected.end(),true)==static_cast<long>(PARTICLES),"Not all fixed-cohort particles crossed detector");
   require(queue==0,"Input queue not exhausted");
@@ -619,7 +782,8 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
   const std::size_t eventFlagBytes=(released.capacity()+7)/8+(detected.capacity()+7)/8;
   const std::size_t liveBytes=fields.memoryFootprint().totalBytes()+deposit.memoryFootprint().totalBytes()+
     rhoBytes+reference.memoryBytes()+particleTableBytes+activeBytes+queueBytes+eventFlagBytes+
-    (mover?mover->memoryBytes():0);
+    (mover?mover->memoryBytes():0)+(feedReference?feedReference->memoryBytes():0)+
+    (cpmlReference?cpmlReference->memoryBytes():0)+(oracleReader?oracleReader->memoryBytes():0);
   auto metrics=fresh(directory+"/metrics.json");
   metrics<<"{\n\"format\":\"aprl-streaming-cpml-bunch-probe-v1\",\"completed\":true,\"mode\":\""<<mode<<"\",\"beta_box\":"<<beta
     <<",\"guard_cells\":"<<guard<<",\"steps\":"<<STEPS<<",\"dt_s\":"<<dt<<",\"nx\":"<<NX<<",\"ny\":"<<NY
@@ -659,6 +823,31 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
     <<",\"diagnostic_particle_inspections\":"<<count.diagnosticParticleInspections
     <<",\"deposited_subsegments\":"<<count.depositedSegments<<",\"ballistic_outgoing_steps\":"<<count.ballisticOutgoingSteps
     <<",\"reference_sample_calls\":"<<reference.sampleCount()<<",\"boundary_values\":"<<(boundary?boundary->boundaryValues():0)
+    <<",\"oracle_recording\":"<<(recording?"true":"false")
+    <<",\"prescribed_reference_donor\":"<<(prescribedReference?"true":"false")
+    <<",\"prescribed_actual_control\":"<<(prescribedActualControl?"true":"false")
+    <<",\"prescribed_reference_input\":"<<(heldReference?"true":"false")
+    <<",\"reference_provenance_kind\":\""
+    <<((recording||oracleReplay)?aprl::verification::native_oracle_detail::sourceKindName(oracleConfig):
+       "frozen-initial-field")<<"\""
+    <<",\"native_B_reference_reconstruction\":"<<(nativeB?"true":"false")
+    <<",\"oracle_replay\":"<<(oracleReplay?"true":"false")
+    <<",\"oracle_feed_channel\":"<<(oracleFeed?"true":"false")
+    <<",\"oracle_cpml_channel\":"<<(oracleCpml?"true":"false")
+    <<",\"oracle_directory\":"<<aprl::verification::native_oracle_detail::jsonString(oracleDirectory)
+    <<",\"oracle_recorded_frames\":"<<(oracleWriter?oracleWriter->frames():0)
+    <<",\"oracle_recorded_frame_bytes\":"<<(oracleWriter?oracleWriter->bytes():0)
+    <<",\"oracle_reader_queries\":"<<(oracleReader?oracleReader->queries():0)
+    <<",\"oracle_reader_frame_loads\":"<<(oracleReader?oracleReader->loads():0)
+    <<",\"oracle_reader_bytes\":"<<(oracleReader?oracleReader->bytesRead():0)
+    <<",\"oracle_reader_live_bytes\":"<<(oracleReader?oracleReader->memoryBytes():0)
+    <<",\"oracle_feed_sample_calls\":"<<(feedReference?feedReference->sampleCount():0)
+    <<",\"oracle_cpml_sample_calls\":"<<(cpmlReference?cpmlReference->sampleCount():0)
+    <<",\"oracle_extra_cache_bytes\":"<<((feedReference?feedReference->memoryBytes():0)+(cpmlReference?cpmlReference->memoryBytes():0))
+    <<",\"oracle_scope\":\""
+    <<((prescribedReference||heldReference)?
+       "independent prescribed source from initial conditions only; full-grid donor evolution establishes feasibility, not production speed":
+       "diagnostic replay requires full-domain physical history; no production applicability or speed claim")<<"\""
     <<",\"halo_values\":"<<(boundary?boundary->haloValues():0)<<",\"shift_bytes\":"<<count.shiftBytes
     <<",\"new_layer_values\":"<<count.newLayerValues<<",\"gauss_correction_values\":"<<count.gaussCorrectionValues
     <<",\"field_plane_samples\":"<<count.fieldSamples<<",\"field_cell_updates\":"<<static_cast<std::uint64_t>(NX)*NY*width*STEPS
@@ -666,6 +855,7 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
     <<",\"max_remap_charge_balance_C\":"<<count.maxRemapBalance
     <<",\"max_total_gauss_before_shift\":"<<count.maxGaussBeforeShift<<",\"max_total_gauss_after_shift\":"<<count.maxGaussAfterShift
     <<",\"max_reference_gauss_relative\":"<<count.maxReferenceGauss<<",\"max_new_Ez_correction_V_m\":"<<count.maxEzCorrection
+    <<",\"reference_gauss_diagnostic_source\":\"original frozen cache retained for historical comparison; for evolving reference use its donor total_gauss diagnostics\""
     <<",\"gauss_initial_source_l2_V_m2\":"<<gaussSourceNorm<<",\"gauss_initial_source_max_V_m2\":"<<gaussSourceMaximum
     <<",\"new_Ez_correction_l2\":"<<std::sqrt(count.sumEzCorrection2)
     <<",\"initialization_wall_s\":"<<count.initialization<<",\"cache_preparation_wall_s\":"<<count.cache
@@ -679,9 +869,18 @@ void run(const std::string& directory,double beta,unsigned guard,const std::stri
     <<",\"charge_contract\":\"interior vertex control volume, open edge-current flux plus explicit moved-in/moved-out vertex plane charge; outer collar endpoints excluded\""
     <<",\"gauss_normalization\":\"Ordinary Gauss measured only on nonabsorbing interior vertices; L2 divided by fixed initial full-cohort rho/epsilon0 L2; layer maximum is first nonabsorbing interior layer, not newly inserted CPML plane; translated-reference diagnostic also uses cache-valid overlap\""
     <<",\"storage_accounting\":\"known live numerical arrays and vector capacities; vector<bool> flags estimated from bit capacity; excludes allocator/object/stream/MPI overhead; initialization CG temporary bytes and full-grid construction peak reported separately\""
-    <<",\"source_contract\":\"generated Gaussian input; held x/y/u fixed until common fixed-lab release; full and window use identical prescribed release paths; short-window outgoing particles become ballistic only after detector\""
+    <<",\"source_contract\":\""
+    <<(prescribedActualControl?
+       "zero-response diagnostic control: actual short-window source follows prescribed seed positions/momenta exactly, with no PIC force; not a physical particle-evolution result":prescribedReference?
+       "independent donor: initial x/y/u fixed and z=seed_z+beta*c*n*dt at every complete step; release/detector events logged but source never receives PIC force; original Cowan and charge-conserving deposition":
+       "generated Gaussian input; held x/y/u fixed until common fixed-lab release; full and window use identical prescribed release paths; short-window outgoing particles become ballistic only after detector")<<"\""
     <<",\"particle_detector_contract\":\"position and proper velocity are linearly interpolated on the crossed held/active segment for diagnostics; not an exact intermediate Boris trajectory solution\""
-    <<",\"limitations\":[\"One MPI rank; transverse PEC retained to isolate longitudinal CPML; no production checkpoint integration\",\"Frozen reference is one initial full-domain Cowan solve plus linear native-field translation, not evolving full-domain history\",\"Full initial solve/cache and input table remain O(total bunch length/particle count), explicitly included in cost\",\"Total-field Cowan and particle update; CPML correction input selected by cpml_input; reference outer face/halo/new-layer feed; outgoing exterior evolution after removal is omitted\",\"No Gauss correction or reference-source mismatch correction is applied; post-detector ballistic full-charge paths cross CPML before removal\",\"Ordinary field energy is not the exact Cowan invariant; no pure radiation or full-scale speed claim\"]}\n";
+    <<",\"limitations\":[\"One MPI rank; transverse PEC retained to isolate longitudinal CPML; no production checkpoint integration\",\""
+    <<((prescribedReference||heldReference)?
+       "DIAGNOSTIC ONLY: reference donor uses prescribed initial-source trajectories without physical PIC future data, but still performs a full-grid field evolution and stores it":
+       oracleReplay?"DIAGNOSTIC ONLY: selected reference channels replay physical full-domain future native states; this is not an independent window algorithm":
+       "Frozen reference is one initial full-domain Cowan solve plus linear native-field translation, not evolving full-domain history")
+    <<"\",\"Full initial solve/cache and input table remain O(total bunch length/particle count), explicitly included in cost\",\"Total-field Cowan and particle update; CPML correction input selected by cpml_input; reference outer face/halo/new-layer feed; outgoing exterior evolution after removal is omitted\",\"No Gauss correction or reference-source mismatch correction is applied; post-detector ballistic full-charge paths cross CPML before removal\",\"Ordinary field energy is not the exact Cowan invariant; no pure radiation or full-scale speed claim\"]}\n";
   require(metrics.good(),"Metrics output write failed");
   std::cout<<"Streaming CPML bunch probe complete: "<<mode<<" beta="<<beta<<" guard="<<guard
     <<" crossings="<<PARTICLES<<" steps="<<STEPS<<" max_continuity="<<count.maxContinuity<<'\n';
@@ -693,8 +892,11 @@ int main(int argc,char** argv) {
   int rank=0,size=1;MPI_Comm_rank(MPI_COMM_WORLD,&rank);MPI_Comm_size(MPI_COMM_WORLD,&size);
   try {
     require(size==1,"Streaming bunch research probe requires one MPI rank");
-    require(argc==5,"Usage: aprl_streaming_cpml_probe OUT beta inner_guard full|cpml|zero|residual");
-    run(argv[1],std::stod(argv[2]),static_cast<unsigned>(std::stoul(argv[3])),argv[4]);
+    require(argc>=5&&argc<=7,"Usage: aprl_streaming_cpml_probe OUT beta inner_guard MODE [diagnostic_max_step [oracle_directory]]");
+    const unsigned long diagnosticSteps=argc>=6?std::stoul(argv[5]):0;
+    require(diagnosticSteps<=STEPS,"Diagnostic step limit exceeds this bounded fixture");
+    run(argv[1],std::stod(argv[2]),static_cast<unsigned>(std::stoul(argv[3])),argv[4],
+        static_cast<unsigned>(diagnosticSteps),argc==7?argv[6]:"");
     MPI_Finalize();return 0;
   } catch(const std::exception& error) {
     std::cerr<<"rank "<<rank<<": "<<error.what()<<'\n';MPI_Abort(MPI_COMM_WORLD,1);return 1;

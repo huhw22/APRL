@@ -345,6 +345,138 @@ void independentOracleAndShift() {
   }
 }
 
+void remappedClampRefresh(bool residualInput) {
+  // Deliberately non-PEC reference data exercises the transverse PEC override
+  // where a prescribed z face intersects an x/y face.
+  EBFieldGrid cacheFields(geometry(CACHE_NZ));fillPattern(cacheFields,23);
+  StreamingReferenceCache reference(cacheFields,.23);
+  std::size_t offset=64;
+  EBFieldGrid candidate(geometry()),oracle(geometry());
+  fillPattern(candidate,29,true);fillPattern(oracle,29,true);
+  auto* adapted=new ReferenceFedCPML(geometry(),parameters(),reference,offset,false,residualInput);
+  auto* native=new EBConvolutionalPML(geometry(),NZ,0,parameters(),true,true);
+  candidate.setBoundary(std::unique_ptr<aprl::EBBoundaryOperator>(adapted));
+  oracle.setBoundary(std::unique_ptr<aprl::EBBoundaryOperator>(native));
+  seedHistory(*adapted);seedHistory(*native);
+  const unsigned state=8;
+  for(EBFieldGrid* fields:{&candidate,&oracle}) {
+    // A completed-step fixture: old faces satisfy the clamp, while an old
+    // interior point has a nonzero residual that must not become a new face.
+    for(unsigned a=0;a<2;++a) {
+      auto& c=component(*fields,a);
+      for(unsigned side=0;side<2;++side) {
+        const std::size_t k=side?c.nz()-1:0;
+        for(std::size_t j=0;j<c.ny();++j)for(std::size_t i=0;i<c.nx();++i)
+          c(i,j,k)=reference.value(a,i,j,offset+k,state);
+      }
+      c(2,2,NZ-1)=reference.value(a,2,2,offset+NZ-1,state)+32.;
+    }
+    aprl::PerfectElectricConductorBoundary transverse(false,false);
+    transverse.afterElectricUpdate(*fields);
+  }
+  struct Context {StreamingReferenceCache* reference;std::size_t offset;unsigned state;};
+  Context context{&reference,offset-1,state};
+  aprl::verification::MovingWindowIncoming incoming;incoming.context=&context;
+  incoming.value=[](void* raw,unsigned a,std::size_t i,std::size_t j,std::size_t k,Double)->Double {
+    const auto& c=*static_cast<Context*>(raw);
+    return a<6?c.reference->value(a,i,j,c.offset+k,c.state):0.;
+  };
+  MovingWindowRemap mover(geometry(),parameters(),{-1},MovingWindowHistoryPolicy::WorldPosition);
+  mover.shift(candidate,-1,(offset-1)*DZ,incoming);
+  naiveMinusOne(oracle,*native,reference,offset-1,state);--offset;
+  compareFields(candidate,oracle,"Refresh fixture before clamp");
+  compareHistory(*adapted,*native,"Refresh fixture before clamp");
+  for(unsigned a=0;a<2;++a) {
+    const auto& c=component(candidate,a);
+    check(!sameDouble(c(2,2,NZ),reference.value(a,2,2,offset+NZ,state)),
+          "Remap fixture did not expose an unclamped new upper face");
+    check(sameDouble(c(2,2,0),reference.value(a,2,2,offset,state)),
+          "Incoming lower face has the wrong reference time or coordinate");
+    check(!sameDouble(reference.value(a,2,2,offset+NZ,state),
+                      reference.value(a,2,2,offset+NZ,state-1)),
+          "Refresh fixture cannot detect a stale reference time");
+  }
+  const auto before=snapshot(candidate);
+  const auto boundaryValues=adapted->boundaryValues();
+  const auto residualValues=adapted->residualInputValues();
+  adapted->refreshAfterRemap(candidate,state);
+  compareHistory(*adapted,*native,"Refresh changed CPML history");
+  assertSourcesRestored(candidate,before,false,"Refresh");
+  check(adapted->residualInputValues()==residualValues,"Refresh invoked the residual CPML hook");
+  check(adapted->boundaryValues()-boundaryValues==
+        2*(candidate.ex().nx()*candidate.ex().ny()+candidate.ey().nx()*candidate.ey().ny()),
+        "Refresh did not account for exactly two Ex/Ey faces");
+  for(unsigned a=0;a<3;++a) {
+    const auto& c=component(candidate,a);bool correct=true;
+    for(std::size_t k=0;k<c.nz();++k)for(std::size_t j=0;j<c.ny();++j)
+      for(std::size_t i=0;i<c.nx();++i) {
+        const std::size_t index=(k*c.ny()+j)*c.nx()+i;
+        Double expected=before[a][index];
+        const bool transverse=(a==0&&(j==0||j==NY))||
+          (a==1&&(i==0||i==NX))||(a==2&&(i==0||i==NX||j==0||j==NY));
+        if(transverse)expected=0.;
+        else if(a<2&&(k==0||k+1==c.nz()))
+          expected=reference.value(a,i,j,offset+k,state);
+        else ++outsideValuesChecked;
+        correct=correct&&sameDouble(c(i,j,k),expected);
+      }
+    check(correct,"Refresh changed E interior or violated current-time clamp/transverse PEC");
+  }
+  // A mid-step refresh must fail without changing any state.
+  const auto after=snapshot(candidate);adapted->beginStep(candidate,state);
+  bool rejected=false;
+  try {adapted->refreshAfterRemap(candidate,state);}
+  catch(const std::logic_error&) {rejected=true;}
+  check(rejected,"Refresh accepted an unfinished field step");
+  for(unsigned a=0;a<9;++a)
+    check(equalArray(component(candidate,a),after[a]),"Rejected refresh modified a field");
+  compareHistory(*adapted,*native,"Rejected refresh modified CPML history");
+}
+
+void diagnosticCallbackRoundTrip() {
+  EBFieldGrid cacheFields(geometry(CACHE_NZ));fillPattern(cacheFields,31);
+  StreamingReferenceCache reference(cacheFields,.23);
+  std::array<Double,6> original;
+  for(unsigned a=0;a<6;++a)original[a]=reference.value(a,2,3,80.25,7.5);
+  const auto initialCount=reference.sampleCount();
+  const auto memory=reference.memoryBytes();
+  struct Context {
+    unsigned calls=0,component=0;std::size_t i=0,j=0;
+    Double k=0.,step=0.,result=0.;bool reject=false;
+  } context;
+  const auto callback=[](void* raw,unsigned a,std::size_t i,std::size_t j,
+                         Double k,Double step)->Double {
+    auto& c=*static_cast<Context*>(raw);
+    ++c.calls;c.component=a;c.i=i;c.j=j;c.k=k;c.step=step;
+    if(c.reject)throw std::out_of_range("Intentional diagnostic replay rejection");
+    return c.result;
+  };
+  reference.setDiagnosticQuery(callback,&context);
+  for(unsigned a=0;a<6;++a) {
+    context.result=a==0?-0.:std::ldexp(static_cast<Double>(a+17),-4);
+    // The callback, rather than frozen-cache translation/range checking,
+    // owns these coordinates. Record them to catch hidden time/space changes.
+    const Double actual=reference.value(a,2,3,-6.25,13.5);
+    check(sameDouble(actual,context.result),"Diagnostic callback changed returned bits");
+    check(context.component==a&&context.i==2&&context.j==3&&
+          sameDouble(context.k,-6.25)&&sameDouble(context.step,13.5),
+          "Diagnostic callback received translated coordinates or wrong component");
+    check(reference.sampleCount()==initialCount+a+1,"Diagnostic success count mismatch");
+  }
+  context.reject=true;bool rejected=false;const auto beforeFailure=reference.sampleCount();
+  try {reference.value(0,2,3,-6.25,13.5);}
+  catch(const std::out_of_range&) {rejected=true;}
+  check(rejected&&reference.sampleCount()==beforeFailure,
+        "Diagnostic exception was swallowed or counted as a successful query");
+  reference.setDiagnosticQuery(nullptr);
+  for(unsigned a=0;a<6;++a)
+    check(sameDouble(reference.value(a,2,3,80.25,7.5),original[a]),
+          "Disabling diagnostic replay did not restore the original cached result");
+  check(context.calls==7,"Disabled callback was invoked again");
+  check(reference.sampleCount()==initialCount+12,"Restored frozen query count mismatch");
+  check(reference.memoryBytes()==memory,"Callback registration changed owned cache storage");
+}
+
 void wrongHalfTimeNegativeControl() {
   EBFieldGrid cacheFields(geometry(CACHE_NZ));fillPattern(cacheFields,17,true);
   StreamingReferenceCache reference(cacheFields,.23);std::size_t offset=64;
@@ -387,6 +519,9 @@ void writeMetrics(const std::string& directory,bool complete) {
      <<",\"outside_target_values_checked\":"<<outsideValuesChecked
      <<",\"zero_reference_full_steps\":4,\"equal_reference_beta_cases\":2"
        ",\"independent_oracle_callback_steps\":4,\"world_position_shifts\":1"
+       ",\"refresh_world_position_shifts\":2,\"refresh_total_and_residual_modes\":2"
+       ",\"diagnostic_callback_success_queries\":6,\"diagnostic_callback_exception_checks\":1"
+       ",\"diagnostic_callback_restore_queries\":6"
        ",\"scope\":\"isolated CPML operators and zero-reference full Cowan steps; no physical approximation acceptance\"}\n";
   out.close();if(!out.good())throw std::runtime_error("Cannot close residual checks metrics");
 }
@@ -405,6 +540,7 @@ int main(int argc,char** argv) {
     rejectedConfigurations();zeroReferenceDegeneracy();
     equalReferenceNoNewResponse(0.);equalReferenceNoNewResponse(.23);
     independentOracleAndShift();wrongHalfTimeNegativeControl();
+    remappedClampRefresh(false);remappedClampRefresh(true);diagnosticCallbackRoundTrip();
     writeMetrics(directory,true);
     std::cout<<"Residual CPML checks PASS: "<<checks<<" checks\n";
     MPI_Finalize();return 0;
