@@ -1,6 +1,17 @@
 option(APRL_ENABLE_PHYSICS_ANALYSIS
   "Register optional non-gating particle/field energy-budget examples" OFF)
 
+option(APRL_BUILD_WINDOW_FEASIBILITY
+  "Build bounded moving-window research probes; no production window changes" OFF)
+if(APRL_BUILD_WINDOW_FEASIBILITY)
+  foreach(probe window_streaming pic_dependency window_analytic)
+    add_executable(aprl_${probe}_probe ${probe}_probe.cpp)
+    target_link_libraries(aprl_${probe}_probe PRIVATE direct_eb_core)
+    target_compile_options(aprl_${probe}_probe PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+  endforeach()
+endif()
+
 add_executable(aprl_core_checks core_checks.cpp)
 target_link_libraries(aprl_core_checks PRIVATE direct_eb_core)
 target_compile_options(aprl_core_checks PRIVATE

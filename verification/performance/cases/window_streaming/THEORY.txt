@@ -1,0 +1,104 @@
+Fixed laboratory device interval in a boosted streaming window
+============================================================
+Research derivation, 2026-10-27. No production solver change or speedup claim.
+
+Assumptions and cost variable
+----------------------------
+Let n measure bunch duration/length at fixed boost, physical device length,
+transverse aperture, physical resolution and target accuracy. In the current
+full-bunch box, Nz=an+b and Nt=cn+d in the bunch-dominated regime. Field work is
+Cg*Nx*Ny*sum_k Nz(k), hence O(n^2) for the full box. At fixed line density the
+number of represented particles also grows with n; its cost is
+Cp*sum_k Np(k)*Nsub. Memory and a fixed transverse detector's six-component
+time sequence need only O(n). Initial field solves and I/O are separate costs.
+Shrinking one end from n cells to zero gives n(n+1)/2 updates: a constant-factor
+reduction, not a change of order. Fixed resource allocation does not become
+cheaper merely because some ranks go idle; count work, wall time and node-hours
+separately. These two current production cards are not a measured n-scaling scan.
+
+Device-window geometry
+----------------------
+For z'_b(t')=z'_origin+(z_lab-z_lab_origin)/gamma-beta*c*t', fixed lab endpoints
+zin and zout both move at -beta*c. Their simultaneous boosted separation is
+W'=(zout-zin)/gamma, independent of bunch length. For current gamma=929.1305493,
+zin=-0.05m and zout=4.5m, W'=4.89705mm, about3904 nominal dz cells before guards.
+For zout=0.5m it is0.59195mm, about472 cells. Existing main/free-drift grids are
+45568/44800 longitudinal cells. These are geometric opportunities, not validated
+memory bounds or measured speedup factors.
+
+If both active width and the number of active particles stay bounded with n,
+the duration increases as n, so interior work is O(n). A rigorous claim must
+also bound initialization, incoming particle preparation, boundary generation,
+source-history state, output and any external-domain calculations at fixed error.
+Full six-component plane data and common phase can in principle be retained;
+it is not necessary to replace them with intensities or a few observation angles.
+
+Continuous causal exclusion
+--------------------------
+At a given boosted time an event d>0 above the moving final detector can reach
+that detector at the earliest by a -c ray. Solve d-c*tau=-beta*c*tau to obtain
+tau=d/[c(1-beta)]. For a guaranteed remaining time T, d>c(1-beta)*T excludes
+that event from this detector's future. With the configured hard duration
+T<=5e-10s, c(1-beta)T<=8.68175e-8m=0.06921dz. The initial-ballistic estimate is
+not a guaranteed final time. This statement concerns only this continuous
+detector causal target; other requested particle states, full-domain ledgers,
+snapshots and transverse boundaries may add targets and dependencies.
+
+Discrete PIC qualification
+--------------------------
+The actual step advances B, gathers E and the updated B for particles, deposits
+charge-conserving J, then advances E. A source-level possible path is
+Ex_old[k+2] -> By_new[k+1] -> particle gather -> Jx[k] -> Ex_new[k]. Thus the
+complete discretization can have a wider index dependency than the physical
+light cone. The numerical experiment must demonstrate or refute this path,
+including vacuum controls, particle-position variation and perturbation scaling.
+This is numerical stencil support, not a physical superluminal signal claim.
+One must not turn the0.069cell continuous bound into a production halo size.
+
+Exterior-state elimination and the unresolved complexity
+-------------------------------------------------------
+For a linear, fixed partition, write a for interior and b for exterior state:
+  a[k+1] = Aaa*a[k] + Aab*b[k] + ja[k]
+  b[k+1] = Abb*b[k] + Aba*a[k] + jb[k].
+Eliminating b gives a source term Aab*Abb^k*b[0], plus history sums with kernel
+K[l]=Aab*Abb^l*Aba and analogous exterior-source history terms. Direct evaluation
+of all prior history can cost O(Nt^2), even when the interior is small. A fast
+convolution or fixed-size state realization could reduce it, but translation
+invariance and bounded accuracy requirements must be established, not assumed.
+Moving interfaces are time-varying; self-consistent exterior particles add
+nonlinearity. FFT/FMM names alone do not prove end-to-end O(n log n).
+
+In this application, pre-activation held particles remain Maxwell current
+sources. Incoming cells contain their existing field and initial-field history.
+Deleting those sources and initializing the incoming cells to zero changes the
+problem. The original finite-domain Poisson solve is performed once, so simply
+solving a new cropped Poisson problem also changes the initial condition.
+Moving a CPML to the new cut is not equivalent to eliminating an irrelevant
+exterior. A restartable streaming state must include pending input events and
+boundary-history state; it cannot be called the old full-grid checkpoint.
+
+What this first experiment can establish
+---------------------------------------
+An oracle-fed window uses exact exterior fields from a full-domain calculation.
+Only newly entering cells and necessary interface/halo data may be copied.
+Every retained interior state must advance through the actual core kernels.
+Agreement tests the update/shift/interface contract conditional on that supply.
+Zero-boundary negative controls must fail the scientific equivalence check.
+An analytic-wave input can separately test a cheap independent boundary in the
+special vacuum problem. Neither proves affordable held-beam boundary supply.
+Count and report reference generation and oracle transfer separately; no
+end-to-end speedup or full PIC feasibility follows from interior operation count.
+
+Decision gates for a later coupled prototype
+-------------------------------------------
+1. Retained fields and plane amplitudes/phases agree at a predeclared tolerance,
+   including weak waves on strong fields, without replaying the interior.
+2. A coupled PIC probe determines the real index dependencies. Particle energy
+   loss and cross spectra need their own tests, not inference from vacuum fields.
+3. Independently generate held/exterior boundary fields at controlled error;
+   do not rely on a precomputed full reference in the candidate production path.
+4. On increasing bunch lengths, require the same physical error budget. Measure
+   all work and memory. If the necessary activity/history width grows as n,
+   reject the near-linear claim for that formulation.
+5. Only after these pass add CPML, dynamic particle admission, MPI repartition,
+   detector transforms, checkpoint state and node-cost validation.
