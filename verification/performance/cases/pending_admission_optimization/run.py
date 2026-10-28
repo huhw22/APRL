@@ -15,7 +15,7 @@ import time
 import h5py
 import numpy as np
 import yaml
-from prepare import require, save, sha
+from prepare import require, save, sha, validate_science_reuse
 from ledger_review import compare as compare_ledger, thresholds as ledger_thresholds
 
 
@@ -61,15 +61,69 @@ def scalar_fields(group):
     return {name:group[name][:] for name in ('records','time_s') if name in group}
 
 
+def bounded_duration_status(text, record, steps, duration_helper):
+    """Classify only the expected post-close MPI abort, never physical success.
+
+    Simulation::solve places the duration-readiness MPI_Barrier after every
+    rank's local output closes. A root *complete* trace proves all peers entered
+    that barrier; sixteen trace lines are neither enabled nor required. main
+    reports the expected exception and calls MPI_Abort(...,1), after which srun
+    --kill-on-bad-exit can emit a generic STEP CANCELLED and kill peer ranks.
+    """
+    status = duration_helper.check_duration_exit(text, record['exit_code'], steps=steps)
+    require(math.isfinite(record['seconds']) and 0 < record['seconds'] < record['limit_s'],
+            'Launcher reached its timeout or has invalid elapsed time')
+    phases = ('trajectory-close-complete', 'detector-close-complete', 'ledger-close-complete',
+              'particle-boundary-report-complete', 'final-resource-report-complete',
+              'duration-exhaustion-readiness-sync-enter', 'duration-exhaustion-readiness-sync-complete')
+    markers = []
+    for phase in phases:
+        found = list(re.finditer(r'\[teardown\] rank=0\b[^\n]* phase=' + phase + r'\b', text))
+        require(len(found) == 1, 'Missing/duplicate root close/readiness proof: ' + phase)
+        markers.append(found[0].start())
+    require(markers == sorted(markers), 'Root close/readiness phases are out of order')
+    fatal = r'DUE TO TIME LIMIT|Timed out|Segmentation fault|Bus error|Floating point exception|Killed by signal|Signal:\s*\w+|oom[_ -]?kill|out.of.memory|\[shutdown-watchdog\]|Direct E/B run stopped after a complete field step'
+    require(not re.search(fatal, text, re.I), 'Unexpected timeout/signal/crash/watchdog termination')
+    require('Configured stop reached:' not in text, 'Bounded timing run unexpectedly claims physical completion')
+    final = re.findall(r'\[resource\] phase=final step=(\d+)\b', text)
+    require(final == [str(steps)], 'Final complete-step report is missing/duplicate/wrong')
+    expected = duration_helper.EXHAUSTED
+    failure = re.search(r'Simulation failure on MPI rank \d+:\s*' + re.escape(expected), text)
+    aborts = list(re.finditer(r'MPI_ABORT was invoked on rank (\d+) in communicator MPI_COMM_WORLD\s+with errorcode (\d+)\.', text))
+    require(aborts and all(match[2] == '1' for match in aborts), 'Missing expected MPI_Abort(errorcode=1) evidence')
+    require(failure is not None, 'Missing complete expected duration exception')
+    ready = markers[-1]
+    expected_cancel = re.compile(r'slurmstepd: error: \*\*\* STEP (\d+\.\d+) ON (\S+) CANCELLED AT [0-9T:+.\-]+ \*\*\*')
+    expected_exit = re.compile(r'srun: error: \S+: tasks? [0-9,\-]+: (?:Killed|Exited with exit code 1)')
+    cancellations, peer_cleanup = [], []
+    offset = 0
+    for line in text.splitlines(keepends=True):
+        stripped = line.strip()
+        if re.search(r'CANCELLED', line, re.I):
+            match = expected_cancel.fullmatch(stripped)
+            require(match is not None and offset > ready and offset > failure.start() and
+                    any(offset > abort.end() for abort in aborts),
+                    'Cancellation is not the generic STEP cleanup after proven duration abort')
+            cancellations.append({'step_id': match[1], 'host': match[2], 'line': stripped})
+        elif stripped.startswith(('slurmstepd: error:', 'srun: error:')):
+            require(expected_exit.fullmatch(stripped) is not None and offset > ready and
+                    any(offset > abort.end() for abort in aborts),
+                    'Unexpected scheduler/runtime error: ' + stripped)
+            peer_cleanup.append(stripped)
+        offset += len(line)
+    status.update(readiness_complete_marker_observed=True,
+        all_rank_readiness_proof='Rank-zero completion of the collective placed after every local output close; trace is root-only by default.',
+        mpi_abort_errorcode=1, scheduler_step_cancellations_after_duration_abort=cancellations,
+        scheduler_peer_cleanup_lines=peer_cleanup, physical_simulation_complete=False,
+        contract='Post-close expected duration abort only; HDF5 committed extents/finite values are independently required by full_review.')
+    return status
+
+
 def full_review(directory,item,duration_helper):
     record=json.loads((directory/'aprl.log.launch.json').read_text())
     text=(directory/'aprl.log').read_text(errors='replace')
     n=item['steps']
-    status=duration_helper.check_duration_exit(text,record['exit_code'],steps=n)
-    # The established parser recognizes expected MPI_Abort caused by duration
-    # exhaustion after every output closes. Never accept scheduler/timeout kills.
-    require(not re.search(r'CANCELLED|DUE TO TIME LIMIT|Timed out|Segmentation fault|Killed by signal|Exited with exit code (?:124|137|139|143)',text,re.I),
-            'Unexpected timeout/cancellation/runtime failure')
+    status=bounded_duration_status(text,record,n,duration_helper)
     outputs=duration_helper.inspect_outputs(directory,False)
     require(re.search(r'Moving window completed: steps='+str(n)+r'\b',text),'Wrong full-step moving count')
     require('particles=41732775' in text,'Wrong production source count')
@@ -138,9 +192,16 @@ def main():
     frozen=json.loads((root/'frozen.json').read_text())
     require(all(sha(path)==value for path,value in frozen.items()),'Frozen campaign changed')
     if stage=='full':
-        science=json.loads((root/'SCIENCE_PASS.json').read_text())
-        require(science['pass'] and science['binary_sha256']==plan['binary_sha256'],'Same-binary science gate has not passed')
-        require(science['frozen_manifest_sha256']==sha(root/'frozen.json'),'Science used different frozen cards')
+        if plan.get('science_reuse'):
+            reused=validate_science_reuse(plan['science_reuse']['source_root'],
+                plan['binary_sha256'],plan['small_input_sha256'])
+            require(reused==plan['science_reuse'],'Reused science evidence changed')
+        else:
+            science=json.loads((root/'SCIENCE_PASS.json').read_text())
+            require(science['pass'] and science['binary_sha256']==plan['binary_sha256'],'Same-binary science gate has not passed')
+            require(science['frozen_manifest_sha256']==sha(root/'frozen.json'),'Science used different frozen cards')
+    else:
+        require(not plan.get('science_reuse'),'This fresh campaign reuses science; run only its full stage')
     helper=load_module(root/'scripts/smoke_review.py','pending_smoke_review')
     duration=load_module(root/'scripts/duration_review.py','pending_duration_review')
     save(execution/'STARTED.json',{'slurm_job_id':os.environ['SLURM_JOB_ID'],'stage':stage,'started_unix':time.time(),
@@ -230,6 +291,7 @@ def main():
             result['throughput']={key:{'baseline_s_per_step':a[key],'candidate_s_per_step':b[key],
                 'reduction_fraction':1-b[key]/a[key]} for key in ('stepping_average_s','steps_50_100_average_s')}
             result['throughput_scope']='One same16x8 paired early100-step sample, profiling disabled; no repeat statistics or full-run extrapolation.'
+            if plan.get('science_reuse'): result['science_reuse']=plan['science_reuse']
         require(all(sha(path)==value for path,value in frozen.items()),'Frozen campaign changed during stage')
         save(root/('SCIENCE_PASS.json' if stage=='science' else 'TIMING_REVIEW.json'),result)
         print('STAGE_REVIEWED '+stage,flush=True)
