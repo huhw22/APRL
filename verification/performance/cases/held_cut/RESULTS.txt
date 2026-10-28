@@ -86,3 +86,84 @@ legacy262--265s plus14--56s held preparation; online cut~11.33s vs full24.84s.
 No total production speedup claimed. The slower initializer used a separately
 bounded1200s Slurm case within the same1500s job limit; it finished617s overall.
 No new simulation, rank integration, default switch or remote push followed.
+
+Follow-up: blocked direct Cowan reference generator
+--------------------------------------------------
+2026-10-28 results/blocked_reference_20261028/RESULT_REVIEW.txt and
+FINAL_SUMMARY.json record the new implementation and matched acceptance.
+The verification-only backend uses original CIC accumulation order, transverse
+DST and disk-backed block Thomas elimination for the same finite Cowan27-point
+operator. Native E(0)/B(-dt/2) are reconstructed from a bounded cache; the inlet
+has no complete-donor pointer. The probe retains its full donor/full-world oracle
+and rho audit explicitly. Production src/default/top-level CMake remain unchanged.
+
+gnode1 one-core checks-r2 passes12 cases: beta0/.23, z guard0/2, blocks7/16/32.
+Maximum E/B relative L2 against CG(tol1e-12):8.26216e-13/6.97106e-13;
+independent native Gauss1.46242e-14, original CIC difference0. Seam/endpoints,
+source immutability, directory protection, short-read and adjacent-cache checks
+pass. r1 failed the host-authorization environment check before science; its log
+is retained. No numerical tolerance was relaxed.
+
+Slurm18955/18956 completed0:0 on allocated node3, no pin; each reserves128 CPUs
+and uses1MPIx16threads,1200s maximum/case within1500s total. Each CG/blocked pair
+uses identical production physical constants and initial/release states.
+Sparse:64particles/90steps/full1008/offset440/cut208. Dense:31675particles/120steps/
+full1088/offset500/cut208. Both blocked cases use32-layer blocks. All particles
+are released and observed, no discards, original continuity/clearance gates pass.
+Default CG repeats all12 previous scientific CSVs byte-for-byte.
+
+Generator replacement, maximum across matched full/cut worlds:
+                                  sparse          dense
+Native E relative L2               1.16142e-8      7.75365e-10
+Native B relative L2               9.95966e-9      5.64423e-10
+Auxiliary per-particle energy RMS   1.68759e-7eV    5.30260e-8eV
+Final per-particle energy RMS       2.69840e-7eV    1.70540e-7eV
+Direct native Gauss residual        2.15044e-13     2.82971e-12
+The finite-CG differences are negligible for these tested responses. This is
+accepted as a single-rank reference-generator replacement, not a new physical
+accuracy threshold or production moving-window acceptance.
+
+Existing inlet approximation, blocked cut versus its own full:
+                                  sparse          dense
+Native E/B relative L2             9.90981/6.33028% 1.01815/3.24739%
+Auxiliary mean energy difference   +.0575273eV     -.0133483eV
+Auxiliary per-particle RMS         .674150eV       .105769eV
+Dense auxiliary energy-spread difference is-.000248985eV (difference of the
+two energy spreads, not the spread of per-particle energy differences).
+The generator preserves these discrepancies, rather than removing them.
+
+Dense blocked full/cut ballistic-subtracted self-field width increments:
+x=.536647692/.536633722pm; y=.545216143/.545197775pm. Cut-versus-full changes
+relative to these increments are-.00260328%/-.00336890%; normal short-range
+grid-self-field response remains. CG-to-blocked changes are negligible, not
+claims of10-digit physical accuracy. Full/cut mean energy changes at the
+auxiliary plane are-1.53494868/-1.54829697eV. The entire interpolation step is
+outside the compact magnet fringe with5.046mm clearance for every particle.
+Final120-step states are not necessarily outside the magnetic field.
+
+Measured seconds (one paired run per fixture, no production extrapolation):
+                                  CG64   blocked64   CG31675 blocked31675
+Full initialization                560.806 3.05521     679.423 3.39865
+Pure generator preparation                 1.86190             2.10705
+Cut online incl. feed/remap         11.4060 12.5388     19.6308 21.0680
+Initialization+cut online          572.212 15.5940     699.054 24.4667
+Blocked initialization includes full-donor fill and independent Gauss audit;
+nested preparation/query timers must not be added again. Online time increased
+9.93%/7.32%; the initialization benefit is not sustained per-step acceleration.
+The full comparison-probe times incl. diagnostics are620.733/66.2004s and
+768.825/96.6749s. This harness still retains all full-domain validation arrays.
+
+Measured array capacities: cached fields/potentials55,642,632B plus query
+workspace28,616,784B (~80.36MiB together); solve workspace~15.04MiB is another
+phase. Source contribution indices and sorting scratch remain O(P). Production
+P=41732775 input/index/sort allocation estimate~18.97GiB and B32 disk~13.53GiB
+are algebraic budgets, not measured RSS/I/O. Logical counters include page-cache
+effects; files have short-read/finite-value guards but no content checksum.
+RAM is O(P+AB), becoming O(AB) only after source preparation. Normal buffered
+preparation is O(P logP+AL logA); no end-to-end PIC complexity claim is made.
+
+Sparse/dense comparisons change finite initial domain, observation duration,
+source realization and mean beta as well as particle number; they are not an N
+convergence scan. Native E/B are staggered, not collocated lab Poynting fields.
+Long-time weak radiation, true4.5m plane, actual right-particle exits, MPI and
+streaming input remain separate work. No production switch or remote push.

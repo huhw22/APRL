@@ -29,6 +29,9 @@
 #include "held_cut_boundary.h"
 #include "moving_window_remap.h"
 #include "eb_cpml.h"
+#ifdef APRL_HAS_BLOCKED_COWAN_REFERENCE
+#include "blocked_cowan_reference.h"
+#endif
 namespace {
 using aprl::Double;using aprl::EBFieldGrid;using aprl::EBGridGeometry;
 using aprl::FieldVector;using aprl::RelativisticParticleSI;using aprl::YeeComponent;
@@ -180,7 +183,7 @@ struct Fixture {
   std::vector<RelativisticParticleSI> seed;
   Fixture(unsigned s,unsigned p,unsigned w,unsigned wh=64)
     :steps(s),particles(p),warm(w),warmHorizon(wh) {
-    require(s>=16&&s<=128&&p>=16&&p<=1024&&wh>=64&&wh<=256&&w<=wh,
+    require(s>=16&&s<=128&&p>=16&&p<=32768&&wh>=64&&wh<=256&&w<=wh,
       "Outside bounded fixture");
     // The explicit preparation horizon fixes one common reference geometry
     // for all prewarm durations in a convergence series. The default retains
@@ -255,8 +258,24 @@ struct Fixture {
 struct Reference {
   EBFieldGrid* fields=nullptr;const MovingWindowRemap* layout=nullptr;
   bool frozen=false;double beta=0.;unsigned state=0;
+#ifdef APRL_HAS_BLOCKED_COWAN_REFERENCE
+  aprl::verification::BlockedCowanReference* blocked=nullptr;
+  std::size_t blockedNz=0;
+#endif
   static double query(void* raw,unsigned a,std::size_t i,std::size_t j,std::ptrdiff_t k,unsigned n) {
     auto& r=*static_cast<Reference*>(raw);require(a<6,"Invalid reference field");
+#ifdef APRL_HAS_BLOCKED_COWAN_REFERENCE
+    if(r.blocked) {
+      require(r.frozen,"Blocked reference must be frozen");
+      const std::size_t count=r.blockedNz+((a==0||a==1||a==5)?1:0);
+      const double z=static_cast<double>(k)-r.beta*n;
+      require(z>=0.&&z<=count-1,"Blocked reference query outside prepared domain");
+      const auto lo=static_cast<std::size_t>(std::floor(z)),hi=std::min(lo+1,count-1);
+      const double fraction=z-lo;
+      const double lower=r.blocked->field(a,i,j,lo);
+      return fraction==0.?lower:(1-fraction)*lower+fraction*r.blocked->field(a,i,j,hi);
+    }
+#endif
     if(!r.frozen)require(n==r.state,"Held donor time mismatch");
     const auto& c=component(*r.fields,a);const double z=static_cast<double>(k)-(r.frozen?r.beta*n:0.);
     require(z>=0.&&z<=c.nz()-1,"Reference query outside prepared domain");
@@ -264,6 +283,22 @@ struct Reference {
     return f==0.?c(i,j,lo):(1-f)*c(i,j,lo)+f*c(i,j,hi);
   }
   void histories(EBFieldGrid& target,const MovingWindowRemap& targetLayout,std::size_t offset,unsigned n) {
+#ifdef APRL_HAS_BLOCKED_COWAN_REFERENCE
+    if(blocked) {
+      // Cowan0 has no prepared CPML history. Only the newly supplied left
+      // slice is zeroed; all retained, physically evolved histories survive.
+      auto& to=dynamic_cast<aprl::EBConvolutionalPML&>(target.boundary());
+      for(unsigned h=0;h<12;++h) {
+        const auto& tl=targetLayout.historyLayout(h);
+        if(tl.derivativeAxis==2){require(tl.values==0,"Unexpected longitudinal history");continue;}
+        const auto q=tl.dimensions[tl.derivativeAxis==0?1:0];
+        auto& values=to.checkpointHistory(h);
+        for(std::size_t slot=0;slot<tl.activeAxisIndices.size();++slot)
+          for(std::size_t i=0;i<q;++i)values[slot*tl.dimensions[2]*q+i]=0.;
+      }
+      return;
+    }
+#endif
     if(!frozen) {copyHeldCutHistories(target,targetLayout,*fields,*layout,offset,0,1);return;}
     auto& to=dynamic_cast<aprl::EBConvolutionalPML&>(target.boundary());
     const auto& from=dynamic_cast<const aprl::EBConvolutionalPML&>(fields->boundary());
@@ -475,10 +510,18 @@ struct World {
 
 void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
          const std::string& mode,unsigned warmHorizon=64,
-         const std::string& initialModel="relativistic-poisson") {
+         const std::string& initialModel="relativistic-poisson",
+         const std::string& backend="cg",unsigned blockLayers=16) {
   require(mode=="live"||mode=="frozen","Reference mode must be live or frozen");
   require(initialModel=="relativistic-poisson"||initialModel=="cowan-relativistic-poisson",
     "Initial model must be relativistic-poisson or cowan-relativistic-poisson");
+  require(backend=="cg"||backend=="blocked","Initial backend must be cg or blocked");
+  require(blockLayers>=1&&blockLayers<=128,"Blocked reference width outside bounded range");
+  require(backend!="blocked"||(initialModel=="cowan-relativistic-poisson"&&mode=="frozen"&&warm==0),
+    "Blocked reference is only supported for frozen Cowan0");
+#ifndef APRL_HAS_BLOCKED_COWAN_REFERENCE
+  require(backend=="cg","This build does not enable the blocked reference generator");
+#endif
   const auto model=initialModel=="cowan-relativistic-poisson"?
     aprl::InitialSelfFieldModel::CowanRelativisticPoisson:
     aprl::InitialSelfFieldModel::RelativisticPoisson;
@@ -488,8 +531,54 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
   MovingWindowRemap donorLayout(donor->geometry(),f.cpml,{-1});
   std::vector<RelativisticParticleSI> before;for(std::size_t i=0;i<f.seed.size();++i)before.push_back(f.held(i,-static_cast<int>(warm)));
   const std::size_t guards[3]={SIDE,SIDE,0};auto begin=Clock::now();
-  const auto initialization=aprl::EBGaussFieldInitializer::initialize(*donor,donor->geometry(),0,origin(0),before,
-    model,3e-5,guards,1e-8,10000,MPI_COMM_WORLD,false,true,&f.frame);
+  aprl::EBGaussInitializationReport initialization;
+  double blockedFillSeconds=0.,blockedGaussSeconds=0.;std::size_t blockedGaussBytes=0;
+#ifdef APRL_HAS_BLOCKED_COWAN_REFERENCE
+  std::unique_ptr<aprl::verification::BlockedCowanReference> blocked;
+  if(backend=="blocked") {
+    // Match the original initializer's mass-weighted long-double reduction.
+    // The frozen interpolation below retains its original arithmetic mean.
+    long double local[2]={},global[2]={};
+    for(const auto& particle:before) {
+      const long double mass=static_cast<long double>(particle.mass);
+      local[0]+=mass;local[1]+=mass*static_cast<long double>(f.frame.heldLongitudinalBetaZ(particle.properVelocity));
+    }
+    MPI_Allreduce(local,global,2,MPI_LONG_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+    require(global[0]>0,"Invalid source mass");
+    initialization.meanBetaZ=static_cast<double>(global[1]/global[0]);
+    blocked.reset(new aprl::verification::BlockedCowanReference(donor->geometry(),origin(0),before,
+      initialization.meanBetaZ,guards,blockLayers,out+"/blocked-reference"));
+    auto auditBegin=Clock::now();blocked->fill(*donor);blockedFillSeconds=elapsed(auditBegin);
+    auditBegin=Clock::now();
+    {
+      // Full-volume rho and donor are explicit verification overhead. Neither
+      // is retained by the generator or consulted by its runtime inlet.
+      YeeComponent rho(NX+1,NY+1,f.nz+1);rho.fill(0.);
+      blockedGaussBytes=rho.size()*sizeof(double);
+      aprl::ChargeConservingCurrentDepositor depositor(*donor,origin(0));
+      for(const auto& particle:before)depositor.depositCharge(particle.position,particle.charge,rho);
+      long double residual2=0.,source2=0.;
+      for(std::size_t k=1;k<f.nz;++k)for(std::size_t j=SIDE+1;j<NY-SIDE;++j)
+        for(std::size_t i=SIDE+1;i<NX-SIDE;++i) {
+          const double source=rho(i,j,k)/aprl::SI::epsilon0;
+          const double residual=(donor->ex()(i,j,k)-donor->ex()(i-1,j,k))/DX+
+            (donor->ey()(i,j,k)-donor->ey()(i,j-1,k))/DY+
+            (donor->ez()(i,j,k)-donor->ez()(i,j,k-1))/DZ-source;
+          residual2+=static_cast<long double>(residual)*residual;
+          source2+=static_cast<long double>(source)*source;
+          initialization.maximumGaussResidual=std::max(initialization.maximumGaussResidual,std::abs(residual));
+        }
+      require(source2>0,"Empty blocked Gauss source");
+      initialization.relativeResidual=std::sqrt(residual2/source2);
+      require(initialization.relativeResidual<=1e-8,"Blocked independent Gauss audit failed");
+    }
+    blockedGaussSeconds=elapsed(auditBegin);
+    initialization.totalCharge=blocked->report().sourceCharge;
+    initialization.temporaryBytes=blocked->report().residentArrayBytes;
+  } else
+#endif
+    initialization=aprl::EBGaussFieldInitializer::initialize(*donor,donor->geometry(),0,origin(0),before,
+      model,3e-5,guards,1e-8,10000,MPI_COMM_WORLD,false,true,&f.frame);
   timing.initialize=elapsed(begin);std::cout<<"Initialized production-matched fixture: full_nz="<<f.nz<<" cut_nz="<<WIDTH<<" iterations="<<initialization.iterations<<std::endl;
   begin=Clock::now();for(int n=-static_cast<int>(warm);n<0;++n)advanceHeld(*donor,f,n);timing.prewarm=elapsed(begin);
   // This records the actually prepared native state without changing it.
@@ -539,6 +628,10 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
   }
   timing.diagnostics+=elapsed(begin);
   Reference reference;reference.fields=donor.get();reference.layout=&donorLayout;reference.frozen=mode=="frozen";reference.beta=f.betaMean;
+#ifdef APRL_HAS_BLOCKED_COWAN_REFERENCE
+  reference.blocked=blocked.get();reference.blockedNz=f.nz;
+  if(blocked){reference.fields=nullptr;reference.layout=nullptr;}
+#endif
   World full(out+"/full",f,false,*donor,donorLayout,reference);
   World cut(out+"/cut",f,true,*donor,donorLayout,reference);
   auto overlap=fresh(out+"/overlap.csv");overlap<<"step,E_difference_L2,E_reference_L2,B_difference_L2,B_reference_L2,E_difference_max,B_difference_max,history_difference_max\n";
@@ -619,9 +712,18 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
   require(cut.maxContinuity<1e-10&&full.maxContinuity<1e-10,"Charge continuity failed");
   require(full.maximumLabZ<TRUE_DETECTOR_LAB&&cut.maximumLabZ<TRUE_DETECTOR_LAB,"Unexpected production detector reach");
   double earliest=1e100,latest=-1e100;for(const auto& p:f.seed){const double t=(f.release-p.position[2])/((p.frozenBetaZ+f.frame.beta())*DZ);earliest=std::min(earliest,t);latest=std::max(latest,t);}
+#ifdef APRL_HAS_BLOCKED_COWAN_REFERENCE
+  if(blocked)blocked->writeReport(out+"/blocked-reference-report.json");
+#endif
   auto metrics=fresh(out+"/metrics.json");
   metrics<<"{\n\"format\":\"aprl-held-cut-bunch-v1\",\"completed\":true,\"mode\":\""<<mode<<"\",\"steps\":"<<steps<<",\"particles\":"<<particles<<",\"held_prewarm_steps\":"<<warm
     <<",\"warm_horizon_steps\":"<<f.warmHorizon
+    <<",\"initial_backend\":\""<<backend<<"\",\"reference_block_layers\":"<<blockLayers
+    <<",\"blocked_reference_report_file\":\""<<(backend=="blocked"?"blocked-reference-report.json":"")<<"\""
+    <<",\"reference_runtime_uses_full_donor\":"<<(backend=="blocked"?"false":"true")
+    <<",\"reference_solver_beta\":"<<initialization.meanBetaZ<<",\"reference_translation_beta\":"<<f.betaMean
+    <<",\"blocked_oracle_donor_fill_wall_s\":"<<blockedFillSeconds<<",\"blocked_independent_gauss_wall_s\":"<<blockedGaussSeconds
+    <<",\"blocked_independent_gauss_bytes\":"<<blockedGaussBytes
     <<",\"compute_threads\":"<<aprl::computeThreadCount()<<",\"nx\":"<<NX<<",\"ny\":"<<NY<<",\"full_nz\":"<<f.nz<<",\"cut_nz\":"<<WIDTH<<",\"dx_m\":"<<DX<<",\"dy_m\":"<<DY<<",\"dz_m\":"<<DZ<<",\"dt_s\":"<<DZ/aprl::SI::c
     <<",\"reference_offset0_cells\":"<<f.offset0<<",\"reference_causal_lower_margin_cells\":"<<f.offset0-(2*steps+warm+2)<<",\"reference_causal_upper_margin_cells\":"<<f.nz-(f.offset0+WIDTH)-(steps+warm+1)
     <<",\"boost_gamma\":"<<BOOST_GAMMA<<",\"window_beta\":"<<f.frame.beta()<<",\"particle_beta_mean\":"<<f.betaMean<<",\"particle_beta_min\":"<<f.betaMin<<",\"particle_beta_max\":"<<f.betaMax
@@ -651,7 +753,7 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
     <<",\"full_preparation_wall_s\":"<<full.preparationSeconds<<",\"cut_preparation_wall_s\":"<<cut.preparationSeconds
     <<",\"cut_remap_and_feed_wall_s\":"<<cut.referenceSeconds<<",\"diagnostics_wall_s\":"<<timing.diagnostics<<",\"overall_wall_s\":"<<elapsed(overall)
     <<",\"full_field_bytes\":"<<full.fields->memoryFootprint().totalBytes()<<",\"cut_field_bytes\":"<<cut.fields->memoryFootprint().totalBytes()<<",\"reference_field_bytes\":"<<donor->memoryFootprint().totalBytes()
-    <<",\"reference_kind\":\""<<(reference.frozen?"short-held-prepared frozen native field and side-history translated at mean velocity; approximation with source velocity spread":"independent prescribed held-source Maxwell evolution; no actual PIC future")<<"\""
+    <<",\"reference_kind\":\""<<(backend=="blocked"?"disk-backed fixed-source Cowan native field translated at mean velocity; inlet has no full-donor pointer":(reference.frozen?"short-held-prepared frozen native field and side-history translated at mean velocity; approximation with source velocity spread":"independent prescribed held-source Maxwell evolution; no actual PIC future"))<<"\""
     <<",\"inlet_diagnostic_contract\":\"Read-only native comparisons at left relative k=-1,0,1; full current physical state is diagnostic only and never supplies the candidate. Per-component times E(n),B(n-1/2). Prepared field/history norms are raw stored-value norms, not physical energy.\""
     <<",\"reference_dependency_contract\":\"Fixed-domain endpoint dynamic influence excluded by independently checked native Cowan/transverse-CPML lower n+1 and upper n bounds, including preparation; this does not establish independence of the initial elliptic solve from its finite domain.\""
     <<",\"provenance\":\"Production grid/boost/CPML/guards/undulator/subcycling and transverse RMS from 18932; laboratory momentum means/spreads and x-ux/y-uy correlations from deterministic 65536-record original-input sample; Gaussian z shortened and charge scaled by sigma ratio to preserve peak line density\""
@@ -662,8 +764,9 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
 int main(int argc,char** argv) {
   int provided=0;MPI_Init_thread(&argc,&argv,MPI_THREAD_FUNNELED,&provided);
   int size=0;MPI_Comm_size(MPI_COMM_WORLD,&size);
-  try {aprl::configureComputeThreads(provided);require(size==1,"Held cut research requires one MPI rank");require(argc>=6&&argc<=8,"Usage: aprl_held_cut_probe OUT STEPS PARTICLES PREWARM live|frozen [WARM_HORIZON [INITIAL_MODEL]]");
+  try {aprl::configureComputeThreads(provided);require(size==1,"Held cut research requires one MPI rank");require(argc>=6&&argc<=10,"Usage: aprl_held_cut_probe OUT STEPS PARTICLES PREWARM live|frozen [WARM_HORIZON [INITIAL_MODEL [BACKEND [BLOCK_LAYERS]]]]");
     run(argv[1],std::stoul(argv[2]),std::stoul(argv[3]),std::stoul(argv[4]),argv[5],
-      argc>=7?std::stoul(argv[6]):64,argc>=8?argv[7]:"relativistic-poisson");MPI_Finalize();return 0;
+      argc>=7?std::stoul(argv[6]):64,argc>=8?argv[7]:"relativistic-poisson",
+      argc>=9?argv[8]:"cg",argc>=10?std::stoul(argv[9]):16);MPI_Finalize();return 0;
   }catch(const std::exception& e){std::cerr<<e.what()<<std::endl;MPI_Abort(MPI_COMM_WORLD,1);return 1;}
 }

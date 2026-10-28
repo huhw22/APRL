@@ -47,11 +47,14 @@ elliptic solve from its finite-domain boundary.
 
 Probe CLI:
   aprl_held_cut_probe OUT STEPS PARTICLES PREWARM live|frozen \
-    [WARM_HORIZON [INITIAL_MODEL]]
-Defaults remain64 and relativistic-poisson. The bounded optional horizon is
+    [WARM_HORIZON [INITIAL_MODEL [BACKEND [BLOCK_LAYERS]]]]
+Defaults remain64 and relativistic-poisson; BACKEND defaults to cg and
+BLOCK_LAYERS to16. The bounded optional horizon is
 64..256; the only additional initializer is the already implemented
 cowan-relativistic-poisson. Its selection is an explicit research variant,
-not a change to the production card or propagation kernels.
+not a change to the production card or propagation kernels. BACKEND is cg or
+blocked; blocked requires the optional build described below, Cowan initial
+model, frozen mode and PREWARM0. The probe bounds BLOCK_LAYERS to1..128.
 All science cases contain BOTH actual full and cut PIC worlds, with the same
 prepared initial fields and identical prescribed release states.
   live: an independent held-source full grid evolves the reference; it never
@@ -89,8 +92,13 @@ checks hashes and physical-core binding, and executes cases serially. gnode1
 mode is the authorized CPU-only1MPI<=16threads exception,180s/case/2h total.
 Slurm mode reserves one exclusive128CPU node, uses1MPIx16threads per step,
 600s/case/25min total; run.sbatch requests no specific node and no requeue.
-The optional --case-timeout-s 1200 is for a single slower Slurm initializer
-within the same25min job limit; default600 and gnode1's180 remain unchanged.
+The optional --case-timeout-s 1200 sets a MAXIMUM for each Slurm case, not a
+separate1200s allocation per case. The total remains1500s/25min. Before each
+case, run.py uses min(case maximum, remaining campaign time minus10s); the
+second/later case therefore receives a shorter limit when necessary. A case
+is not started with less than60s remaining. Binding/checks consume the same
+campaign time; default600 and gnode1's180 remain unchanged. Do not expand the
+total limit to guarantee completion of a pair; report an incomplete pair.
 The single-rank production Poisson initializer is serial even when the field
 steps use16threads. Do not relax its tolerance to fit the gnode1 time limit.
 
@@ -143,6 +151,148 @@ Fast-reference design follow-up (2026-10-28):
   On authorized idle gnode1 after binding inspection, within the existing CPU
   test lock, use one physical core/one BLAS worker and timeout180s:
     python3 modal_reference_check.py --output /absolute/NEW/algebra.json
-  Candidate checkpoints still occupy O(A*Nz/block) RAM; disk-backed summaries,
-  particle streaming, native E/B reconstruction and production integration are
-  future work. Results: results/fast_reference_design_20261028/.
+  In this Python algebra prototype, checkpoints still occupy O(A*Nz/block)
+  RAM; it does not implement disk-backed summaries or native E/B queries.
+  The separate C++ generator below adds those operations. Neither prototype
+  establishes particle streaming or production integration.
+  Results: results/fast_reference_design_20261028/.
+
+Optional blocked Cowan reference implementation (2026-10-28):
+
+Build aprl_blocked_cowan_reference and aprl_blocked_cowan_reference_checks by
+adding -DAPRL_BUILD_BLOCKED_COWAN_REFERENCE=ON to the NEW verification build
+configuration above. Keep APRL_BUILD_HELD_CUT_PROBE=ON for the paired PIC
+probe. FFTW3 double-precision headers/library are required only when the
+optional FFTW-dependent targets are selected. Explicit dependency paths are:
+  -DAPRL_VERIFY_FFTW_INCLUDE_DIR=/absolute/private/include
+  -DAPRL_VERIFY_FFTW_LIBRARY=/absolute/private/lib/libfftw3.so.3
+Use the same MPI/HDF5 toolchain as the existing probe, and freeze these private
+dependencies with the new binary. No system package, MPI/network setting or
+production executable needs changing. Build targets, after configuration:
+  cmake --build build/held-cut-NEW --target aprl_held_cut_probe \
+    aprl_blocked_cowan_reference_checks -j8
+Leaving the new option OFF preserves the previous build and its CG-only CLI;
+even with it ON, omitting BACKEND still selects the original CG path. The
+default-CG twelve scientific CSV files must replay the matched legacy case.
+
+All generator calls currently require one live MPI rank. Reference queries
+are serial and not thread safe; existing field/PIC work may still use the
+recorded OpenMP thread count. The generator supports the same finite
+Dirichlet Cowan initial operator with one mass-weighted common longitudinal
+beta. That solver beta and the frozen-reference translation beta have their
+existing separate definitions; neither is a replacement for the near-c
+production boost/window speed. The particle release records are unchanged.
+
+Examples below describe executable arguments, not permission to run on the
+login node. Use the existing bounded compute-node runner and binding checks:
+  aprl_blocked_cowan_reference_checks /absolute/NEW_CHECK_DIRECTORY
+  aprl_held_cut_probe /absolute/NEW_CG_CASE \
+    90 64 0 frozen 256 cowan-relativistic-poisson cg
+  aprl_held_cut_probe /absolute/NEW_BLOCKED_CASE \
+    90 64 0 frozen 256 cowan-relativistic-poisson blocked 16
+For run.py prepare, the paired --case specifications are:
+  --case cg64:90:64:0:frozen:256:cowan-relativistic-poisson:cg
+  --case blocked64:90:64:0:frozen:256:cowan-relativistic-poisson:blocked:16
+Use --environment slurm --threads 16 with a fresh campaign directory.
+The approved slower-initializer maximum
+is --case-timeout-s 1200, with the unchanged total1500s rule above. A later
+matched-weight short-bunch pair may use31675 particles and120steps in BOTH
+backends; its geometry must match within that pair. It is a separate source
+sampling case, so comparing its runtime with the64particle case does not
+measure an implementation speedup.
+
+The generator preserves all source contributions. It forms CIC contributions
+in original-particle order, stably groups them by longitudinal source block,
+then uses transverse DST and a longitudinal forward elimination/backward
+reconstruction. It does not truncate remote charge at a guard distance. For
+A transverse interior nodes, L longitudinal interior layers and block depth B,
+rho.bin and phi.bin each store8*A*L bytes; checkpoints.bin stores two double
+transverse arrays per block, about16*A*ceil(L/B) bytes. These files remain in
+CASE/blocked-reference after the generator is destroyed. Their directory and
+report must be new; existing output is refused rather than overwritten.
+The files use native-endian doubles, not a portable snapshot/restart format.
+Short reads, invalid lengths and nonfinite query data are checked; there is
+no payload checksum, so finite-valued corruption is not generally detectable.
+
+Solver workspace and query caches have fixed O(A*B) capacity when A and B are
+fixed. Queries retain at most three potential blocks, one native E/B block
+with an extra right plane for adjacent-plane interpolation, and a source
+block only when scalar charge diagnostics request it. However, source
+preparation still requires the caller's full particle input and O(P) temporary
+CIC contribution indices, plus a conservative sorting-scratch allowance.
+Those indices are freed before solve/query. This is not yet a fully streamed
+particle reader, constant-memory whole simulation or distributed-I/O method.
+Global preparation and scalar disk volume still grow with L; each inlet
+query uses the prepared blocks instead of rescanning all particles.
+
+In blocked mode, the runtime inlet queries the generator directly and has no
+full-donor field/layout pointer. The probe nevertheless retains an independently
+filled complete donor and complete full PIC world as comparison oracles, and
+allocates a full rho array for the independent original-depositor Gauss check.
+Their memory and elapsed time are verification costs, not evidence that the
+whole probe has bounded memory. reference_field_bytes records the retained
+donor. initialization_wall_s includes generator construction, donor fill and
+the Gauss audit; blocked_oracle_donor_fill_wall_s and
+blocked_independent_gauss_wall_s separately identify the latter two operations.
+blocked_independent_gauss_bytes records that audit's extra rho array.
+
+CASE/blocked-reference-report.json records preparationSeconds for generator
+construction alone: geometry/modes, source grouping, forward/backward passes
+and file checks. It excludes later native E/B queries, donor fill and Gauss.
+sourceSeconds/forwardSeconds/reconstructionSeconds are nested subtimers, not
+additional costs. querySeconds measures native-cache builds, excluding cache
+hits/copies; it is not the complete inlet cost. The report is written after
+the probe's queries, so binary I/O counters include diagnostics/oracle queries
+as well as candidate use. Count source preparation, disk traffic, reconstruction,
+and measured cut preparation/remap/feed/advance when discussing total cost.
+Do not add overlapping timers or quote FFT kernel time alone as acceleration.
+
+Byte fields report array capacities and binary I/O, not measured peak RSS.
+sourceIndexBytes is temporary index capacity; sourceSortingAllowanceBytes is
+a conservative extra allowance, not measured allocation. CacheCapacityBytes
+fields retain their historical maxima; residentArrayBytes is the current
+sum of persistent potential/source/E-B cache capacities. queryWorkspaceBytes
+records the maximum separate temporary construction workspace. These belong
+to different phases and must not simply be summed as a simultaneous measured
+peak. FFTW/MPI/runtime private allocations are excluded; JSON I/O is excluded
+from bytesRead/bytesWritten. No production memory saving follows from these
+capacity counters alone.
+
+Acceptance sequence and postprocessing:
+  1. Independent serial generator checks compare original CIC, native six
+     field components and Gauss against the existing initializer, including
+     finite guards, block seams/endpoints, preserved particles and fault/cache
+     controls. Small indexing geometries are not scientific production cases.
+  2. Replay the legacy default CG science files, then compare same-source,
+     same-geometry CG/blocked Cowan0 full/cut runs. Respect the finite CG
+     tolerance; different solvers need not produce bitwise identical fields.
+  3. Inspect prepared/native-plane differences and two separate comparisons:
+     blocked minus CG at fixed full/cut world; cut minus its own matched full
+     world within each backend. Solver agreement cannot erase an existing
+     frozen-inlet approximation error.
+  4. At the same particle IDs and prescribed release state, inspect lab-energy
+     differences in eV (mean/RMS/spread), complete event membership and the
+     beam-width/covariance corrections after subtracting analytic ballistic
+     focusing. Verify that the whole event-interpolation step is outside the
+     prescribed magnetic fringe. Do not normalize weak energy changes by the
+     large total beam energy or use total focusing as the space-charge signal.
+
+Run only postprocessing on completed paired cases, into a NEW review directory:
+  python3 blocked_review.py --cg-case /absolute/CG_CASE \
+    --blocked-case /absolute/BLOCKED_CASE --output /absolute/NEW_REVIEW
+Optional --replay-case LEGACY_CG_CASE requires all twelve scientific CSVs to
+be byte-identical; --held-case ORDINARY_HELD_CASE adds a matched-geometry
+preparation-history comparison, without declaring held an exact truth.
+--no-plot omits figures. Outputs are BLOCKED_REVIEW.json, two per-ID energy
+CSV files and native-field/energy plus ballistic-response PNG/PDF figures.
+Structural/residual PASS is distinct from physical acceptance; the reviewer
+does not invent a weak-radiation or quasi-steady tolerance.
+
+This documentation states the procedure and implemented scope, not an unrun
+physical PASS. Actual results and limitations belong in the campaign's
+RESULTS/RESULT_REVIEW records under results/blocked_reference_20261028/.
+Single-rank fixed-source reference agreement alone does not establish long-time
+stability, actual right-particle exit, the4.5m detector, radiation separation,
+MPI/snapshot compatibility, production throughput or a whole-program O(n log n)
+complexity bound. Production/default/src and the approved propagation kernels
+remain outside this optional research implementation.

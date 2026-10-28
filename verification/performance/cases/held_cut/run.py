@@ -57,6 +57,7 @@ def prepare(args):
     files = sorted((SOURCE/'src').glob('*'))
     files += [SOURCE/'CMakeLists.txt', SOURCE/'verification/CMakeLists.txt']
     files += list((SOURCE/'verification').glob('held_cut*'))
+    files += list((SOURCE/'verification').glob('blocked_cowan_reference*'))
     files += [SOURCE/'verification/moving_window_remap.h', SOURCE/'verification/moving_window_remap.cpp']
     files += list(Path(__file__).resolve().parent.glob('*'))
     files = [p for p in files if p.is_file()]
@@ -89,6 +90,8 @@ def prepare(args):
     frozen = [p for p in root.rglob('*') if p.is_file()]
     frozen += [binary, binding] + ([checks] if checks else [])
     frozen += [p for p in (WORK/'build/cowan-accepted-r2-20261025/runtime-libs').glob('*') if p.is_file()]
+    frozen += [p for name in ('runtime-libs', 'runtime-include')
+               for p in (binary.parent/name).glob('*') if p.is_file()]
     save(root/'frozen.json', {str(p):sha(p) for p in frozen})
     print(root/'plan.json')
 
@@ -189,10 +192,12 @@ def run(args):
                        directory/'probe.log',directory/'launch.json')
             cases = []
             for case in plan['cases']:
-                require(time.monotonic()+plan['case_timeout_s']+10 < deadline,'Campaign deadline reached')
+                remaining = int(deadline-time.monotonic()-10)
+                require(remaining >= 60, 'Campaign deadline reached')
+                case_limit = min(plan['case_timeout_s'], remaining)
                 directory = root/case['name']
                 directory.mkdir()
-                launch(launcher+[plan['binary'],str(directory)]+case['arguments'],directory,env,plan['case_timeout_s'],
+                launch(launcher+[plan['binary'],str(directory)]+case['arguments'],directory,env,case_limit,
                        directory/'probe.log',directory/'launch.json')
                 metric = directory/'metrics.json'
                 require(metric.is_file(),'Missing metrics '+str(directory))
@@ -217,7 +222,7 @@ if __name__ == '__main__':
     p.add_argument('--threads',type=int,default=16)
     p.add_argument('--environment',choices=('gnode1','slurm'),default='gnode1')
     p.add_argument('--case-timeout-s',type=int,choices=(180,600,1200),
-                   help='Slurm-only1200s option for a single slower initializer; default600s. gnode1 remains180s.')
+                   help='Slurm-only1200s maximum for slower initializers; remaining total budget may shorten a case. Default600s; gnode1 remains180s.')
     p.add_argument('--case',action='append')
     p = sub.add_parser('run')
     p.add_argument('--root',type=Path,required=True)
