@@ -45,8 +45,9 @@ def curve_style(shared, run, window):
 
 
 def flux_figure(shared, plt, runs, metrics, output):
+    three = len(runs) == 3
     fig, axes = plt.subplots(2, 2, figsize=(15, 10.8))
-    fig.subplots_adjust(left=.075, right=.975, top=.85, bottom=.205,
+    fig.subplots_adjust(left=.075, right=.975, top=.80 if three else .85, bottom=.205,
                         hspace=.43, wspace=.25)
     high = max(r["arrays"]["photon_energy_eV"][-1] for r in runs)
     panels = ((0., high, "(a) Entire sampled band"),
@@ -79,26 +80,35 @@ def flux_figure(shared, plt, runs, metrics, output):
         if lo <= 91.5 <= hi:
             ax.axvline(91.5, color="#5a6572", lw=.75, ls=":")
         ax.grid(alpha=.18, lw=.6)
-        ax.legend(frameon=False, fontsize=8.1, loc="best")
-    shared.title(fig, "Free-drift field energy spectra at 0.5 m",
-                 "18993 moving window vs 18938 earlier fixed window | 140 × 140 physical pixels (0.49 mm²) | no subtraction")
+        if not three:
+            ax.legend(frameon=False, fontsize=8.1, loc="best")
+    if three:
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(.52, .891),
+                   ncol=3, frameon=False, fontsize=9)
+    shared.title(fig, "Field energy spectra: old undulator and two free-drift runs" if three
+                 else "Free-drift field energy spectra at 0.5 m",
+                 "Same 140 × 140 physical aperture (0.49 mm²) | complete records | no subtraction" if three
+                 else "18993 moving window vs 18938 earlier fixed window | 140 × 140 physical pixels (0.49 mm²) | no subtraction")
     dc = "DC-bin energy [nJ], rect / Hann: " + "  |  ".join(
         f"{r['summary']['simulation_job']}: "
         f"{metrics[r['name']]['windows']['rect']['dc_native_energy_J']*1e9:.4g} / "
         f"{metrics[r['name']]['windows']['hann']['dc_native_energy_J']*1e9:.4g}"
         for r in runs)
-    shared.footer(fig, [shared.sampling_note(runs) + "; each curve uses its full record and native FFT bins.",
+    shared.footer(fig, [shared.sampling_note(runs),
+        "Each curve keeps its own complete record and native FFT bins; no time cropping, rebinning or amplitude matching.",
         dc + ". DC remains in totals; only the isolated DC point is omitted from curves.",
         "Log scale where every displayed value is positive; signed symlog otherwise. No sign or peak is removed.",
         "Native lab E/B mix stored Yee time layers: this is total-field flux, not simultaneous-field or radiation-only energy.",
-        "Rect: new solid, old dash-dot. Thin dashed: normalized Hann. Dotted 91.5 eV is a target reference, not an identified line.",
+        "Rect: solid (old free drift dash-dot). Thin dashed: normalized Hann. Dotted vertical line: 91.5 eV reference.",
         "The sampled upper limit is Nyquist; high-energy bins do not establish physical or numerical resolution."])
     return shared.save(plt, fig, output, "energy_spectra_comparison")
 
 
 def field_figure(shared, plt, runs, output):
+    three = len(runs) == 3
     fig, axes = plt.subplots(2, 2, figsize=(15, 10.5))
-    fig.subplots_adjust(left=.075, right=.975, top=.85, bottom=.19,
+    fig.subplots_adjust(left=.075, right=.975, top=.80 if three else .85, bottom=.19,
                         hspace=.43, wspace=.25)
     high = max(r["arrays"]["photon_energy_eV"][-1] for r in runs)
     for i, ax in enumerate(axes.flat):
@@ -117,12 +127,19 @@ def field_figure(shared, plt, runs, output):
                ylabel=r"Pixel-averaged squared-field density [(V/m)$^2$/eV]")
         ax.axvline(91.5, color="#5a6572", lw=.75, ls=":")
         ax.grid(alpha=.18, lw=.6)
-        ax.legend(frameon=False, fontsize=8.1, loc="best")
-    shared.title(fig, "Free-drift electric and magnetic field spectra",
-                 "18993 moving window vs 18938 earlier fixed window | sum of three components | same physical aperture")
+        if not three:
+            ax.legend(frameon=False, fontsize=8.1, loc="best")
+    if three:
+        handles, labels = axes[0, 0].get_legend_handles_labels()
+        fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(.52, .891),
+                   ncol=3, frameon=False, fontsize=9)
+    shared.title(fig, "Electric and magnetic spectra: three simulation cases" if three
+                 else "Free-drift electric and magnetic field spectra",
+                 "Old undulator at 4.5 m and two free-drift runs at 0.5 m | same physical aperture" if three
+                 else "18993 moving window vs 18938 earlier fixed window | sum of three components | same physical aperture")
     shared.footer(fig, [shared.sampling_note(runs),
         "E and cB densities are pixel- and record-time-averaged mean squares; they are not radiation energy spectra.",
-        "Rect: new solid, old dash-dot. Thin dashed: Hann / sqrt(mean(window²)); window sensitivity is not an error bar.",
+        "Rect: solid (old free drift dash-dot). Thin dashed: Hann / sqrt(mean(window²)); window sensitivity is not an error bar.",
         "DC is retained in data and metrics. Only DC and exact zeros are omitted from these logarithmic curves.",
         "No mean removal, time interpolation, background subtraction, spectral notch or native time-layer correction.",
         "Nyquist bounds sampled bandwidth; it does not establish high-energy physical or numerical resolution."])
@@ -130,17 +147,28 @@ def field_figure(shared, plt, runs, output):
 
 
 def main():
+    global CASES, EXPECTED, LABELS, COLORS
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input-dir", "--root", dest="input_dir", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--shared-plot", type=Path, default=HERE / "shared_plot.py")
+    parser.add_argument("--include-old-undulator", action="store_true",
+                        help="Add the saved 18932/4.5m spectrum under old_undulator/; preserve native records")
     args = parser.parse_args()
+    if args.include_old_undulator:
+        CASES = (*CASES, "old_undulator")
+        EXPECTED = {**EXPECTED, "old_undulator": (18932, 4.5)}
+        LABELS = {"old_free_drift": "18938 | old free drift | 0.5 m",
+                  "new_free_drift": "18993 | new free drift | 0.5 m",
+                  "old_undulator": "18932 | old undulator | 4.5 m"}
+        COLORS = {**COLORS, "old_undulator": "#a13c72"}
     root = args.input_dir.resolve()
-    output = args.output_dir.resolve() if args.output_dir else root / "figures"
+    output = args.output_dir.resolve() if args.output_dir else root / (
+        "figures_three_cases" if args.include_old_undulator else "figures")
     shared = shared_module(args.shared_plot.resolve())
     runs = [shared.load_run(root, name) for name in CASES]
-    shared.require(np.isclose(runs[0]["summary"]["physical_area_m2"],
-                             runs[1]["summary"]["physical_area_m2"], rtol=2e-13, atol=0),
+    shared.require(all(np.isclose(runs[0]["summary"]["physical_area_m2"],
+                             r["summary"]["physical_area_m2"], rtol=2e-13, atol=0) for r in runs),
                    "Different physical apertures")
     output.mkdir(parents=True, exist_ok=True)
     metrics = {r["name"]: shared.metrics_for(r) for r in runs}
@@ -154,6 +182,9 @@ def main():
         "comparison_time_scope": "Complete recorded series and native frequency bins, without cropping or interpolation. Time-metadata equality below checks saved summaries; raw timestamp identity belongs to the source audit.",
         "full_record_time_metadata_equal": time_metadata_equal,
         "frequency_arrays_equal": bool(frequency_arrays_equal),
+        "time_equality_check_scope": "Only the old/new 0.5m free-drift pair; not the 4.5m undulator",
+        "old_undulator_included": args.include_old_undulator,
+        "old_undulator_record_note": "18932 uses its own 150.795822fs record and native bins; free drift uses 135.179018fs. Same Hann definition, different sample count." if args.include_old_undulator else None,
         "integration_rule": "Sum density times native deltaE for lower <= bin centre < upper; no partial-bin interpolation.",
         "power_definition": "Band energy divided by that run's own Ndt; record-average, not instantaneous peak or repetition-rate average.",
         "hann_definition": "Symmetric Hann / sqrt(mean(w^2)); separate finite-record weighting, not missing-tail recovery or error bars.",

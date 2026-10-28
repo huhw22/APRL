@@ -29,6 +29,16 @@ After reduction, plot.py --input-dir RESULT and review.py --root RESULT read
 only small NPZ/JSON products; they do not reopen the large fields. Inspect PNG
 and PDF exports and check plotted band metrics against INDEPENDENT_REVIEW.json.
 
+Optional three-case view
+Copy the previously validated 18932 summary.json/spectra.npz from
+field_free_drift_spectra_20261028/undulator into RESULT/old_undulator/ after
+checking the original audit hashes. Run plot.py --input-dir RESULT
+--include-old-undulator. Its default output is figures_three_cases/, preserving
+the earlier two-case figures. It adds the 4.5 m old undulator on its own full
+150.795822 fs record and native frequency grid; the 0.5 m runs remain on their
+135.179018 fs records. Hann definition and normalization are unchanged, but
+the undulator's sample count differs. Do not crop, rebin or match amplitudes.
+
 Analysis definition
 Unchanged accepted per-pixel time FFT, then full physical-plane area sum.
 140x140 physical pixels, 5 um pitch, 0.49 mm^2; transverse CPML edges excluded.
