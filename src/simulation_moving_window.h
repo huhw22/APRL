@@ -5,10 +5,12 @@
 #include <memory>
 #include "moving_window_fields.h"
 #include "particle_field_halo.h"
+#include "pending_particle_queue.h"
+#include "pending_particle_statistics.h"
 namespace aprl {
 namespace verification { class BlockedCowanReference; }
 // No full-domain E/B grid is retained. Particle storage deliberately remains
-// the existing complete input in this first integration.
+// the complete input, with upstream waiting particles scheduled separately.
 struct SimulationMovingWindowState {
   EBGridGeometry referenceGeometry;
   FieldVector<Double> referenceOrigin;
@@ -20,6 +22,9 @@ struct SimulationMovingWindowState {
 #endif
   std::unique_ptr<MovingWindowFields> fields;
   std::unique_ptr<EBParticleFieldHalo> particleHalo;
+  std::unique_ptr<PendingParticleQueue> pending;
+  std::unique_ptr<PendingParticleStatistics> pendingStatistics;
+  std::uint64_t admittedParticles = 0;
   std::ofstream ledger;
   unsigned long long exits = 0, croppedCarriers = 0;
   Double exitCharge = 0., croppedCharge = 0.;

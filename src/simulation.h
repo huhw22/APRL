@@ -44,6 +44,7 @@ namespace aprl
       FieldStage, ParticlePrepareStage, ParticleDepositStage,
       ParticleMigrationStage, DiagnosticsStage, ControlStage,
       FieldCommunicationStage, ParticleCommunicationStage,
+      PendingAdmissionStage, MovingWindowStage, PendingStatisticsStage,
       PerformanceStageCount
     };
     struct Slab
@@ -63,6 +64,9 @@ namespace aprl
     void initializeMovingWindow();
     void installMovingWindowBoundary();
     void initializeMovingWindowFields();
+    void admitMovingWindowParticles();
+    std::size_t pendingParticleCount() const;
+    std::size_t storedParticleCount() const;
     EBElectricHaloView beginMovingWindowStep();
     void finishMovingWindowStep();
     void finalizeMovingWindow();

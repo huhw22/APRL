@@ -369,6 +369,12 @@ namespace aprl
         performanceSeconds_[ControlStage] += performanceNow() - stageStart;
         if (requestedStop) break;
 
+        if (config_.mesh.movingWindow.enabled)
+          {
+            stageStart = performanceNow();
+            admitMovingWindowParticles();
+            performanceSeconds_[PendingAdmissionStage] += performanceNow() - stageStart;
+          }
         stageStart = performanceNow();
         Double communicationStart = halo_->communicationSeconds();
         fields_->clearCurrent();
@@ -418,7 +424,12 @@ namespace aprl
 
         timeBoxSI_ += globalGeometry_.dt;
         ++step_;
-        if (config_.mesh.movingWindow.enabled) finishMovingWindowStep();
+        if (config_.mesh.movingWindow.enabled)
+          {
+            const Double movingStart = performanceNow();
+            finishMovingWindowStep();
+            performanceSeconds_[MovingWindowStage] += performanceNow() - movingStart;
+          }
         if (config_.trajectory.enabled &&
             timeBoxSI_ >= nextTrajectorySampleTime_)
           sampleTrajectory();
@@ -1327,6 +1338,10 @@ namespace aprl
         sizeof(RelativisticParticleSI), sizeof(TransferPacket)));
     modeled += static_cast<long double>(ParticleWorkspace::PreparationBatchCapacity) *
       sizeof(ParticleWorkspace::Prepared);
+    if (movingWindow_ && movingWindow_->pending)
+      modeled += movingWindow_->pending->memoryBytes();
+    if (movingWindow_ && movingWindow_->pendingStatistics)
+      modeled += movingWindow_->pendingStatistics->storageBytes();
     if (config_.mesh.ballisticOutsideTransverse &&
         config_.energyLedger.enabled)
       modeled += static_cast<long double>(particles_.size()) *
@@ -1407,7 +1422,7 @@ namespace aprl
                MPI_UNSIGNED_LONG_LONG, MPI_MAX, 0, communicator_);
 
     const unsigned long long localParticles =
-      static_cast<unsigned long long>(particles_.size());
+      static_cast<unsigned long long>(storedParticleCount());
     unsigned long long globalParticles = 0;
     MPI_Reduce(&localParticles, &globalParticles, 1,
                MPI_UNSIGNED_LONG_LONG, MPI_SUM, 0, communicator_);
@@ -2637,19 +2652,19 @@ namespace aprl
         const Double interactionExit = lastBeamlineInteractionExitLab();
         Double localMaximumTime = 0.0;
         int localUnreachable = 0;
-        for (std::size_t index = 0; index < particles_.size(); ++index)
+        const auto considerParticle = [&](const RelativisticParticleSI& particle)
           {
             Double eventTimeLab = 0.0;
             Double eventZLab = 0.0;
-            frame_.boxToLab(0.0, particles_[index].position[2],
+            frame_.boxToLab(0.0, particle.position[2],
                             eventTimeLab, eventZLab);
             const Double remaining = interactionExit - eventZLab;
-            if (remaining <= 0.0) continue;
+            if (remaining <= 0.0) return;
             const Double gammaBox =
               BoostFrameTransform::gammaFromProperVelocity(
-                particles_[index].properVelocity);
+                particle.properVelocity);
             const Double betaBoxZ =
-              particles_[index].properVelocity[2] / gammaBox;
+              particle.properVelocity[2] / gammaBox;
             const Double labAdvancePerBoxSecond =
               frame_.gamma() * SI::c * (frame_.beta() + betaBoxZ);
             if (!(labAdvancePerBoxSecond > 0.0) ||
@@ -2658,7 +2673,11 @@ namespace aprl
             else
               localMaximumTime = std::max(localMaximumTime,
                 remaining / labAdvancePerBoxSecond);
-          }
+          };
+        for (const auto& particle : particles_) considerParticle(particle);
+        if (movingWindow_ && movingWindow_->pending)
+          for (const auto& particle : movingWindow_->pending->initialParticles())
+            considerParticle(particle);
         int globalUnreachable = 0;
         MPI_Allreduce(&localUnreachable, &globalUnreachable, 1, MPI_INT,
                       MPI_MAX, communicator_);
@@ -3310,6 +3329,34 @@ namespace aprl
     Double localMinimumGamma = std::numeric_limits<Double>::infinity();
     Double localMaximumGamma =
       -std::numeric_limits<Double>::infinity();
+    PendingParticleStatisticsSnapshot pending;
+    long double pendingMeanLabZ = 0., pendingVarianceZ = 0., pendingGammaZ = 0.;
+    if (movingWindow_ && movingWindow_->pendingStatistics)
+      {
+        const Double pendingStart = performanceNow();
+        pending = movingWindow_->pendingStatistics->snapshot();
+        if (pending.count)
+          {
+            const long double n = step_ - movingWindow_->pendingStatistics->initialStep();
+            const long double gamma = frame_.gamma();
+            const long double meanZ = pending.mean[2] + n * pending.mean[3];
+            pendingMeanLabZ = static_cast<long double>(frame_.labZOrigin()) +
+              gamma * (meanZ - frame_.boxZOrigin()) +
+              static_cast<long double>(frame_.gammaBeta()) * SI::c * timeBoxSI_;
+            pendingVarianceZ = gamma * gamma * (pending.centered[2][2] +
+              2 * n * pending.centered[2][3] + n * n * pending.centered[3][3]);
+            pendingGammaZ = gamma * (pending.centered[0][2] + n * pending.centered[0][3]);
+            local[0] = pending.kineticEnergy;
+            local[1] = pending.totalEnergy;
+            local[2] = pending.representedWeight;
+            local[3] = pending.representedWeight * pending.mean[0];
+            local[4] = pending.representedWeight * pending.mean[1];
+            local[5] = pending.representedWeight * pendingMeanLabZ;
+            localMinimumGamma = pending.minimumGammaLab;
+            localMaximumGamma = pending.maximumGammaLab;
+          }
+        performanceSeconds_[PendingStatisticsStage] += performanceNow() - pendingStart;
+      }
     for (std::size_t index = 0; index < particles_.size(); ++index)
       {
         const RelativisticParticleSI& particle = particles_[index];
@@ -3355,7 +3402,7 @@ namespace aprl
     MPI_Allreduce(local, global, 18, MPI_LONG_DOUBLE, MPI_SUM,
                   communicator_);
     unsigned long long localCounts[4] = {
-      static_cast<unsigned long long>(particles_.size()),
+      static_cast<unsigned long long>(storedParticleCount()),
       energyLedgerRemovedMacroparticles_, retirementEntryCount_,
       ballisticBoundaryEntries_
     };
@@ -3378,6 +3425,17 @@ namespace aprl
     const long double meanZLab = weight > 0.0L ?
       global[5] / weight : 0.0L;
     long double localCentred[4] = {};
+    if (pending.count)
+      {
+        const long double dg = pending.mean[0] - meanGammaLab;
+        const long double db = pending.mean[1] - meanGammaBox;
+        const long double dz = pendingMeanLabZ - meanZLab;
+        const long double w = pending.representedWeight;
+        localCentred[0] = pending.centered[0][0] + w * dg * dg;
+        localCentred[1] = pending.centered[1][1] + w * db * db;
+        localCentred[2] = std::max(0.0L, pendingVarianceZ) + w * dz * dz;
+        localCentred[3] = pendingGammaZ + w * dg * dz;
+      }
     if (weight > 0.0L)
       for (std::size_t index = 0; index < particles_.size(); ++index)
         {
@@ -5045,7 +5103,7 @@ namespace aprl
       {
         const unsigned long long localFrozen = static_cast<unsigned long long>(
           std::count_if(particles_.begin(), particles_.end(),
-            [](const RelativisticParticleSI& p) { return p.frozen; }));
+            [](const RelativisticParticleSI& p) { return p.frozen; })) + pendingParticleCount();
         unsigned long long globalFrozen = 0;
         unsigned long long globalActivations = 0;
         unsigned long long globalCrossRankPushes = 0;
@@ -5204,23 +5262,26 @@ namespace aprl
                MPI_DOUBLE, MPI_SUM, 0, communicator_);
     MPI_Reduce(localMax, maxima, PerformanceStageCount,
                MPI_DOUBLE_INT, MPI_MAXLOC, 0, communicator_);
-    unsigned long long localCounts[3] = {
-      static_cast<unsigned long long>(particles_.size()), 0, 0
+    unsigned long long localCounts[4] = {
+      static_cast<unsigned long long>(storedParticleCount()), 0,
+      static_cast<unsigned long long>(pendingParticleCount()),
+      static_cast<unsigned long long>(pendingParticleCount())
     };
     for (std::size_t index = 0; index < particles_.size(); ++index)
       ++localCounts[particles_[index].frozen ? 2 : 1];
-    unsigned long long minimumCounts[3] = {}, maximumCounts[3] = {}, sumCounts[3] = {};
-    MPI_Reduce(localCounts, minimumCounts, 3, MPI_UNSIGNED_LONG_LONG,
+    unsigned long long minimumCounts[4] = {}, maximumCounts[4] = {}, sumCounts[4] = {};
+    MPI_Reduce(localCounts, minimumCounts, 4, MPI_UNSIGNED_LONG_LONG,
                MPI_MIN, 0, communicator_);
-    MPI_Reduce(localCounts, maximumCounts, 3, MPI_UNSIGNED_LONG_LONG,
+    MPI_Reduce(localCounts, maximumCounts, 4, MPI_UNSIGNED_LONG_LONG,
                MPI_MAX, 0, communicator_);
-    MPI_Reduce(localCounts, sumCounts, 3, MPI_UNSIGNED_LONG_LONG,
+    MPI_Reduce(localCounts, sumCounts, 4, MPI_UNSIGNED_LONG_LONG,
                MPI_SUM, 0, communicator_);
     if (rank_ == 0)
       {
         static const char* names[PerformanceStageCount] = {
           "field_total", "particle_prepare", "particle_deposit", "particle_migration_total",
-          "diagnostics", "control", "field_communication", "particle_communication"
+          "diagnostics", "control", "field_communication", "particle_communication",
+          "pending_admission", "moving_window_total", "pending_statistics"
         };
         for (int stage = 0; stage < PerformanceStageCount; ++stage)
           {
@@ -5242,7 +5303,9 @@ namespace aprl
           << " active_total=" << sumCounts[1]
           << " active_min=" << minimumCounts[1] << " active_max=" << maximumCounts[1]
           << " frozen_total=" << sumCounts[2]
-          << " frozen_min=" << minimumCounts[2] << " frozen_max=" << maximumCounts[2];
+          << " frozen_min=" << minimumCounts[2] << " frozen_max=" << maximumCounts[2]
+          << " scheduled_pending_total=" << sumCounts[3]
+          << " scheduled_pending_max=" << maximumCounts[3];
         logRoot(communicator_, message.str());
       }
     // Exclude reporting and root's log flush from the following interval on
@@ -5286,7 +5349,9 @@ namespace aprl
       }
 
     const Double interactionExit = lastBeamlineInteractionExitLab();
-    int localNotPast = 0;
+    // Waiting particles are upstream of the inlet and therefore upstream of
+    // the requested last interaction. Do not scan their immutable queue.
+    int localNotPast = pendingParticleCount() ? 1 : 0;
     for (std::size_t index = 0; index < particles_.size(); ++index)
       {
         Double eventTimeLab = 0.0;
@@ -5309,7 +5374,7 @@ namespace aprl
     if (globalNotPast) return false;
 
     const unsigned long long localCounts[2] = {
-      static_cast<unsigned long long>(particles_.size()), localLostParticles_
+      static_cast<unsigned long long>(storedParticleCount()), localLostParticles_
     };
     unsigned long long globalCounts[2] = {};
     MPI_Allreduce(localCounts, globalCounts, 2, MPI_UNSIGNED_LONG_LONG,

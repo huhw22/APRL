@@ -16,6 +16,8 @@ option(APRL_BUILD_HELD_CUT_PROBE
 option(APRL_BUILD_BLOCKED_COWAN_REFERENCE
   "Build the verification-only disk-backed modal Cowan reference generator" OFF)
 if(APRL_ENABLE_MOVING_WINDOW)
+  add_executable(aprl_pending_particle_queue_checks pending_particle_queue_checks.cpp)
+  add_executable(aprl_pending_particle_statistics_checks pending_particle_statistics_checks.cpp)
   add_executable(aprl_moving_detector_checks moving_detector_checks.cpp)
   add_executable(aprl_moving_window_mpi_checks moving_window_mpi_checks.cpp)
   add_executable(aprl_blocked_reference_reader_checks blocked_reference_reader_checks.cpp)
@@ -23,7 +25,8 @@ if(APRL_ENABLE_MOVING_WINDOW)
   add_executable(aprl_particle_field_halo_checks particle_field_halo_checks.cpp)
   foreach(target aprl_moving_detector_checks aprl_moving_window_mpi_checks
                  aprl_blocked_reference_reader_checks aprl_output_directory_mpi_checks
-                 aprl_particle_field_halo_checks)
+                 aprl_particle_field_halo_checks aprl_pending_particle_queue_checks
+                 aprl_pending_particle_statistics_checks)
     target_link_libraries(${target} PRIVATE direct_eb_core)
     target_compile_options(${target} PRIVATE
       $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)

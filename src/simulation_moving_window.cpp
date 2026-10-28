@@ -206,6 +206,37 @@ void Simulation::initializeMovingWindow() {
           MPI_BYTE,0,812,communicator_,MPI_STATUS_IGNORE);
     }
   }
+  // Keep diagnostics upstream of the physical inlet on the original path:
+  // they can observe held trajectories before those trajectories enter PIC.
+  bool schedulePending = true;
+  for (const auto& plane : detectorConfig_.particlePlanes)
+    if (frame_.boxZFromLabZAndBoxT(plane.z, 0.) < windowOrigin)
+      schedulePending = false;
+  for (const auto& plane : detectorConfig_.fieldPlanes)
+    if (plane.particleBackgroundReference) schedulePending = false;
+  if (rank_ == 0 && schedulePending) {
+    PendingWindowGeometry geometry;
+    geometry.referenceOriginZ = w.referenceOrigin[2];
+    geometry.initialOffset = w.initialOffset;
+    geometry.dz = globalGeometry_.dz;
+    geometry.heldDistancePerBeta = SI::c * globalGeometry_.dt;
+    geometry.maximumStep = static_cast<std::size_t>(durationSteps);
+    w.pending.reset(new PendingParticleQueue(geometry));
+    w.pending->extract(particles_);
+    // Do not leave a second full-bunch capacity attached to the active list.
+    std::vector<RelativisticParticleSI>(particles_).swap(particles_);
+    if (config_.energyLedger.enabled)
+      w.pendingStatistics.reset(new PendingParticleStatistics(
+        *w.pending, frame_, geometry.heldDistancePerBeta));
+    std::ostringstream message;
+    message << "Pending admission queue: waiting=" << w.pending->size()
+      << " resident=" << particles_.size()
+      << "; exact repeated-addition held coordinates at admission; no per-step waiting-particle scan; "
+         "pending axial ledger moments use an affine diagnostic trajectory.";
+    logRoot(communicator_, message.str());
+  } else if (rank_ == 0) {
+    logRoot(communicator_, "Pending admission queue disabled: upstream particle/reference diagnostics require the original held traversal.");
+  }
   hasLongitudinalLayoutReport_=false; // The old full/source-domain report is not the moving mesh.
   std::ostringstream name;name<<cfg.referenceDirectory<<"/window-rank-"<<rank_<<".csv";
   w.ledger.open(name.str());if(!w.ledger)throw std::runtime_error("Cannot create moving-volume ledger");
@@ -219,6 +250,17 @@ void Simulation::initializeMovingWindow() {
     if(config_.energyLedger.enabled)logRoot(communicator_,"Moving-volume energy: window-rank-*.csv separately accounts inserted/cropped cell energy; the stationary-volume energy ledger residual alone is not a conservation or radiation estimate.");
   }
 #endif
+}
+
+std::size_t Simulation::pendingParticleCount() const {
+  return movingWindow_ && movingWindow_->pending ? movingWindow_->pending->size() : 0;
+}
+std::size_t Simulation::storedParticleCount() const {
+  return particles_.size() + pendingParticleCount();
+}
+void Simulation::admitMovingWindowParticles() {
+  if (movingWindow_->pending)
+    movingWindow_->admittedParticles += movingWindow_->pending->admit(step_, particles_);
 }
 
 Double Simulation::movingWindowFieldValue(void* context,unsigned a,std::size_t i,std::size_t j,

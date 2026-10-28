@@ -122,6 +122,8 @@ set(DIRECT_EB_SOURCES
   src/particle_field_halo.cpp
   src/particle_file.cpp
   src/particle_initializer.cpp
+  src/pending_particle_queue.cpp
+  src/pending_particle_statistics.cpp
   src/particle_boundary.cpp
   src/runtime_control.cpp
   src/run_metadata.cpp
