@@ -142,7 +142,14 @@ def particle_summary(t, initial, boost, beta):
         coordinate = column(t, axis+'_m')
         before = column(initial, axis+'_m')
         rms, rms0 = weighted_sigma(coordinate, w), weighted_sigma(before, w)
-        result.update({axis+'_centroid_m': float(weighted_mean(coordinate, w)),
+        ui = u[:, 0 if axis == 'x' else 1]
+        ui0 = u0[:, 0 if axis == 'x' else 1]
+        covariance = weighted_mean((coordinate-weighted_mean(coordinate,w))*(ui-weighted_mean(ui,w)),w)
+        covariance0 = weighted_mean((before-weighted_mean(before,w))*(ui0-weighted_mean(ui0,w)),w)
+        result.update({axis+'_u_covariance_m':float(covariance),
+                       axis+'_initial_u_covariance_m':float(covariance0),
+                       axis+'_u_covariance_change_m':float(covariance-covariance0),
+                       axis+'_centroid_m': float(weighted_mean(coordinate, w)),
                        axis+'_rms_m': float(rms), axis+'_initial_rms_m': float(rms0),
                        axis+'_rms_growth_m': float(rms-rms0)})
     return result
@@ -230,9 +237,15 @@ def value(metrics, *names):
     raise RuntimeError('Missing metric '+repr(names))
 
 
-def production_checks(metrics, production, geometry_info, production_log):
+def production_checks(metrics, production, geometry_info, production_log, planned_model=None):
     """Use frozen production files rather than a copied expected-value table."""
     mesh, boundary = production['mesh'], production['boundary']
+    production_model = production['initial_self_field']['model']
+    planned_model = planned_model or production_model
+    require(planned_model in (production_model, 'cowan-relativistic-poisson'),
+            'Unapproved initial-field model in experiment plan')
+    require(metrics['initial_self_field_model'] == planned_model,
+            'Actual initial-field model differs from explicitly frozen plan')
     checks = {
         'boost_gamma': value(metrics,'boost_gamma','gamma_boost') == mesh['boost_gamma'],
         'boost_beta': abs(value(metrics,'boost_beta','beta_boost','window_beta')-geometry_info['beta_boost']) <= 2e-15,
@@ -273,8 +286,43 @@ def production_checks(metrics, production, geometry_info, production_log):
     checks['original_longitudinal_rms_from_production_log'] = metrics['source_sigma_z_cells'] == rms[2]
     scaled_charge = float(charge.group(1))*metrics['sigma_position_cells'][2]/rms[2]
     checks['line_density_preserving_charge_scale'] = abs(metrics['charge_C']/scaled_charge-1) <= 4e-15
-    require(all(checks.values()), 'Production-parameter mismatch: '+repr(checks))
+    require(all(v for k,v in checks.items() if k != 'initial_self_field_model'),
+            'Production-parameter mismatch: '+repr(checks))
+    require(checks['initial_self_field_model'] or planned_model == 'cowan-relativistic-poisson',
+            'Unplanned production initial-field model change')
     return checks
+
+
+def prepared_review(path, metrics):
+    """Audit native samples at a common prepared state, without interpolation."""
+    t=table(path); roi=metrics['prepared_reference_roi']
+    require(set(t) == {'component','i','j','global_k','native_time_box_s','value'},
+            'Prepared-reference CSV schema differs')
+    for key in ('component','i','j','global_k'):
+        require(np.all(t[key] == np.floor(t[key])), 'Noninteger prepared native index')
+    require(np.all((t['component'] >= 0)&(t['component'] < 6)), 'Invalid prepared component')
+    expected_i=range(metrics['cpml_cells'][0]+2,metrics['nx']-metrics['cpml_cells'][0]-2,4)
+    expected_j=range(metrics['cpml_cells'][1]+2,metrics['ny']-metrics['cpml_cells'][1]-2,4)
+    lo=max(0,metrics['reference_offset0_cells']-64)
+    hi=min(metrics['full_nz']-1,metrics['reference_offset0_cells']+metrics['cut_nz']+32)
+    expected_k=range(lo,hi+1,4)
+    require(size(t) == 6*len(expected_i)*len(expected_j)*len(expected_k),
+            'Incomplete prepared-reference region')
+    expected_count=len(expected_i)*len(expected_j)*len(expected_k)
+    keys=set(zip(t['component'],t['i'],t['j'],t['global_k']))
+    require(len(keys) == size(t), 'Duplicate prepared native sample')
+    for component_index in range(6):
+        mask=t['component'] == component_index
+        require(np.count_nonzero(mask) == expected_count, 'Incomplete prepared component')
+        for key,expected in [('i',expected_i),('j',expected_j),('global_k',expected_k)]:
+            require(np.array_equal(np.unique(t[key][mask]),list(expected)),
+                    'Prepared native coordinate mismatch: '+key)
+        target=0 if component_index < 3 else -.5*metrics['dt_s']
+        require(np.all(np.abs(t['native_time_box_s'][mask]-target) <=
+                       4*np.finfo(float).eps*metrics['dt_s']), 'Prepared native time mismatch')
+    return {'rows':size(t),'native_indices_complete_and_unique':True,
+            'state':'E(0), B(-dt/2), native staggered components, no collocation',
+            'metadata':roi,'sha256':digest(path)}
 
 
 def load_world(directory, metrics):
@@ -555,7 +603,7 @@ def main():
         files.append(moment_path)
         base,case = (load_world(directory/name,m) for name in ('full','cut'))
         worlds.extend((base,case))
-        group = tuple(m[name] for name in ('steps','particles','held_prewarm_steps','full_nz','source_moment_sample_sha256'))
+        group = tuple(m[name] for name in ('steps','particles','held_prewarm_steps','full_nz','source_moment_sample_sha256','initial_self_field_model'))
         if group in groups:
             previous = groups[group]
             matching = {}
@@ -568,7 +616,20 @@ def main():
                                  'all_full_control_csv_byte_identical':True,'sha256':matching})
         else:
             groups[group] = directory
-        checked.append({'case':directory.name,'production_parameters':production_checks(m,production,geometry_info,production_log),
+        cli = specification['arguments']
+        require(len(cli) in (4,5,6), 'Unrecognized probe CLI in frozen plan')
+        require([int(cli[0]),int(cli[1]),int(cli[2]),cli[3]] ==
+                [m['steps'],m['particles'],m['held_prewarm_steps'],m['mode']],
+                'Actual scientific settings differ from frozen plan')
+        planned_horizon = int(cli[4]) if len(cli) >= 5 else 64
+        require(m.get('warm_horizon_steps',64) == planned_horizon, 'Preparation geometry horizon differs from plan')
+        planned_model = cli[5] if len(cli) == 6 else production['initial_self_field']['model']
+        checked.append({'case':directory.name,
+                        'production_parameters':production_checks(m,production,geometry_info,production_log,planned_model),
+                        'initial_model_experiment':{'production_model':production['initial_self_field']['model'],
+                            'planned_and_actual_model':planned_model,
+                            'is_production_model':planned_model == production['initial_self_field']['model'],
+                            'scope':'Only the explicitly selected, previously accepted Cowan initial-field option may differ; propagation kernels remain the same.'},
                         'cost_measurements':cost(m)})
         bt = base['tables']; initial = bt['initial-particles']
         require(size(initial) == m['particles'] > 0, 'Initial cohort count differs')
@@ -635,6 +696,7 @@ def main():
             comparisons[-1]['causal_guard_audit']=guard_audit(m,checks_path)
             files.extend((directory/'inlet.csv',checks_path))
             preparation.append({'case':directory.name,'warm_steps':m['held_prewarm_steps'],
+                'initial_self_field_model':m['initial_self_field_model'],
                 'prepared_native_component_L2':m['prepared_reference_native_component_L2'],
                 'prepared_native_component_maximum':m['prepared_reference_native_component_maximum'],
                 'prepared_native_history_L2':m['prepared_reference_history_L2'],
@@ -644,14 +706,14 @@ def main():
                 'inlet_physical_xy_envelope':comparisons[-1]['inlet']['physical_xy_envelope']})
         for previous_directory,previous_metrics in previous_cases:
             if previous_metrics['steps'] < m['steps'] and all(previous_metrics[k] == m[k] for k in
-                    ('mode','held_prewarm_steps','particles','full_nz','cut_nz','source_moment_sample_sha256')):
+                    ('mode','held_prewarm_steps','particles','full_nz','cut_nz','source_moment_sample_sha256','initial_self_field_model')):
                 prefix_replays.append({'case':directory.name,**prefix_review(directory,previous_directory,previous_metrics['steps'])})
                 files.append(previous_directory/'metrics.json')
                 for role in ('full','cut'):
                     files.extend((previous_directory/role).glob('*.csv'))
         for control_directory,control_metrics in control_cases:
             if all(control_metrics[k] == m[k] for k in
-                    ('steps','held_prewarm_steps','particles','full_nz','cut_nz','source_moment_sample_sha256')):
+                    ('steps','held_prewarm_steps','particles','full_nz','cut_nz','source_moment_sample_sha256','initial_self_field_model')):
                 matched=[]
                 for csv_file in sorted((directory/'full').glob('*.csv')):
                     other=control_directory/'full'/csv_file.name
@@ -662,6 +724,9 @@ def main():
                 external_control_replays.append({'case':directory.name,'control_case':str(control_directory),
                                                 'all_full_control_csv_byte_identical':True,'files':matched})
         files += [directory/'metrics.json',directory/'overlap.csv']
+        if 'prepared_reference_roi' in m:
+            comparisons[-1]['prepared_reference_audit'] = prepared_review(directory/'prepared-reference.csv',m)
+            files.append(directory/'prepared-reference.csv')
         for role in ('full','cut'):
             files += list((directory/role).glob('*.csv'))
     require(not args.control_campaign or external_control_replays, 'No matching requested external full control')

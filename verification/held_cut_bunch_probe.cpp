@@ -171,22 +171,26 @@ void particleRow(std::ofstream& out,const RelativisticParticleSI& p,
 
 struct Timing {double initialize=0,prewarm=0,donor=0,full=0,cut=0,feed=0,diagnostics=0;};
 struct Fixture {
-  unsigned steps,particles,warm;std::size_t offset0,nz;
+  unsigned steps,particles,warm,warmHorizon;std::size_t offset0,nz;
   double release,detector,betaMean=0,betaMin=1,betaMax=-1;
   unsigned substeps=1;
   aprl::BoostFrameTransform frame;
   aprl::EBCPMLParameters cpml;
   aprl::SIFieldSourceSet sources;
   std::vector<RelativisticParticleSI> seed;
-  Fixture(unsigned s,unsigned p,unsigned w):steps(s),particles(p),warm(w) {
-    require(s>=16&&s<=128&&p>=16&&p<=1024&&w<=64,"Outside bounded fixture");
-    // Fixed geometry for the paired 90-step / 16-versus-64 held preparation
-    // study. Native Cowan plus transverse-CPML dependency bounds are checked
+  Fixture(unsigned s,unsigned p,unsigned w,unsigned wh=64)
+    :steps(s),particles(p),warm(w),warmHorizon(wh) {
+    require(s>=16&&s<=128&&p>=16&&p<=1024&&wh>=64&&wh<=256&&w<=wh,
+      "Outside bounded fixture");
+    // The explicit preparation horizon fixes one common reference geometry
+    // for all prewarm durations in a convergence series. The default retains
+    // the previous 16-versus-64 fixture exactly. Native Cowan plus transverse-
+    // CPML dependency bounds are checked
     // independently before this fixture is used: lower-end contamination
     // reaches at most n+1 native layers; upper-end contamination n layers.
     // The existing production-shaped cut remains 208 cells. For horizon 90,
     // offset=248,nz=624 also reproduce the earlier 64-step/16-warm geometry.
-    const unsigned horizon=std::max(90u,steps),warmHorizon=64;
+    const unsigned horizon=std::max(90u,steps);
     offset0=2*horizon+warmHorizon+4;
     nz=((offset0+WIDTH+horizon+warmHorizon+4+15)/16)*16;
     release=(offset0+LOWER_GUARD)*DZ;detector=release+LOCAL_PLANE_CELLS*DZ;
@@ -469,16 +473,23 @@ struct World {
   }
 };
 
-void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,const std::string& mode) {
+void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
+         const std::string& mode,unsigned warmHorizon=64,
+         const std::string& initialModel="relativistic-poisson") {
   require(mode=="live"||mode=="frozen","Reference mode must be live or frozen");
-  directory(out);Fixture f(steps,particles,warm);Timing timing;const auto overall=Clock::now();
+  require(initialModel=="relativistic-poisson"||initialModel=="cowan-relativistic-poisson",
+    "Initial model must be relativistic-poisson or cowan-relativistic-poisson");
+  const auto model=initialModel=="cowan-relativistic-poisson"?
+    aprl::InitialSelfFieldModel::CowanRelativisticPoisson:
+    aprl::InitialSelfFieldModel::RelativisticPoisson;
+  directory(out);Fixture f(steps,particles,warm,warmHorizon);Timing timing;const auto overall=Clock::now();
   auto donor=std::unique_ptr<EBFieldGrid>(new EBFieldGrid(geometry(f.nz)));
   donor->setBoundary(std::unique_ptr<aprl::EBBoundaryOperator>(new aprl::EBConvolutionalPML(donor->geometry(),f.nz,0,f.cpml,true,true)));
   MovingWindowRemap donorLayout(donor->geometry(),f.cpml,{-1});
   std::vector<RelativisticParticleSI> before;for(std::size_t i=0;i<f.seed.size();++i)before.push_back(f.held(i,-static_cast<int>(warm)));
   const std::size_t guards[3]={SIDE,SIDE,0};auto begin=Clock::now();
   const auto initialization=aprl::EBGaussFieldInitializer::initialize(*donor,donor->geometry(),0,origin(0),before,
-    aprl::InitialSelfFieldModel::RelativisticPoisson,3e-5,guards,1e-8,10000,MPI_COMM_WORLD,false,true,&f.frame);
+    model,3e-5,guards,1e-8,10000,MPI_COMM_WORLD,false,true,&f.frame);
   timing.initialize=elapsed(begin);std::cout<<"Initialized production-matched fixture: full_nz="<<f.nz<<" cut_nz="<<WIDTH<<" iterations="<<initialization.iterations<<std::endl;
   begin=Clock::now();for(int n=-static_cast<int>(warm);n<0;++n)advanceHeld(*donor,f,n);timing.prewarm=elapsed(begin);
   // This records the actually prepared native state without changing it.
@@ -500,6 +511,31 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
       require(std::isfinite(value),"Nonfinite prepared reference history");sum+=static_cast<long double>(value)*value;
     }
     preparedHistoryNorm[h]=std::sqrt(sum);
+  }
+  // Compare different preparation durations at the same t=0 particle state,
+  // world lattice and native time levels. No interpolation or field mutation
+  // enters this record. Component staggering and physical coordinate mapping
+  // are stated in metrics; these raw samples are not a field-energy measure.
+  const std::size_t preparedFirst=f.offset0>LOWER_GUARD?f.offset0-LOWER_GUARD:0;
+  const std::size_t preparedLast=std::min(f.nz-1,f.offset0+WIDTH+32);
+  const std::size_t preparedXYFirst=SIDE+2,preparedXYStop=NX-SIDE-2,preparedStride=4;
+  std::size_t preparedRows=0;
+  {
+    auto prepared=fresh(out+"/prepared-reference.csv");
+    prepared<<"component,i,j,global_k,native_time_box_s,value\n";
+    for(unsigned a=0;a<6;++a) {
+      const auto& values=component(*donor,a);
+      const double nativeTime=a>=3?-.5*DZ/aprl::SI::c:0.;
+      for(std::size_t k=preparedFirst;k<=preparedLast;k+=preparedStride)
+        for(std::size_t j=preparedXYFirst;j<NY-SIDE-2;j+=preparedStride)
+          for(std::size_t i=preparedXYFirst;i<preparedXYStop;i+=preparedStride) {
+            require(i<values.nx()&&j<values.ny()&&k<values.nz(),
+              "Prepared diagnostic outside native lattice");
+            prepared<<a<<','<<i<<','<<j<<','<<k<<','<<nativeTime<<','<<values(i,j,k)<<'\n';
+            ++preparedRows;
+          }
+    }
+    prepared.flush();require(prepared.good(),"Prepared reference write failed");
   }
   timing.diagnostics+=elapsed(begin);
   Reference reference;reference.fields=donor.get();reference.layout=&donorLayout;reference.frozen=mode=="frozen";reference.beta=f.betaMean;
@@ -585,6 +621,7 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
   double earliest=1e100,latest=-1e100;for(const auto& p:f.seed){const double t=(f.release-p.position[2])/((p.frozenBetaZ+f.frame.beta())*DZ);earliest=std::min(earliest,t);latest=std::max(latest,t);}
   auto metrics=fresh(out+"/metrics.json");
   metrics<<"{\n\"format\":\"aprl-held-cut-bunch-v1\",\"completed\":true,\"mode\":\""<<mode<<"\",\"steps\":"<<steps<<",\"particles\":"<<particles<<",\"held_prewarm_steps\":"<<warm
+    <<",\"warm_horizon_steps\":"<<f.warmHorizon
     <<",\"compute_threads\":"<<aprl::computeThreadCount()<<",\"nx\":"<<NX<<",\"ny\":"<<NY<<",\"full_nz\":"<<f.nz<<",\"cut_nz\":"<<WIDTH<<",\"dx_m\":"<<DX<<",\"dy_m\":"<<DY<<",\"dz_m\":"<<DZ<<",\"dt_s\":"<<DZ/aprl::SI::c
     <<",\"reference_offset0_cells\":"<<f.offset0<<",\"reference_causal_lower_margin_cells\":"<<f.offset0-(2*steps+warm+2)<<",\"reference_causal_upper_margin_cells\":"<<f.nz-(f.offset0+WIDTH)-(steps+warm+1)
     <<",\"boost_gamma\":"<<BOOST_GAMMA<<",\"window_beta\":"<<f.frame.beta()<<",\"particle_beta_mean\":"<<f.betaMean<<",\"particle_beta_min\":"<<f.betaMin<<",\"particle_beta_max\":"<<f.betaMax
@@ -592,7 +629,7 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
     <<",\"lab_u_mean_parameter\":["<<LAB_U_MEAN[0]<<','<<LAB_U_MEAN[1]<<','<<LAB_U_MEAN[2]<<"],\"lab_u_sigma_parameter\":["<<LAB_U_SIGMA[0]<<','<<LAB_U_SIGMA[1]<<','<<LAB_U_SIGMA[2]<<"],\"transverse_position_u_correlation_parameter\":["<<TRANSVERSE_CORRELATION[0]<<','<<TRANSVERSE_CORRELATION[1]<<']'
     <<",\"source_moment_sample_records\":65536,\"source_moment_sample_sha256\":\"4126d7f252fe71934892e063bd9a263070d3227e718d4b70e7990129182f05d3\",\"source_moment_sample_path\":\"results/held_cut_20261028/source-moment-sample.json\""
     <<",\"cpml_cells\":[10,10,0],\"cpml_order\":3,\"cpml_kappa\":8,\"cpml_alpha\":0,\"cpml_reflection\":1e-8,\"lower_guard_cells\":64,\"upper_guard_cells\":128,\"particle_substeps\":"<<f.substeps
-    <<",\"initial_self_field_model\":\"relativistic-poisson\",\"initial_tolerance\":1e-8,\"initial_maximum_iterations\":10000,\"initial_maximum_mean_transverse_beta\":3e-5"
+    <<",\"initial_self_field_model\":\""<<initialModel<<"\",\"initial_tolerance\":1e-8,\"initial_maximum_iterations\":10000,\"initial_maximum_mean_transverse_beta\":3e-5"
     <<",\"undulator_K\":1.092714657005,\"undulator_period_m\":0.0234,\"undulator_periods\":170,\"undulator_entrance_lab_m\":0,\"undulator_polarization_rad\":1.5707963267948966,\"undulator_gaussian_fringe\":true,\"undulator_fringe_cutoff\":1e-9"
     <<",\"activation_plane_lab_m\":"<<RELEASE_LAB<<",\"auxiliary_plane_lab_m\":"<<f.frame.labZFromBoxZT(f.detector,0.)<<",\"production_detector_lab_m\":4.5,\"production_detector_reached\":false"
     <<",\"source_release_step_min\":"<<earliest<<",\"source_release_step_max\":"<<latest<<",\"full_maximum_lab_z_m\":"<<full.maximumLabZ<<",\"cut_maximum_lab_z_m\":"<<cut.maximumLabZ
@@ -603,6 +640,10 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
     <<",\"initial_iterations\":"<<initialization.iterations<<",\"initial_relative_residual\":"<<initialization.relativeResidual<<",\"initial_temporary_bytes\":"<<initialization.temporaryBytes
     <<",\"prepared_reference_native_component_L2\":["<<preparedNorm[0]<<','<<preparedNorm[1]<<','<<preparedNorm[2]<<','<<preparedNorm[3]<<','<<preparedNorm[4]<<','<<preparedNorm[5]<<']'
     <<",\"prepared_reference_native_component_maximum\":["<<preparedMaximum[0]<<','<<preparedMaximum[1]<<','<<preparedMaximum[2]<<','<<preparedMaximum[3]<<','<<preparedMaximum[4]<<','<<preparedMaximum[5]<<']'
+    <<",\"prepared_reference_roi\":{\"file\":\"prepared-reference.csv\",\"global_k_first\":"<<preparedFirst<<",\"global_k_last_inclusive\":"<<preparedLast
+    <<",\"xy_first_index\":"<<preparedXYFirst<<",\"x_stop_exclusive\":"<<preparedXYStop<<",\"y_stop_exclusive\":"<<NY-SIDE-2
+    <<",\"stride_all_axes\":"<<preparedStride<<",\"rows\":"<<preparedRows
+    <<",\"origin_m\":["<<origin(0)[0]<<','<<origin(0)[1]<<",0],\"native_stagger_cells\":[[0.5,0,0],[0,0.5,0],[0,0,0.5],[0,0.5,0.5],[0.5,0,0.5],[0.5,0.5,0]],\"contract\":\"Direct native E(0), B(-dt/2) samples in the same world ROI; component numbers Ex,Ey,Ez,Bx,By,Bz; electric values V/m, magnetic values T; no resampling, physical-energy or field-collocation claim\"}"
     <<",\"prepared_reference_history_L2\":[";
   for(unsigned h=0;h<12;++h)metrics<<(h?",":"")<<preparedHistoryNorm[h];
   metrics<<']'
@@ -621,7 +662,8 @@ void run(const std::string& out,unsigned steps,unsigned particles,unsigned warm,
 int main(int argc,char** argv) {
   int provided=0;MPI_Init_thread(&argc,&argv,MPI_THREAD_FUNNELED,&provided);
   int size=0;MPI_Comm_size(MPI_COMM_WORLD,&size);
-  try {aprl::configureComputeThreads(provided);require(size==1,"Held cut research requires one MPI rank");require(argc==6,"Usage: aprl_held_cut_probe OUT STEPS PARTICLES PREWARM live|frozen");
-    run(argv[1],std::stoul(argv[2]),std::stoul(argv[3]),std::stoul(argv[4]),argv[5]);MPI_Finalize();return 0;
+  try {aprl::configureComputeThreads(provided);require(size==1,"Held cut research requires one MPI rank");require(argc>=6&&argc<=8,"Usage: aprl_held_cut_probe OUT STEPS PARTICLES PREWARM live|frozen [WARM_HORIZON [INITIAL_MODEL]]");
+    run(argv[1],std::stoul(argv[2]),std::stoul(argv[3]),std::stoul(argv[4]),argv[5],
+      argc>=7?std::stoul(argv[6]):64,argc>=8?argv[7]:"relativistic-poisson");MPI_Finalize();return 0;
   }catch(const std::exception& e){std::cerr<<e.what()<<std::endl;MPI_Abort(MPI_COMM_WORLD,1);return 1;}
 }

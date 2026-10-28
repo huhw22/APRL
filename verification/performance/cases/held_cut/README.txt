@@ -46,7 +46,12 @@ fronts. This is dynamic propagation only, not independence of the initial
 elliptic solve from its finite-domain boundary.
 
 Probe CLI:
-  aprl_held_cut_probe OUT STEPS PARTICLES PREWARM live|frozen
+  aprl_held_cut_probe OUT STEPS PARTICLES PREWARM live|frozen \
+    [WARM_HORIZON [INITIAL_MODEL]]
+Defaults remain64 and relativistic-poisson. The bounded optional horizon is
+64..256; the only additional initializer is the already implemented
+cowan-relativistic-poisson. Its selection is an explicit research variant,
+not a change to the production card or propagation kernels.
 All science cases contain BOTH actual full and cut PIC worlds, with the same
 prepared initial fields and identical prescribed release states.
   live: an independent held-source full grid evolves the reference; it never
@@ -67,11 +72,16 @@ simultaneous laboratory E/B or a Poynting-flux measurement. Plane pixels are
 sparse, not a full-plane power integration.
 
 For paired prewarm tests the full geometry is selected from a shared horizon
-max(90,STEPS) and maximum allowed prewarm64; the width remains208. At64/90steps
+max(90,STEPS) and the selected prewarm horizon (default64); the width remains208. At64/90steps
 the full grid is624, initial window offset248. This exactly retains the earlier
 64-step fixture while allowing90steps/64prewarm with proven dynamic clearance.
 Prewarm variation leaves release positions/momenta and the full/cut geometry
 fixed. Do not call it a scan of production physical guards or solver parameters.
+With WARM_HORIZON256 the90step complete reference has1008 cells and offset440;
+all64/128/256prewarm and Cowan0 variants share that geometry. This is reference
+padding for the experiment, not expansion of the208cell candidate window.
+prepared-reference.csv records sampled native fields at time0 for same-source,
+same-phase preparation comparisons. It does not replace future-inlet diagnostics.
 
 run.py prepare freezes binaries, source snapshots, production card/log,
 moment sample and scripts into a NEW directory. run.py run refuses reuse,
@@ -79,6 +89,8 @@ checks hashes and physical-core binding, and executes cases serially. gnode1
 mode is the authorized CPU-only1MPI<=16threads exception,180s/case/2h total.
 Slurm mode reserves one exclusive128CPU node, uses1MPIx16threads per step,
 600s/case/25min total; run.sbatch requests no specific node and no requeue.
+The optional --case-timeout-s 1200 is for a single slower Slurm initializer
+within the same25min job limit; default600 and gnode1's180 remain unchanged.
 The single-rank production Poisson initializer is serial even when the field
 steps use16threads. Do not relax its tolerance to fit the gnode1 time limit.
 
@@ -97,4 +109,27 @@ reference. Whole-undulator weak-radiation phase, true4.5m plane, long-time
 particle exit, multi-rank exchange and production checkpoint remain separate
 acceptance stages.
 
+Particle-sampling limitation: the64particle shortened source preserves scaled
+charge and Gaussian line density, but represents about494.92 electrons per
+macro-particle; the production input represents1 electron per record. Matching
+its weight at this shortened charge requires about31675 particles. The sparse
+fixture can validate interfaces and compare reference models on identical
+sources; it cannot alone accept or reject production quasi-steady accuracy.
+Possible CIC granularity effects require a separate sampling convergence test.
+
+The follow-up convergence study separates preparation sensitivity, subsequent
+frozen prediction error, full-control sensitivity, and the extra effect of the
+cut. Exact pointwise replay of one held history is not the sole physical goal;
+particle energy/beam moments and persistent field disturbances must be measured.
+No blanket physical-pass threshold is inferred from the existing held spread.
+
 Results: /public/home/wfollowm/APRL_Workspace/results/held_cut_20261028/
+Follow-up: /public/home/wfollowm/APRL_Workspace/results/held_quasisteady_20261028/
+Its offline preparation/ballistic figures can be regenerated into a NEW directory:
+  python3 convergence_review.py --root NEW_REVIEW_DIRECTORY \
+    --campaign /public/home/wfollowm/APRL_Workspace/results/held_quasisteady_20261028/preflight \
+    --campaign /public/home/wfollowm/APRL_Workspace/results/held_quasisteady_20261028/long-held \
+    --campaign /public/home/wfollowm/APRL_Workspace/results/held_quasisteady_20261028/cowan
+The default horizon256 excludes the legacy-geometry replay case. Optional
+--geometry-control OLD_CASE_DIRECTORY reports finite-domain sensitivity
+separately. This script reads existing data and never starts a simulation.

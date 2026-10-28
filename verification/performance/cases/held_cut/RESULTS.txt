@@ -42,3 +42,47 @@ accepted. Native plane differences are not collocated lab E/B or radiative
 Poynting power. Auxiliary plane is not production4.5m detector. These cases
 do not exercise actual right-particle exits or multi-rank communication.
 Source, default executable and production remain unchanged. No remote push.
+
+Follow-up: preparation convergence and prior quasi-steady reference
+----------------------------------------------------------------
+2026-10-28 results/held_quasisteady_20261028/RESULT_REVIEW.txt and final-review/
+contain the follow-up. Jobs18950/18951/18952 completed0:0. The new readonly
+prepared-state diagnostic preserves all12 old scientific CSVs byte-for-byte.
+All main cases use the same160²/full1008/offset440/cut208,90steps,64particles;
+the only explicit reference-model variant is existing CowanRelativisticPoisson.
+
+Preparation64/128/256 did not demonstrate convergence. Near-source3D prepared
+field differences64->128 and128->256 remain E23.22/24.94%,B97.14/105.08%.
+These compare different preparations at a common time/source state, not a
+single evolving time series or measured radiation power. Central B amplitude
+does not simply grow by the quoted relative-difference percentages.
+
+                            pairedE    pairedB   auxiliary energy errorRMS
+legacy held64 frozen        17.456%    32.237%     2.53181eV
+legacy held128 frozen       18.121%    37.618%     3.76878eV
+legacy held256 frozen       21.702%    35.654%     3.85569eV
+Cowan quasi-steady0 frozen   9.910%     6.330%      .67415eV
+Cowan extra mean auxiliary energy is+.057527eV. Long-held controls themselves
+vary; Cowan cut-vs-long-held full includes substantial initial-state choice
+differences. Neither longest held nor its unconverged scatter defines truth
+or an automatic physical acceptance threshold.
+
+The auxiliary plane is strictly upstream of the compact magnetic fringe,
+including a whole-step event-interpolation clearance. An analytic no-grid-field
+ballistic baseline at that plane removes the strong initial focusing trend.
+Cowan full/cut self-field RMS-width increments are0.807120/0.807860pm(x),
+0.618558/0.618320pm(y), errors relative to these small increments+.0918%/-.0384%.
+This measures the existing grid-self-field response, including numerical
+effects; not a proof of pure-space-charge or long-time weak-radiation accuracy.
+
+The source is sparse:494.92electrons/macro-particle versus production1. About
+31675 particles would retain production weight at this shortened charge.
+Sampling convergence is still outstanding. Thus the prior quasi-steady route
+is promising for the target dynamics; exact replay of held is not its sole
+gate, but it is still not integrated/accepted for production.
+
+Cowan preparation cost556.9s (single-rank serial initializer) is greater than
+legacy262--265s plus14--56s held preparation; online cut~11.33s vs full24.84s.
+No total production speedup claimed. The slower initializer used a separately
+bounded1200s Slurm case within the same1500s job limit; it finished617s overall.
+No new simulation, rank integration, default switch or remote push followed.

@@ -37,6 +37,9 @@ def prepare(args):
     root = args.root.resolve()
     require(not root.exists(), 'Use a fresh result directory')
     require(1 <= args.threads <= 16, 'Physical CPU budget exceeded')
+    case_limit = args.case_timeout_s or (600 if args.environment == 'slurm' else 180)
+    require(case_limit in ((600, 1200) if args.environment == 'slurm' else (180,)),
+            'Unsupported bounded case timeout')
     binary = args.binary.resolve()
     checks = args.checks.resolve() if args.checks else None
     binding = WORK / ('build/cluster-tools/binding_probe' if args.environment == 'slurm'
@@ -78,7 +81,7 @@ def prepare(args):
             'binary':str(binary), 'checks':str(checks) if checks else None,
             'binding':str(binding), 'threads':args.threads, 'ranks':1,
             'environment':args.environment,
-            'case_timeout_s':600 if args.environment == 'slurm' else 180,
+            'case_timeout_s':case_limit,
             'total_timeout_s':1500 if args.environment == 'slurm' else 7200,
             'source_base':subprocess.check_output(['git','-C',str(SOURCE),'rev-parse','HEAD'],text=True).strip(),
             'scope':'Production constants, shortened generated bunch and run; no production switch, no speed claim'}
@@ -155,7 +158,7 @@ def run(args):
                 os.environ.get('APRL_ALLOW_UNSCHEDULED_CPU_TESTS') == '1' and
                 not os.environ.get('SLURM_JOB_ID'),'Requires authorized gnode1 CPU session')
     require(plan['ranks'] == 1 and 1 <= plan['threads'] <= 16 and
-            plan['case_timeout_s'] == (600 if scheduled else 180) and
+            plan['case_timeout_s'] in ((600, 1200) if scheduled else (180,)) and
             plan['total_timeout_s'] == (1500 if scheduled else 7200),'Budget changed')
     with (WORK/'results/node_survey/.cpu-calibration.lock').open('a') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
@@ -213,6 +216,8 @@ if __name__ == '__main__':
     p.add_argument('--checks',type=Path)
     p.add_argument('--threads',type=int,default=16)
     p.add_argument('--environment',choices=('gnode1','slurm'),default='gnode1')
+    p.add_argument('--case-timeout-s',type=int,choices=(180,600,1200),
+                   help='Slurm-only1200s option for a single slower initializer; default600s. gnode1 remains180s.')
     p.add_argument('--case',action='append')
     p = sub.add_parser('run')
     p.add_argument('--root',type=Path,required=True)
