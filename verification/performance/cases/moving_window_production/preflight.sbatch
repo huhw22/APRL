@@ -15,9 +15,12 @@ source /public/home/wfollowm/APRL_Workspace/cluster.env
 mkdir "$root/preflight"
 cd "$root"
 trap 'code=$?; printf "%s\n" "$code" > preflight/EXIT_CODE' EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 scontrol show job "$SLURM_JOB_ID" > preflight/allocation.txt
 export OMP_NUM_THREADS=8 OMP_DYNAMIC=FALSE OMP_PLACES=cores OMP_PROC_BIND=close
 export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 APRL_PROFILE_INTERVAL=0
+export OMPI_MCA_btl=self,vader,tcp OMPI_MCA_btl_openib_warn_no_device_params_found=0
 for case in undulator_4p5m free_drift_0p5m; do
   timeout --signal=TERM --kill-after=15 240 srun --mpi=none --exact --nodes=1 --ntasks=1 --cpus-per-task=1 --cpu-bind=cores \
     "$PYTHON_BIN" "$root/scripts/geometry.py" --verify-plan "$root/$case/geometry-plan.json" \

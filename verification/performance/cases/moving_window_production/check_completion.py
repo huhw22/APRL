@@ -173,6 +173,12 @@ def check(root):
                     field_card['z'] == .5, 'Free drift has prescribed fields or wrong plane')
         log = (root / 'aprl.log').read_text(errors='replace')
         require('Simulation failure' not in log and 'mesh.duration was exhausted' not in log, 'Run failed or exhausted duration')
+        if plan.get('expected_pending_queue'):
+            pending = re.findall(r'Pending admission queue: waiting=(\d+) resident=(\d+);', log)
+            require(len(pending) == 1 and 0 < int(pending[0][0]) < plan['records'],
+                    'Accepted pending admission queue was not enabled')
+            report['pending_queue'] = dict(enabled=True, initial_waiting=int(pending[0][0]),
+                                          inlet_rank_resident=int(pending[0][1]))
         stop = re.findall(r'Configured stop reached: all (\d+) valid particles passed the last interaction boundary at z=([^ ]+) m', log)
         require(len(stop) == 1 and int(stop[0][0]) > 0 and
                 np.isclose(float(stop[0][1]), field_card['z'], rtol=2e-6, atol=0), 'Missing expected physical stop')

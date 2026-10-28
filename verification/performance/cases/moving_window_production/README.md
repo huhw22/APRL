@@ -39,8 +39,38 @@ Preparation and execution:
    then stop monitoring until requested. Completion checking runs inside the
    existing job allocation; spectra are not computed automatically.
 
+For the accepted pending-admission version, reuse the completed acceptance and
+the unchanged cancelled campaign instead of repeating the earlier preflight:
+
+```bash
+python prepare.py --workspace <workspace> \
+  --root <workspace>/results/moving_window_comparison_20261029 \
+  --accepted-source <workspace>/results/pending_admission_20261028/SOURCE_FINAL.json \
+  --reuse-campaign <workspace>/results/moving_window_production_20261028
+```
+
+This path verifies the accepted binary, core-file and proof hashes, the old
+frozen cards, completed full-input geometry, input hash and unchanged file stat.
+It copies the two moving cards with only output/reference paths replaced and
+checks equality after normalizing those paths. `preflight/PASS.json` explicitly
+records **accepted evidence reuse**, not a newly executed preflight. Production
+still runs the actual 16×8 binding probe on its allocated host. Confirm the
+`Pending admission queue: waiting=...` startup line; final completion also checks
+that the queue was enabled. The exact compiled revision comes from an accepted
+run manifest, preserving its full hash and dirty suffix.
+
+Both Slurm scripts restore the old per-job `OMPI_MCA_btl=self,vader,tcp` and
+`OMPI_MCA_btl_openib_warn_no_device_params_found=0` settings. System MPI settings
+are unchanged. TERM/INT exit nonzero, and the original 600/60-second shutdown
+watchdog and 144-hour production allocation remain in place.
+
 `check_completion.py` checks normal physical termination and diagnostic integrity.
 Its PASS is not a claim of pure radiation, near-field separation or full-scale
 physical equivalence. The first full-scale moving-window pair is intended to
-provide the field data for the subsequent comparison. All pending particles are
-still held on the inlet rank and scanned; particle streaming is outside this run.
+provide the field data for the subsequent comparison. With the accepted pending
+version, waiting particles use event admission and cached statistics instead of
+per-step full-list scans. All source particles still remain in memory; particle
+streaming and memory refinement are outside this run. Earlier short/full-input
+timing acceptance does not establish full-run speedup or radiation equivalence.
+
+Before submitting the prepared replacement pair, run `python3 scripts/prepare_comparison.py --root <campaign>` from the campaign directory (or use its absolute script path). It records `COMPARISON_PLAN.json`, verifies the old18932/18938 field metadata against the completed spectral audit, and fixes the requested comparison scope. It does not rerun a simulation, scan the full old field payload, or compute a new spectrum. The protocol retains raw lab E/B, the common140×140 physical aperture, native time staggering and DC, compares common-time and full-record spectra separately when lengths differ, and does not impose bitwise equality or invent a percentage physics acceptance threshold. Particle streaming and memory reclamation remain outside this round.

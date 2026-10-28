@@ -17,11 +17,14 @@ source /public/home/wfollowm/APRL_Workspace/cluster.env
 cd "$root"
 finish() { code=$?; trap - EXIT; printf '%s\n' "$code" > EXIT_CODE; date --iso-8601=seconds > JOB_ENDED_AT; exit "$code"; }
 trap finish EXIT
+trap 'exit 143' TERM
+trap 'exit 130' INT
 date --iso-8601=seconds > JOB_STARTED_AT
 scontrol show job "$SLURM_JOB_ID" > allocation.txt
 export OMP_NUM_THREADS=8 OMP_DYNAMIC=FALSE OMP_PLACES=cores OMP_PROC_BIND=close
 export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 APRL_PROFILE_INTERVAL=0
 export HDF5_USE_FILE_LOCKING=FALSE
+export OMPI_MCA_btl=self,vader,tcp OMPI_MCA_btl_openib_warn_no_device_params_found=0
 ulimit -s unlimited
 binary=$("$PYTHON_BIN" -c 'import json,sys;print(json.load(open(sys.argv[1]))["binary"])' run-plan.json)
 export LD_LIBRARY_PATH="$(dirname "$binary")/runtime-libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
@@ -42,7 +45,9 @@ st=Path(p['input_file']).stat()
 assert (st.st_size,st.st_mtime_ns)==(p['input_size_bytes'],p['input_mtime_ns'])
 assert passed['input_sha256']==p['input_sha256']
 print(json.dumps({'pass':True,'binary_sha256':p['binary_sha256'],'input_sha256_preflight':passed['input_sha256'],
- 'unchanged_input_stat':True,'slurm_job_id':os.environ['SLURM_JOB_ID'],'nodes':os.environ['SLURM_JOB_NODELIST']}))
+ 'unchanged_input_stat':True,'slurm_job_id':os.environ['SLURM_JOB_ID'],'nodes':os.environ['SLURM_JOB_NODELIST'],
+ 'mpi_environment':{k:os.environ[k] for k in ('OMPI_MCA_btl','OMPI_MCA_btl_openib_warn_no_device_params_found')},
+ 'expected_pending_queue':p.get('expected_pending_queue',False)}))
 PY
 step=(srun --mpi="$SRUN_MPI" --exact --nodes=1 --ntasks=16 --ntasks-per-node=16 --cpus-per-task=8 --cpu-bind=cores --kill-on-bad-exit=1)
 timeout --signal=TERM --kill-after=30s 120s "${step[@]}" --wait=30 --chdir="$root" \
