@@ -93,6 +93,11 @@ namespace aprl
       upperEx(0), upperEy(0), upperEz(0)
   {}
 
+  EBParticleInterpolationHaloView::EBParticleInterpolationHaloView()
+    : lowerEz(0), lowerBx(0), lowerBy(0),
+      upperEz(0), upperBx(0), upperBy(0)
+  {}
+
   YeeComponent::YeeComponent() : nx_(0), ny_(0), nz_(0), values_()
   {}
 
@@ -772,12 +777,49 @@ namespace aprl
       FieldVector<Double>& electric,
       FieldVector<Double>& magnetic) const
   {
+    if (hasParticleInterpolationHalo())
+      {
+        const EBParticleInterpolationHaloView& h = particleInterpolationHalo_;
+        electric[0] = sampleComponent(ex_, positionSI, originSI, 0.5, 0.0, 0.0);
+        electric[1] = sampleComponent(ey_, positionSI, originSI, 0.0, 0.5, 0.0);
+        electric[2] = sampleComponentWithParticleHalo(
+          ez_, positionSI, originSI, 0.0, 0.0, h.lowerEz, h.upperEz);
+        magnetic[0] = sampleComponentWithParticleHalo(
+          bx_, positionSI, originSI, 0.0, 0.5, h.lowerBx, h.upperBx);
+        magnetic[1] = sampleComponentWithParticleHalo(
+          by_, positionSI, originSI, 0.5, 0.0, h.lowerBy, h.upperBy);
+        magnetic[2] = sampleComponent(bz_, positionSI, originSI, 0.5, 0.5, 0.0);
+        return;
+      }
     electric[0] = sampleComponent(ex_, positionSI, originSI, 0.5, 0.0, 0.0);
     electric[1] = sampleComponent(ey_, positionSI, originSI, 0.0, 0.5, 0.0);
     electric[2] = sampleComponent(ez_, positionSI, originSI, 0.0, 0.0, 0.5);
     magnetic[0] = sampleComponent(bx_, positionSI, originSI, 0.0, 0.5, 0.5);
     magnetic[1] = sampleComponent(by_, positionSI, originSI, 0.5, 0.0, 0.5);
     magnetic[2] = sampleComponent(bz_, positionSI, originSI, 0.5, 0.5, 0.0);
+  }
+
+  void EBFieldGrid::setParticleInterpolationHalo(
+      const EBParticleInterpolationHaloView& halo)
+  {
+    if ((halo.lowerEz || halo.lowerBx || halo.lowerBy) &&
+        !(halo.lowerEz && halo.lowerBx && halo.lowerBy))
+      throw std::invalid_argument("Particle lower halo needs Ez, Bx and By");
+    if ((halo.upperEz || halo.upperBx || halo.upperBy) &&
+        !(halo.upperEz && halo.upperBx && halo.upperBy))
+      throw std::invalid_argument("Particle upper halo needs Ez, Bx and By");
+    particleInterpolationHalo_ = halo;
+  }
+
+  void EBFieldGrid::clearParticleInterpolationHalo()
+  {
+    particleInterpolationHalo_ = EBParticleInterpolationHaloView();
+  }
+
+  bool EBFieldGrid::hasParticleInterpolationHalo() const
+  {
+    return particleInterpolationHalo_.lowerEz ||
+      particleInterpolationHalo_.upperEz;
   }
 
   RadiationFieldSample EBFieldGrid::radiationSamplePositionLab(
@@ -951,6 +993,76 @@ namespace aprl
             const Double weightZ = c ? fraction[2] : 1.0 - fraction[2];
             value += weightX * weightY * weightZ *
               component(lower[0] + a, lower[1] + b, lower[2] + c);
+          }
+    return value;
+  }
+
+  Double EBFieldGrid::sampleComponentWithParticleHalo(
+      const YeeComponent& component,
+      const FieldVector<Double>& positionSI,
+      const FieldVector<Double>& originSI,
+      Double offsetX, Double offsetY,
+      const Double* lowerPlane, const Double* upperPlane) const
+  {
+    const Double z = (positionSI[2] - originSI[2]) / geometry_.dz - 0.5;
+    const Double last = static_cast<Double>(component.nz() - 1);
+    if (!((lowerPlane && z < 0.0) || (upperPlane && z > last)))
+      return sampleComponent(component, positionSI, originSI,
+                             offsetX, offsetY, 0.5);
+
+    // Same native trilinear weights and accumulation order as sampleComponent.
+    // Only the missing half-cell neighbour replaces the local edge clamp.
+    const Double lattice[3] = {
+      (positionSI[0] - originSI[0]) / geometry_.dx - offsetX,
+      (positionSI[1] - originSI[1]) / geometry_.dy - offsetY, z
+    };
+    const std::size_t sizes[3] = {component.nx(), component.ny(),
+                                 component.nz()};
+    std::size_t lower[2];
+    Double fraction[3];
+    for (unsigned int axis = 0; axis < 3; ++axis)
+      {
+        if (!std::isfinite(lattice[axis]) ||
+            lattice[axis] < -0.5 - 64.0 * std::numeric_limits<Double>::epsilon() ||
+            lattice[axis] > static_cast<Double>(sizes[axis]) - 0.5 +
+                            64.0 * std::numeric_limits<Double>::epsilon())
+          throw std::out_of_range(
+            "Particle halo interpolation position is outside its local slab");
+        if (axis == 2) continue;
+        if (lattice[axis] <= 0.0)
+          {
+            lower[axis] = 0;
+            fraction[axis] = 0.0;
+          }
+        else if (lattice[axis] >= static_cast<Double>(sizes[axis] - 1))
+          {
+            lower[axis] = sizes[axis] - 2;
+            fraction[axis] = 1.0;
+          }
+        else
+          {
+            lower[axis] = static_cast<std::size_t>(std::floor(lattice[axis]));
+            fraction[axis] = lattice[axis] - static_cast<Double>(lower[axis]);
+          }
+      }
+    const std::ptrdiff_t lowerZ = z < 0.0 ? -1 :
+      static_cast<std::ptrdiff_t>(component.nz()) - 1;
+    fraction[2] = z - static_cast<Double>(lowerZ);
+    Double value = 0.0;
+    for (unsigned int c = 0; c < 2; ++c)
+      for (unsigned int b = 0; b < 2; ++b)
+        for (unsigned int a = 0; a < 2; ++a)
+          {
+            const Double weightX = a ? fraction[0] : 1.0 - fraction[0];
+            const Double weightY = b ? fraction[1] : 1.0 - fraction[1];
+            const Double weightZ = c ? fraction[2] : 1.0 - fraction[2];
+            const std::size_t i = lower[0] + a, j = lower[1] + b;
+            const std::ptrdiff_t k = lowerZ + static_cast<std::ptrdiff_t>(c);
+            const Double sample = k < 0 ? lowerPlane[j * component.nx() + i] :
+              (k >= static_cast<std::ptrdiff_t>(component.nz()) ?
+                upperPlane[j * component.nx() + i] :
+                component(i, j, static_cast<std::size_t>(k)));
+            value += weightX * weightY * weightZ * sample;
           }
     return value;
   }

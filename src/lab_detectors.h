@@ -76,6 +76,14 @@ namespace aprl
      * no-crossing steps. */
     void collectParticleCrossings();
 
+    /* Update a longitudinally translated grid after a complete-step remap,
+     * before sampleFieldPlanes. Geometry and the MPI z-slab layout must stay
+     * fixed; x/y origins cannot change because the laboratory pixel aperture
+     * is fixed when the writers open. This performs no communication and
+     * does not rebase the Lorentz frame, detector cadence or stored events. */
+    void updateGridOrigins(const FieldVector<Double>& globalOriginBox,
+                           const FieldVector<Double>& localOriginBox);
+
     /* Sample due fixed-z field planes with the global Yee interpolation
      * stencil. The owning rank obtains one adjacent Ez/Bx/By layer only when
      * the stencil crosses an internal z-slab boundary; rank zero is the sole

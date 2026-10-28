@@ -1,0 +1,100 @@
+2026-10-28: integrated moving-window first version
+
+Implementation
+- Opt-in build APRL_ENABLE_MOVING_WINDOW (default OFF), opt-in
+  mesh.moving_window.enabled (default false). FFTW is needed only by this build.
+- Simulation first reconstructs the existing held input. The original mesh is
+  the finite reference/source domain. Rank zero generates disk-backed scalar
+  blocks with the accepted Cowan reference; other ranks open read-only readers.
+  No full-domain E/B donor is allocated. Every field grid and transverse CPML
+  history belongs to a fixed-size z slab of the compact active window.
+- Motion is one dz toward -z per complete Cowan step (c*dt=dz), using integer
+  world offsets. Lorentz frame origins stay fixed. Native E(n), B(n-1/2) and
+  transverse CPML histories move together; the inserted history plane is zero.
+- Left E/B are supplied by the translated common-beta reference. The rightmost
+  field collar is discarded causally; no longitudinal CPML is introduced.
+  Fixed-lab detectors recompute their grid position/owner after each shift.
+- Physical particles leave at a fixed lab plane beyond all requested elements
+  and diagnostics, inside the causal collar. Existing undamped current carriers
+  complete deposition until the right crop. No artificial z current taper.
+- MPI particle sampling in moving mode exchanges the missing half-z Ez/Bx/By
+  neighbours after B and clears the view after all particle pushes/transfers.
+  Original trilinear weights, Cowan, Boris and charge deposition are unchanged.
+  The legacy fixed-window sampling path retains its previous behaviour.
+- Complete source input is retained in this version, as requested. Pending
+  upstream held particles are currently owned by the inlet rank. Large-count
+  initialization uses 64 MiB packets, avoiding MPI int byte displacement limits.
+  This is not a distributed particle-streaming or long-bunch throughput solution.
+  The inlet rank's full pending list can dominate a much larger case; the small
+  timing figures must not be extrapolated to 41,732,775 particles / 256 ranks.
+- Checkpoint output/restart is rejected with moving mode. Legacy checkpoint code
+  is retained. Retirement, incident waves, ballistic transverse injection,
+  padded source solves, nonzero z CPML and current filtering are rejected here.
+  Held longitudinal velocities must be nonnegative; MPI slabs need >=8 cells.
+- Existing shutdown watchdog remains. Output directories are now established
+  and opened on every client, with bounded ENOENT/ESTALE retry and collective
+  failure propagation; a barrier alone did not ensure immediate visibility.
+
+Minimal additions to an otherwise valid held/Cowan card
+mesh:
+  moving_window:
+    enabled: true
+    lower_guard_cells: 64
+    upper_guard_cells: 128
+    block_layers: 32
+    reference_directory: reference
+# cells may be omitted for automatic active width; mesh.cells still specifies
+# the original finite scalar reference/source domain. The runtime validates the
+# entire translated inlet query interval through mesh.duration without silently
+# enlarging the E/B window or reference domain. Reference directories are new
+# output directories, relative to the working directory when not absolute.
+
+Automatic width includes the lab release-to-last-interaction span, 64/128 guards
+and two native endpoint cells. No fs-scale quiet tail or safety duration is added.
+Actual offset/width/exit and reference beta are logged, with per-rank moving-
+volume energy and exit accounting in reference/window-rank-*.csv. The old fixed-
+volume ledger residual alone is not moving-volume closure or radiation energy.
+
+Verification evidence: APRL_Workspace/results/moving_window_integration_20261028
+- 1/2/4-rank native field/12 CPML-history remap, causal-cut poison controls,
+  fixed-lab affine E/B diagnostics, prepared-reader faults, and particle-halo
+  serial-oracle/Boris tests passed. The no-halo sampling negative control fails.
+- Final R3 passed 76 required tests. Default-OFF build and 16 invalid input
+  rejection cases passed in earlier builds with the same configuration path.
+- 18957: 64-source single-rank moving/fixed/old-fixed on node3. Six H5 files,
+  19 scientific datasets match old/new fixed mode bitwise.
+- 18958: initial two-node attempt FAILED before stepping on rank-one output
+  directory ENOENT. Preserved. 18959 verifies the fix with 16 fresh nested
+  directories and regular-file/parent-file negative controls on node3/4.
+- 18960: full two-node R2 run completed, but exposed 41.72 eV RMS exit particle
+  difference. This was not accepted. The missing half-cell sampler data was
+  corrected only for moving mode and tested against the serial interpolation.
+- 18961: 31,675-source single-rank moving/fixed on node7, ~1 electron/macro.
+- 18962: final R3 64-source and 31,675-source moving runs on node3/4, 2x8 actual
+  CPUs, with 128 CPUs reserved exclusively per node, each compared to its
+  matching single-rank reference. Sparse three-plane x/u/t match bitwise;
+  dense exit DeltaK RMS=9.23e-10 eV, max=1.16e-7 eV. Native lab E/B relative
+  L2 about 1.98e-14. Dense beta metadata differs by a few final bits; scalar
+  rho/checkpoint/phi files match bitwise. All cohorts and outputs are complete.
+
+Physical and cost limits
+Dense single-node physical pair (same node/layout/input): field nz 896 -> 289;
+steady RSS 1846.53 -> 742.82 MiB; measured step 0.52905 -> 0.24982 seconds.
+This is work reduction through a shorter field domain, not a same-grid kernel
+benchmark or a repeated production performance measurement. Startup also changes
+from CG to the already tested blocked reference; these gains are not counted
+again as an optimization of the Cowan kernel.
+Dense exit DeltaK RMS=0.00723 eV; auxiliary self-field width-increment difference
+~0.00069%; 91.5 eV bunching amplitude difference <6.2e-12.
+The full-time physical-aperture E/B L2 difference is ~1.482%. Weak late fields
+retain localized differences up to ~39.3% near the transverse CPML physical
+edge, and ~9.67% at the maximum-error core pixel. Relative late error can grow
+while its absolute RMS remains approximately level; no instability is inferred.
+CIC/reference translation and inserted CPML history are candidates for separate
+controlled work, not proven exclusive causes. No CPML or reference-method change
+was made to hide these differences. Total E/B is not a radiation-only field.
+
+Result: software integration and bounded MPI checks completed; weak-tail-field
+accuracy and original production-scale use remain unaccepted. Keep the opt-in
+experimental entry; no default/production switch, remote push, automatic long
+job, snapshot cleanup, or additional parameter campaign is part of this delivery.

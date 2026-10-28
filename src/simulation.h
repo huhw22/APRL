@@ -23,6 +23,7 @@
 #include "particle_boundary.h"
 #include "run_metadata.h"
 #include "trajectory_writer.h"
+#include "simulation_moving_window.h"
 
 namespace aprl
 {
@@ -59,6 +60,18 @@ namespace aprl
     };
 
     void initialize();
+    void initializeMovingWindow();
+    void installMovingWindowBoundary();
+    void initializeMovingWindowFields();
+    EBElectricHaloView beginMovingWindowStep();
+    void finishMovingWindowStep();
+    void finalizeMovingWindow();
+    bool firstMovingWindowEntry(const FieldVector<Double>& start,
+        const FieldVector<Double>& end, Double startFraction,
+        ParticleBoundaryHit& hit) const;
+    void recordMovingWindowExit(Double charge);
+    static Double movingWindowFieldValue(void* context, unsigned component,
+        std::size_t i, std::size_t j, std::ptrdiff_t k, std::size_t step);
     void loadCheckpointGeometry();
     void restoreCheckpointFields();
     void restoreCheckpointDiagnostics();
@@ -130,6 +143,7 @@ namespace aprl
     BoostFrameTransform frame_;
     SIFieldSourceSet sources_;
     std::unique_ptr<EBFieldGrid> fields_;
+    std::unique_ptr<SimulationMovingWindowState> movingWindow_;
     std::unique_ptr<EBZSlabHaloExchange> halo_;
     std::unique_ptr<EBMaxwellIncidentInjector> incident_;
     std::vector<RelativisticParticleSI> particles_;

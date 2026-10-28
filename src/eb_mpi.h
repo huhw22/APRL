@@ -31,7 +31,10 @@ namespace aprl
     void sumSharedTangentialCurrent(EBFieldGrid& fields);
     void synchronizeAndFilterCurrent(EBFieldGrid& fields,
                                      EBCurrentFilter filter);
-    void advanceMagnetic(EBFieldGrid& fields);
+    // Optional physical-end E values. Internal neighbours always take priority;
+    // an empty view preserves the existing stationary-boundary path.
+    void advanceMagnetic(EBFieldGrid& fields,
+                         const EBElectricHaloView& physicalHalo = EBElectricHaloView());
     void advanceElectric(EBFieldGrid& fields,
                          EBCurrentFilter filter = EBCurrentFilter::None);
     void advance(EBFieldGrid& fields);

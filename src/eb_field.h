@@ -85,6 +85,22 @@ namespace aprl
     EBElectricHaloView();
   };
 
+  /* Non-owning native cell-centre planes for particle interpolation only.
+   * Each plane is x-contiguous with the corresponding component's nx/ny.
+   * Null ends keep the original physical-boundary clamp. Install after the
+   * magnetic update and clear before any subsequent field update or shift. */
+  struct EBParticleInterpolationHaloView
+  {
+    const Double* lowerEz;
+    const Double* lowerBx;
+    const Double* lowerBy;
+    const Double* upperEz;
+    const Double* upperBx;
+    const Double* upperBy;
+
+    EBParticleInterpolationHaloView();
+  };
+
   /* A compact scalar component on a rectangular Yee lattice.  Components are
    * kept in separate contiguous arrays (SoA) so the hot curl loops stream only
    * the values they need.  x is the unit-stride dimension and a complete z
@@ -265,6 +281,11 @@ namespace aprl
         FieldVector<Double>& electric,
         FieldVector<Double>& magnetic) const;
 
+    void setParticleInterpolationHalo(
+        const EBParticleInterpolationHaloView& halo);
+    void clearParticleInterpolationHalo();
+    bool hasParticleInterpolationHalo() const;
+
     RadiationFieldSample radiationSamplePositionLab(
         const FieldVector<Double>& positionBoxSI,
         const FieldVector<Double>& originBoxSI,
@@ -303,6 +324,12 @@ namespace aprl
                            const FieldVector<Double>& originSI,
                            Double offsetX, Double offsetY,
                            Double offsetZ) const;
+    Double sampleComponentWithParticleHalo(
+        const YeeComponent& component,
+        const FieldVector<Double>& positionSI,
+        const FieldVector<Double>& originSI,
+        Double offsetX, Double offsetY,
+        const Double* lowerPlane, const Double* upperPlane) const;
 
     EBGridGeometry geometry_;
     EBCowanCoefficients cowan_;
@@ -320,6 +347,7 @@ namespace aprl
     YeeComponent jz_;
 
     std::unique_ptr<EBBoundaryOperator> boundary_;
+    EBParticleInterpolationHaloView particleInterpolationHalo_;
   };
 }
 

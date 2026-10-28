@@ -15,6 +15,20 @@ option(APRL_BUILD_HELD_CUT_PROBE
   "Build production-parameter held-inflow/causal-cut probes with transverse CPML" OFF)
 option(APRL_BUILD_BLOCKED_COWAN_REFERENCE
   "Build the verification-only disk-backed modal Cowan reference generator" OFF)
+if(APRL_ENABLE_MOVING_WINDOW)
+  add_executable(aprl_moving_detector_checks moving_detector_checks.cpp)
+  add_executable(aprl_moving_window_mpi_checks moving_window_mpi_checks.cpp)
+  add_executable(aprl_blocked_reference_reader_checks blocked_reference_reader_checks.cpp)
+  add_executable(aprl_output_directory_mpi_checks output_directory_mpi_checks.cpp)
+  add_executable(aprl_particle_field_halo_checks particle_field_halo_checks.cpp)
+  foreach(target aprl_moving_detector_checks aprl_moving_window_mpi_checks
+                 aprl_blocked_reference_reader_checks aprl_output_directory_mpi_checks
+                 aprl_particle_field_halo_checks)
+    target_link_libraries(${target} PRIVATE direct_eb_core)
+    target_compile_options(${target} PRIVATE
+      $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+  endforeach()
+endif()
 if(APRL_BUILD_HELD_CUT_PROBE)
   add_executable(aprl_held_cut_probe held_cut_bunch_probe.cpp
     held_cut_boundary.cpp moving_window_remap.cpp)

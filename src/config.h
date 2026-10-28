@@ -39,6 +39,21 @@ namespace aprl
     UnitSystem();
   };
 
+  /* Optional longitudinal window. The reference source domain is described
+   * by the ordinary mesh; cells=0 selects runtime sizing of the active window.
+   * Reference files follow the same working-directory path policy as output. */
+  struct MovingWindowConfig
+  {
+    bool enabled;
+    std::size_t cells;
+    std::size_t lowerGuardCells;
+    std::size_t upperGuardCells;
+    std::size_t blockLayers;
+    std::string referenceDirectory;
+
+    MovingWindowConfig();
+  };
+
   struct MeshConfig
   {
     std::size_t cells[3];
@@ -58,6 +73,7 @@ namespace aprl
      * transverse physical region remain ballistic until they enter it. */
     bool ballisticOutsideTransverse;
     LongitudinalMeshConfig longitudinal;
+    MovingWindowConfig movingWindow;
 
     MeshConfig();
   };

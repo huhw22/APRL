@@ -373,15 +373,32 @@ namespace aprl
         Double communicationStart = halo_->communicationSeconds();
         fields_->clearCurrent();
         particleBoundary_->beginStep();
-        halo_->advanceMagnetic(*fields_);
+        if (config_.mesh.movingWindow.enabled)
+          {
+            const EBElectricHaloView physicalHalo = beginMovingWindowStep();
+            halo_->advanceMagnetic(*fields_, physicalHalo);
+          }
+        else
+          halo_->advanceMagnetic(*fields_);
         if (incident_)
           incident_->correctAfterMagneticUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
+        if (config_.mesh.movingWindow.enabled)
+          {
+            const Double sampleCommunicationStart =
+              movingWindow_->particleHalo->communicationSeconds();
+            movingWindow_->particleHalo->exchangeAndInstall(*fields_);
+            performanceSeconds_[FieldCommunicationStage] +=
+              movingWindow_->particleHalo->communicationSeconds() -
+              sampleCommunicationStart;
+          }
         performanceSeconds_[FieldStage] += performanceNow() - stageStart;
         performanceSeconds_[FieldCommunicationStage] +=
           halo_->communicationSeconds() - communicationStart;
 
         pushDepositAndMigrate();
+        if (config_.mesh.movingWindow.enabled)
+          movingWindow_->particleHalo->clear(*fields_);
         stageStart = performanceNow();
         communicationStart = halo_->communicationSeconds();
         halo_->advanceElectric(*fields_, config_.mesh.currentFilter);
@@ -401,6 +418,7 @@ namespace aprl
 
         timeBoxSI_ += globalGeometry_.dt;
         ++step_;
+        if (config_.mesh.movingWindow.enabled) finishMovingWindowStep();
         if (config_.trajectory.enabled &&
             timeBoxSI_ >= nextTrajectorySampleTime_)
           sampleTrajectory();
@@ -452,6 +470,7 @@ namespace aprl
     logTeardownTrace("particle-boundary-report-enter");
     armShutdownWatchdog("particle-boundary-report");
     reportParticleBoundaryLosses();
+    if (config_.mesh.movingWindow.enabled) finalizeMovingWindow();
     disarmShutdownWatchdog();
     logTeardownTrace("particle-boundary-report-complete");
 
@@ -507,6 +526,7 @@ namespace aprl
       initializeParticles();
     else
       loadCheckpointGeometry();
+    if (config_.mesh.movingWindow.enabled) initializeMovingWindow();
     runMetadata_ = initializeRunMetadata(config_, communicator_,
       hasLongitudinalLayoutReport_ ? &longitudinalLayoutReport_ : NULL);
     validateAndReportRadiationResolution();
@@ -516,7 +536,9 @@ namespace aprl
     particleBoundary_.reset(new ParticleOpenBoundary(
       localGeometry_, localOriginBox_, globalGeometry_, globalOriginBox_,
       localZOffset_));
-    if (config_.boundary.type == EBBoundaryType::Cpml)
+    if (config_.mesh.movingWindow.enabled)
+      installMovingWindowBoundary();
+    else if (config_.boundary.type == EBBoundaryType::Cpml)
       fields_->setBoundary(std::unique_ptr<EBBoundaryOperator>(
         new EBConvolutionalPML(
           localGeometry_, globalGeometry_.nz, localZOffset_,
@@ -529,7 +551,10 @@ namespace aprl
       {
         calibrateResourceEstimate();
         fields_->clearFields();
-        initializeParticleSelfField();
+        if (config_.mesh.movingWindow.enabled)
+          initializeMovingWindowFields();
+        else
+          initializeParticleSelfField();
       }
     else
       restoreCheckpointFields();
@@ -1172,6 +1197,14 @@ namespace aprl
       throw std::overflow_error(
         "Configured duration produces an invalid field-step count");
     estimatedMaximumSteps_ = static_cast<std::size_t>(stepsReal);
+    if (config_.mesh.movingWindow.enabled)
+      {
+        estimatedStepSeconds_ = 0.0;
+        if (rank_ == 0)
+          logRoot(communicator_,
+            "[resource] phase=pre-run-calibration status=skipped reason=moving-window-state");
+        return;
+      }
     if (!config_.runtime.resourceReport) return;
 
     if (sources_.maxwellIncidentWaveCount() > 0)
@@ -3637,6 +3670,8 @@ namespace aprl
 
   int Simulation::ownerRank(Double boxZ) const
   {
+    if (config_.mesh.movingWindow.enabled && boxZ < globalOriginBox_[2])
+      return 0;
     const Double coordinate =
       (boxZ - globalOriginBox_[2]) / globalGeometry_.dz;
     const Double tolerance = 64.0 *
@@ -4310,8 +4345,13 @@ namespace aprl
       ActiveSegmentBoundaryHits computedBoundaryHits;
       if (!cachedBoundaryHits)
         {
-          computedBoundaryHits.entersCpml = particleCPML_->firstEntry(
-            segmentStart, particle.position, computedBoundaryHits.cpmlHit);
+          if (config_.mesh.movingWindow.enabled)
+            computedBoundaryHits.entersCpml = firstMovingWindowEntry(
+              segmentStart, particle.position, segmentStartFraction,
+              computedBoundaryHits.cpmlHit);
+          else
+            computedBoundaryHits.entersCpml = particleCPML_->firstEntry(
+              segmentStart, particle.position, computedBoundaryHits.cpmlHit);
           computedBoundaryHits.exitsOuter = particleBoundary_->firstExit(
             segmentStart, particle.position, computedBoundaryHits.outerHit);
           computedBoundaryHits.entersRetirement = labPlaneCrossing(
@@ -4392,10 +4432,17 @@ namespace aprl
         {
           const std::size_t face =
             static_cast<std::size_t>(selectedHit.face);
-          ++cpmlEntryCount_[face];
-          cpmlEntryCharge_[face] += particle.charge;
+          const bool movingExit = config_.mesh.movingWindow.enabled &&
+            selectedHit.face == ParticleBoundaryFace::UpperZ;
+          if (movingExit)
+            recordMovingWindowExit(particle.charge);
+          else
+            {
+              ++cpmlEntryCount_[face];
+              cpmlEntryCharge_[face] += particle.charge;
+            }
           ++localLost;
-          if (config_.mesh.longitudinal.automatic() && face >= 4)
+          if (config_.mesh.longitudinal.automatic() && face >= 4 && !movingExit)
             localAutomaticLongitudinalExit = 1;
 
           ParticleCPMLCarrier carrier;
@@ -4460,6 +4507,11 @@ namespace aprl
         result.particle = particles_[index];
         RelativisticParticleSI& particle = result.particle;
         const FieldVector<Double> start(particle.position);
+        if (config_.mesh.movingWindow.enabled &&
+            start[2] < globalOriginBox_[2] && !particle.frozen)
+          throw std::runtime_error(
+            "An active particle is upstream of the moving window; "
+            "the inlet guard did not contain its release event");
         result.prescribedWork = 0.0;
         result.activeStart = particle;
         result.activeStartTime = timeBoxSI_;
@@ -4490,6 +4542,11 @@ namespace aprl
               particle.position[2], timeBoxSI_ + globalGeometry_.dt);
             if (endLabZ >= config_.reference.activationPlaneZ)
               {
+                if (config_.mesh.movingWindow.enabled &&
+                    start[2] < globalOriginBox_[2])
+                  throw std::runtime_error(
+                    "A pending upstream held particle would release before "
+                    "a complete in-window step; check the moving inlet guard");
                 const Double crossingFraction =
                   startLabZ >= config_.reference.activationPlaneZ ? 0.0 :
                   std::max(0.0, std::min(1.0,
@@ -4608,7 +4665,8 @@ namespace aprl
             ParticleWorkspace::Prepared& result =
               workspace.prepared[static_cast<std::size_t>(offset)];
             RelativisticParticleSI& particle = result.particle;
-            const FieldVector<Double> start(particles_[index].position);
+            FieldVector<Double> start(particles_[index].position);
+            Double segmentStartFraction = 0.0;
             const Double prescribedWork = result.prescribedWork;
             const RelativisticParticleSI& activeStart = result.activeStart;
             const Double activeStartTime = result.activeStartTime;
@@ -4620,6 +4678,32 @@ namespace aprl
               detectors_->captureParticleStep(particles_[index],
                 hasActiveSegment ? activeStart : particle, timeBoxSI_,
                 hasActiveSegment ? activeStartTime : timeBoxSI_ + globalGeometry_.dt);
+
+            // The full upstream source list remains on rank zero. Held
+            // preparation advances it without field sampling; only its
+            // in-window part contributes to this step's mesh current.
+            if (config_.mesh.movingWindow.enabled &&
+                start[2] < globalOriginBox_[2])
+              {
+                if (rank_ != 0 || !particles_[index].frozen ||
+                    !particle.frozen || hasActiveSegment || pendingActivePush)
+                  throw std::runtime_error(
+                    "Moving-window upstream admission requires an unreleased held particle on rank zero");
+                if (particle.position[2] < globalOriginBox_[2])
+                  {
+                    retained.push_back(particle);
+                    continue;
+                  }
+                const Double fraction = (globalOriginBox_[2] - start[2]) /
+                  (particle.position[2] - start[2]);
+                if (!(fraction >= 0.0 && fraction <= 1.0) ||
+                    !std::isfinite(fraction))
+                  throw std::runtime_error("Invalid moving-window admission fraction");
+                for (unsigned axis = 0; axis < 3; ++axis)
+                  start[axis] += fraction * (particle.position[axis] - start[axis]);
+                start[2] = globalOriginBox_[2];
+                segmentStartFraction = fraction;
+              }
 
             const bool hasActivationKink =
               config_.reference.holdTransverseUntilActivation &&
@@ -4651,7 +4735,7 @@ namespace aprl
                       transfer);
                   }
                 else
-                  processActiveSegment(particle, start, 0.0, true,
+                  processActiveSegment(particle, start, segmentStartFraction, true,
                     activationKink, activationKinkFraction, true, 0);
                 continue;
               }
@@ -4665,7 +4749,7 @@ namespace aprl
                   detectors_->captureParticleStep(
                     activeStart, particle, activeStartTime,
                     timeBoxSI_ + globalGeometry_.dt);
-                processActiveSegment(particle, start, 0.0, true,
+                processActiveSegment(particle, start, segmentStartFraction, true,
                   activationKink, activationKinkFraction, false, 0);
                 continue;
               }
@@ -4673,11 +4757,16 @@ namespace aprl
             const FieldVector<Double>& diagnosticStart =
               hasActivationKink ? activeStart.position : start;
             const Double diagnosticStartFraction =
-              hasActivationKink ? activationKinkFraction : 0.0;
+              hasActivationKink ? activationKinkFraction : segmentStartFraction;
             ParticleBoundaryHit diagnosticHit;
             ActiveSegmentBoundaryHits diagnosticBoundaryHits;
-            diagnosticBoundaryHits.entersCpml = particleCPML_->firstEntry(
-              diagnosticStart, particle.position, diagnosticBoundaryHits.cpmlHit);
+            if (config_.mesh.movingWindow.enabled)
+              diagnosticBoundaryHits.entersCpml = firstMovingWindowEntry(
+                diagnosticStart, particle.position, diagnosticStartFraction,
+                diagnosticBoundaryHits.cpmlHit);
+            else
+              diagnosticBoundaryHits.entersCpml = particleCPML_->firstEntry(
+                diagnosticStart, particle.position, diagnosticBoundaryHits.cpmlHit);
             diagnosticBoundaryHits.exitsOuter = particleBoundary_->firstExit(
               diagnosticStart, particle.position, diagnosticBoundaryHits.outerHit);
             diagnosticBoundaryHits.entersRetirement = labPlaneCrossing(
@@ -4706,7 +4795,9 @@ namespace aprl
                            TrajectoryEvent::DomainExit);
             selectTerminal(diagnosticBoundaryHits.entersCpml,
                            diagnosticBoundaryHits.cpmlHit,
-                           TrajectoryEvent::CpmlEntry);
+                           config_.mesh.movingWindow.enabled &&
+                             diagnosticBoundaryHits.cpmlHit.face == ParticleBoundaryFace::UpperZ ?
+                             TrajectoryEvent::DomainExit : TrajectoryEvent::CpmlEntry);
             selectTerminal(diagnosticBoundaryHits.entersRetirement,
                            diagnosticBoundaryHits.retirementHit,
                            TrajectoryEvent::RetirementEntry);
@@ -4765,10 +4856,10 @@ namespace aprl
                   diagnosticEnd, diagnosticTime,
                   terminalEvent, diagnosticHit.face);
               }
-            // Without an activation kink, diagnosticStart is exactly start
-            // and diagnosticStartFraction is 0.0, matching this local segment.
+            // Without an activation kink, the diagnostic start and time
+            // match this local segment, including clipped inlet admission.
             // Kinked, ballistic and received segments retain their own queries.
-            processActiveSegment(particle, start, 0.0, true,
+            processActiveSegment(particle, start, segmentStartFraction, true,
               activationKink, activationKinkFraction, false,
               hasActivationKink ? 0 : &diagnosticBoundaryHits);
           }

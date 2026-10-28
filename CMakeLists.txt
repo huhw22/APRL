@@ -33,6 +33,8 @@ option(APRL_PORTABLE_INSTALL
   "Use relative install RPATHs for libraries bundled beside APRL" OFF)
 option(APRL_ENABLE_OPENMP
   "Enable optional compute threading (runtime default remains one thread)" ON)
+option(APRL_ENABLE_MOVING_WINDOW
+  "Build the optional longitudinal moving window and blocked Cowan reference" OFF)
 option(DIRECT_EB_BOUNDS_CHECK
   "Check Yee lattice indices consistently in the core and its consumers" OFF)
 
@@ -116,6 +118,8 @@ set(DIRECT_EB_SOURCES
   src/energy_ledger.cpp
   src/lab_detectors.cpp
   src/longitudinal_mesh.cpp
+  src/moving_window_fields.cpp
+  src/particle_field_halo.cpp
   src/particle_file.cpp
   src/particle_initializer.cpp
   src/particle_boundary.cpp
@@ -125,6 +129,7 @@ set(DIRECT_EB_SOURCES
   src/shutdown_watchdog.cpp
   src/simulation.cpp
   src/simulation_checkpoint.cpp
+  src/simulation_moving_window.cpp
   src/teardown_trace.cpp
   src/trajectory_writer.cpp
 )
@@ -149,6 +154,17 @@ endif()
 if(DIRECT_EB_BOUNDS_CHECK)
   # Accessors are inline: every translation unit must use the same definition.
   target_compile_definitions(direct_eb_core PUBLIC DIRECT_EB_BOUNDS_CHECK=1)
+endif()
+if(APRL_ENABLE_MOVING_WINDOW)
+  find_path(APRL_VERIFY_FFTW_INCLUDE_DIR fftw3.h)
+  find_library(APRL_VERIFY_FFTW_LIBRARY NAMES fftw3)
+  if(NOT APRL_VERIFY_FFTW_INCLUDE_DIR OR NOT APRL_VERIFY_FFTW_LIBRARY)
+    message(FATAL_ERROR "APRL moving window requires FFTW3 headers and library")
+  endif()
+  target_sources(direct_eb_core PRIVATE src/blocked_cowan_reference.cpp)
+  target_include_directories(direct_eb_core PRIVATE ${APRL_VERIFY_FFTW_INCLUDE_DIR})
+  target_link_libraries(direct_eb_core PUBLIC ${APRL_VERIFY_FFTW_LIBRARY})
+  target_compile_definitions(direct_eb_core PUBLIC APRL_HAS_MOVING_WINDOW=1)
 endif()
 target_compile_definitions(direct_eb_core
   PUBLIC OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX

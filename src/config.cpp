@@ -132,7 +132,7 @@ namespace aprl
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
             "resolution", "ballistic_outside_transverse",
-            "self_field_feedback"
+            "self_field_feedback", "moving_window"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
           if (longitudinal)
@@ -140,6 +140,12 @@ namespace aprl
               "mode", "lower_guard_cells", "upper_guard_cells",
               "self_field_padding_rms", "ballistic_time_safety_factor",
               "alignment_cells"
+            });
+          const YAML::Node moving = mesh["moving_window"];
+          if (moving)
+            validateMapKeys(moving, "mesh.moving_window", {
+              "enabled", "cells", "lower_guard_cells", "upper_guard_cells",
+              "block_layers", "reference_directory"
             });
         }
 
@@ -359,6 +365,20 @@ namespace aprl
       if (value < 0)
         throw configError(node, name + " must be a nonnegative integer");
       return static_cast<std::size_t>(value);
+    }
+
+    std::size_t movingWindowSize(const YAML::Node& node,
+                                const std::string& name)
+    {
+      // Do not let an unsigned YAML conversion turn a negative value into a
+      // huge positive allocation. Leave the existing config paths unchanged.
+      if (!node.IsScalar())
+        throw configError(node, name + " must be a positive integer");
+      const std::string text = node.Scalar();
+      const std::string::size_type first = text.find_first_not_of(" \t\r\n");
+      if (first == std::string::npos || text[first] == '-')
+        throw configError(node, name + " must be a positive integer");
+      return positiveSize(node, name);
     }
 
     std::size_t checkpointSize(const YAML::Node& node,
@@ -660,6 +680,11 @@ namespace aprl
   {
     return mode != LongitudinalMeshMode::Explicit;
   }
+
+  MovingWindowConfig::MovingWindowConfig()
+    : enabled(false), cells(0), lowerGuardCells(64), upperGuardCells(128),
+      blockLayers(32), referenceDirectory()
+  {}
 
   MeshConfig::MeshConfig()
     : cellSize(0.0), extent(0.0), center(0.0), duration(0.0),
@@ -987,6 +1012,43 @@ namespace aprl
     if (mesh["self_field_feedback"])
       result.mesh.selfFieldFeedback =
         mesh["self_field_feedback"].as<bool>();
+    const YAML::Node movingWindow = mesh["moving_window"];
+    if (movingWindow)
+      {
+        if (movingWindow["enabled"])
+          result.mesh.movingWindow.enabled = movingWindow["enabled"].as<bool>();
+        if (movingWindow["cells"])
+          result.mesh.movingWindow.cells = movingWindowSize(
+            movingWindow["cells"], "mesh.moving_window cells");
+        if (movingWindow["lower_guard_cells"])
+          result.mesh.movingWindow.lowerGuardCells = movingWindowSize(
+            movingWindow["lower_guard_cells"],
+            "mesh.moving_window lower_guard_cells");
+        if (movingWindow["upper_guard_cells"])
+          result.mesh.movingWindow.upperGuardCells = movingWindowSize(
+            movingWindow["upper_guard_cells"],
+            "mesh.moving_window upper_guard_cells");
+        if (movingWindow["block_layers"])
+          result.mesh.movingWindow.blockLayers = movingWindowSize(
+            movingWindow["block_layers"], "mesh.moving_window block_layers");
+        if (movingWindow["reference_directory"])
+          {
+            if (!movingWindow["reference_directory"].IsScalar())
+              throw configError(movingWindow["reference_directory"],
+                "mesh.moving_window reference_directory must be a path");
+            result.mesh.movingWindow.referenceDirectory =
+              movingWindow["reference_directory"].as<std::string>();
+            if (result.mesh.movingWindow.referenceDirectory.find('\0') !=
+                std::string::npos)
+              throw configError(movingWindow["reference_directory"],
+                "mesh.moving_window reference_directory cannot contain NUL bytes");
+          }
+        if (result.mesh.movingWindow.enabled &&
+            result.mesh.movingWindow.referenceDirectory.find_first_not_of(
+              " \t\r\n") == std::string::npos)
+          throw configError(movingWindow,
+            "enabled mesh.moving_window requires a nonempty reference_directory");
+      }
     const YAML::Node longitudinal = mesh["longitudinal"];
     if (automaticLongitudinal)
       {
@@ -1726,6 +1788,41 @@ namespace aprl
         "boost_gamma must be at least one");
     if (!(result.mesh.duration > 0.0))
       throw configError(mesh["duration"], "duration must be positive");
+    if (result.mesh.movingWindow.enabled)
+      {
+        if (result.mesh.fieldSolver != EBMaxwellSolver::CowanZ ||
+            !result.initialSelfField.enabled ||
+            result.initialSelfField.model !=
+              InitialSelfFieldModel::CowanRelativisticPoisson)
+          throw configError(movingWindow,
+            "moving_window requires Cowan-z and enabled "
+            "initial_self_field.model: cowan-relativistic-poisson");
+        if (result.mesh.currentFilter != EBCurrentFilter::None)
+          throw configError(movingWindow,
+            "moving_window requires current_filter: none; its causal exit "
+            "does not support a longitudinally extended current filter");
+        if (result.boundary.type != EBBoundaryType::Cpml ||
+            result.boundary.cpml.cells[0] < 2 ||
+            result.boundary.cpml.cells[1] < 2 ||
+            result.boundary.cpml.cells[2] != 0)
+          throw configError(movingWindow,
+            "moving_window requires at least two transverse x/y CPML cells "
+            "and zero z CPML");
+        if (!result.reference.frozenLabPlaneInjection ||
+            !result.reference.holdTransverseUntilActivation)
+          throw configError(movingWindow,
+            "moving_window requires frozen_lab_plane_injection and "
+            "hold_transverse_until_activation");
+        if (result.checkpoint.enabled() || !result.checkpoint.restartFrom.empty())
+          throw configError(movingWindow,
+            "moving_window checkpoint writing/restart is not supported");
+        if (result.particleRetirement.enabled || !result.waves.empty() ||
+            result.mesh.ballisticOutsideTransverse ||
+            result.initialSelfField.includeTransverseCpmlParticles)
+          throw configError(movingWindow,
+            "moving_window does not support particle retirement, incident "
+            "waves, ballistic_outside_transverse or transverse CPML source padding");
+      }
     if (result.mesh.ballisticOutsideTransverse &&
         result.particleRetirement.enabled)
       throw configError(mesh["ballistic_outside_transverse"],
@@ -1754,8 +1851,9 @@ namespace aprl
         "and CPML");
     if (result.mesh.longitudinal.automatic())
       {
-        if (result.boundary.type != EBBoundaryType::Cpml ||
-            result.boundary.cpml.cells[2] < 2)
+        if (!result.mesh.movingWindow.enabled &&
+            (result.boundary.type != EBBoundaryType::Cpml ||
+             result.boundary.cpml.cells[2] < 2))
           throw configError(mesh["longitudinal"],
             "observation-bounded longitudinal sizing requires z CPML");
         if (!result.waves.empty())

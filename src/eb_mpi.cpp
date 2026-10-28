@@ -126,20 +126,21 @@ namespace aprl
     exchangeCurrentPlane(fields.jy(), CURRENT_UPPER_Y, CURRENT_LOWER_Y);
   }
 
-  void EBZSlabHaloExchange::advanceMagnetic(EBFieldGrid& fields)
+  void EBZSlabHaloExchange::advanceMagnetic(
+      EBFieldGrid& fields, const EBElectricHaloView& physicalHalo)
   {
     verifyGeometry(fields);
     if (size_ == 1 ||
         fields.geometry().solver == EBMaxwellSolver::Yee)
       {
-        fields.advanceMagnetic();
+        fields.advanceMagnetic(physicalHalo);
         return;
       }
 
     exchangeElectricPlanes(fields);
     const std::size_t exValues = fields.ex().nx() * fields.ex().ny();
     const std::size_t eyValues = fields.ey().nx() * fields.ey().ny();
-    EBElectricHaloView halo;
+    EBElectricHaloView halo = physicalHalo;
     if (lowerRank_ != MPI_PROC_NULL)
       {
         halo.lowerEx = &lowerElectric_[0];

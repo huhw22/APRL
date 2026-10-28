@@ -1714,6 +1714,39 @@ namespace aprl
       localCrossingEvents_.clear();
     }
 
+    void updateGridOrigins(const FieldVector<Double>& globalOriginBox,
+                           const FieldVector<Double>& localOriginBox)
+    {
+      if (closed_)
+        throw std::logic_error("Cannot move a closed laboratory detector grid");
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        {
+          if (!std::isfinite(globalOriginBox[axis]) ||
+              !std::isfinite(localOriginBox[axis]))
+            throw std::invalid_argument("Detector grid origin must be finite");
+          if (axis < 2 &&
+              (globalOriginBox[axis] != globalOriginBox_[axis] ||
+               localOriginBox[axis] != localOriginBox_[axis]))
+            throw std::invalid_argument(
+              "Moving laboratory detectors require a fixed transverse aperture");
+        }
+      const double expectedLocalZ = globalOriginBox[2] +
+        static_cast<double>(slabOffset(rank_)) * globalGeometry_.dz;
+      const double scale = std::max(globalGeometry_.dz,
+        std::max(std::abs(expectedLocalZ),
+          std::max(std::abs(globalOriginBox[2]), std::abs(localOriginBox[2]))));
+      if (std::abs(localOriginBox[2] - expectedLocalZ) >
+          64.0 * std::numeric_limits<double>::epsilon() * scale)
+        throw std::invalid_argument(
+          "Detector local origin does not match the unchanged MPI slab layout");
+
+      // Ownership, global interpolation weights and any neighbouring half-cell
+      // layer are recomputed by sampleFieldPlanes. Its buffers carry no pending
+      // temporal sample. Preserve the frame, writers, cadence and lab events.
+      globalOriginBox_ = globalOriginBox;
+      localOriginBox_ = localOriginBox;
+    }
+
     void sampleFieldPlanes(const EBFieldGrid& localFields, Double timeBox)
     {
       for (std::size_t detector = 0;
@@ -2368,6 +2401,13 @@ namespace aprl
       const EBFieldGrid& localFields, Double timeBox)
   {
     impl_->sampleFieldPlanes(localFields, timeBox);
+  }
+
+  void LabDetectorManager::updateGridOrigins(
+      const FieldVector<Double>& globalOriginBox,
+      const FieldVector<Double>& localOriginBox)
+  {
+    impl_->updateGridOrigins(globalOriginBox, localOriginBox);
   }
 
   void LabDetectorManager::flushForCheckpoint()
