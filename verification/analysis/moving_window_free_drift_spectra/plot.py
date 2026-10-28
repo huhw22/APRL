@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Compare saved 18993/18938 free-drift spectra; read only small NPZ/JSON.
+"""Compare saved free-drift and optional undulator spectra from small NPZ/JSON.
 
 The frozen shared_plot.py supplies the existing validation and metric formulas.
 This wrapper changes case identity and presentation, never the spectral arrays.
@@ -46,8 +46,10 @@ def curve_style(shared, run, window):
 
 def flux_figure(shared, plt, runs, metrics, output):
     three = len(runs) == 3
+    four = len(runs) == 4
+    global_legend = three or four
     fig, axes = plt.subplots(2, 2, figsize=(15, 10.8))
-    fig.subplots_adjust(left=.075, right=.975, top=.80 if three else .85, bottom=.205,
+    fig.subplots_adjust(left=.075, right=.975, top=.80 if global_legend else .85, bottom=.205,
                         hspace=.43, wspace=.25)
     high = max(r["arrays"]["photon_energy_eV"][-1] for r in runs)
     panels = ((0., high, "(a) Entire sampled band"),
@@ -80,15 +82,17 @@ def flux_figure(shared, plt, runs, metrics, output):
         if lo <= 91.5 <= hi:
             ax.axvline(91.5, color="#5a6572", lw=.75, ls=":")
         ax.grid(alpha=.18, lw=.6)
-        if not three:
+        if not global_legend:
             ax.legend(frameon=False, fontsize=8.1, loc="best")
-    if three:
+    if global_legend:
         handles, labels = axes[0, 0].get_legend_handles_labels()
         fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(.52, .891),
-                   ncol=3, frameon=False, fontsize=9)
-    shared.title(fig, "Field energy spectra: old undulator and two free-drift runs" if three
-                 else "Free-drift field energy spectra at 0.5 m",
-                 "Same 140 × 140 physical aperture (0.49 mm²) | complete records | no subtraction" if three
+                   ncol=4 if four else 3, frameon=False, fontsize=9)
+    heading = ("Field energy spectra: old and new undulator / free drift" if four else
+               "Field energy spectra: old undulator and two free-drift runs" if three else
+               "Free-drift field energy spectra at 0.5 m")
+    shared.title(fig, heading,
+                 "Same 140 × 140 physical aperture (0.49 mm²) | complete records | no subtraction" if global_legend
                  else "18993 moving window vs 18938 earlier fixed window | 140 × 140 physical pixels (0.49 mm²) | no subtraction")
     dc = "DC-bin energy [nJ], rect / Hann: " + "  |  ".join(
         f"{r['summary']['simulation_job']}: "
@@ -107,8 +111,10 @@ def flux_figure(shared, plt, runs, metrics, output):
 
 def field_figure(shared, plt, runs, output):
     three = len(runs) == 3
+    four = len(runs) == 4
+    global_legend = three or four
     fig, axes = plt.subplots(2, 2, figsize=(15, 10.5))
-    fig.subplots_adjust(left=.075, right=.975, top=.80 if three else .85, bottom=.19,
+    fig.subplots_adjust(left=.075, right=.975, top=.80 if global_legend else .85, bottom=.19,
                         hspace=.43, wspace=.25)
     high = max(r["arrays"]["photon_energy_eV"][-1] for r in runs)
     for i, ax in enumerate(axes.flat):
@@ -127,16 +133,19 @@ def field_figure(shared, plt, runs, output):
                ylabel=r"Pixel-averaged squared-field density [(V/m)$^2$/eV]")
         ax.axvline(91.5, color="#5a6572", lw=.75, ls=":")
         ax.grid(alpha=.18, lw=.6)
-        if not three:
+        if not global_legend:
             ax.legend(frameon=False, fontsize=8.1, loc="best")
-    if three:
+    if global_legend:
         handles, labels = axes[0, 0].get_legend_handles_labels()
         fig.legend(handles, labels, loc="upper center", bbox_to_anchor=(.52, .891),
-                   ncol=3, frameon=False, fontsize=9)
-    shared.title(fig, "Electric and magnetic spectra: three simulation cases" if three
-                 else "Free-drift electric and magnetic field spectra",
-                 "Old undulator at 4.5 m and two free-drift runs at 0.5 m | same physical aperture" if three
-                 else "18993 moving window vs 18938 earlier fixed window | sum of three components | same physical aperture")
+                   ncol=4 if four else 3, frameon=False, fontsize=9)
+    heading = ("Electric and magnetic spectra: four simulation cases" if four else
+               "Electric and magnetic spectra: three simulation cases" if three else
+               "Free-drift electric and magnetic field spectra")
+    subtitle = ("Old/new undulator at 4.5 m and old/new free drift at 0.5 m | same physical aperture" if four else
+                "Old undulator at 4.5 m and two free-drift runs at 0.5 m | same physical aperture" if three else
+                "18993 moving window vs 18938 earlier fixed window | sum of three components | same physical aperture")
+    shared.title(fig, heading, subtitle)
     shared.footer(fig, [shared.sampling_note(runs),
         "E and cB densities are pixel- and record-time-averaged mean squares; they are not radiation energy spectra.",
         "Rect: solid (old free drift dash-dot). Thin dashed: Hann / sqrt(mean(window²)); window sensitivity is not an error bar.",
@@ -154,7 +163,10 @@ def main():
     parser.add_argument("--shared-plot", type=Path, default=HERE / "shared_plot.py")
     parser.add_argument("--include-old-undulator", action="store_true",
                         help="Add the saved 18932/4.5m spectrum under old_undulator/; preserve native records")
+    parser.add_argument("--include-new-undulator", action="store_true",
+                        help="Add 18992/4.5m under new_undulator/ and imply --include-old-undulator; four complete native records")
     args = parser.parse_args()
+    args.include_old_undulator |= args.include_new_undulator
     if args.include_old_undulator:
         CASES = (*CASES, "old_undulator")
         EXPECTED = {**EXPECTED, "old_undulator": (18932, 4.5)}
@@ -162,8 +174,14 @@ def main():
                   "new_free_drift": "18993 | new free drift | 0.5 m",
                   "old_undulator": "18932 | old undulator | 4.5 m"}
         COLORS = {**COLORS, "old_undulator": "#a13c72"}
+    if args.include_new_undulator:
+        CASES = (*CASES, "new_undulator")
+        EXPECTED = {**EXPECTED, "new_undulator": (18992, 4.5)}
+        LABELS = {**LABELS, "new_undulator": "18992 | new undulator | 4.5 m"}
+        COLORS = {**COLORS, "new_undulator": "#173b8f"}
     root = args.input_dir.resolve()
     output = args.output_dir.resolve() if args.output_dir else root / (
+        "figures_four_cases" if args.include_new_undulator else
         "figures_three_cases" if args.include_old_undulator else "figures")
     shared = shared_module(args.shared_plot.resolve())
     runs = [shared.load_run(root, name) for name in CASES]
@@ -177,13 +195,34 @@ def main():
                               for key in time_keys)
     frequency_arrays_equal = np.array_equal(runs[0]["arrays"]["frequency_Hz"],
                                             runs[1]["arrays"]["frequency_Hz"])
+    by_name = {r["name"]: r for r in runs}
+    pair_time_comparisons = {}
+    for pair in ("free_drift", "undulator"):
+        old_name, new_name = "old_" + pair, "new_" + pair
+        if old_name not in by_name or new_name not in by_name:
+            continue
+        old, new = by_name[old_name], by_name[new_name]
+        pair_time_comparisons[pair] = {
+            "old_case": old_name, "new_case": new_name,
+            "old": {key: old["summary"][key] for key in time_keys},
+            "new": {key: new["summary"][key] for key in time_keys},
+            "old_record_period_Ndt_s": old["duration"],
+            "new_record_period_Ndt_s": new["duration"],
+            "old_frequency_bin_eV": old["de"], "new_frequency_bin_eV": new["de"],
+            "full_record_time_metadata_equal": all(old["summary"][key] == new["summary"][key]
+                                                   for key in time_keys),
+            "frequency_arrays_equal": bool(np.array_equal(old["arrays"]["frequency_Hz"],
+                                                            new["arrays"]["frequency_Hz"])),
+            "scope": "Saved count/cadence/endpoints and native frequency arrays; no raw timestamp-vector check, cropping or rebinning by this plotter."}
     record = {"format": "aprl-moving-free-drift-spectral-comparison-v1", "runs": metrics,
         "scope": "Each complete recorded raw lab field, physical aperture only; native mixed time layers. Old free drift is a reference, not a subtracted background.",
         "comparison_time_scope": "Complete recorded series and native frequency bins, without cropping or interpolation. Time-metadata equality below checks saved summaries; raw timestamp identity belongs to the source audit.",
         "full_record_time_metadata_equal": time_metadata_equal,
         "frequency_arrays_equal": bool(frequency_arrays_equal),
-        "time_equality_check_scope": "Only the old/new 0.5m free-drift pair; not the 4.5m undulator",
+        "time_equality_check_scope": "Top-level equality flags refer only to the old/new 0.5m free-drift pair; pair_time_comparisons reports each available old/new pair separately.",
+        "pair_time_comparisons": pair_time_comparisons,
         "old_undulator_included": args.include_old_undulator,
+        "new_undulator_included": args.include_new_undulator,
         "old_undulator_record_note": "18932 uses its own 150.795822fs record and native bins; free drift uses 135.179018fs. Same Hann definition, different sample count." if args.include_old_undulator else None,
         "integration_rule": "Sum density times native deltaE for lower <= bin centre < upper; no partial-bin interpolation.",
         "power_definition": "Band energy divided by that run's own Ndt; record-average, not instantaneous peak or repetition-rate average.",

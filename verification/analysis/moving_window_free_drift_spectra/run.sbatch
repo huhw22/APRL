@@ -11,6 +11,13 @@
 set -Eeuo pipefail
 result_dir=$(realpath -- "${1:?Fresh prepared result directory}")
 workspace=$(realpath -- "${2:?APRL workspace}")
+case_name=${3:-free_drift_0p5m}
+case "$case_name" in
+    free_drift_0p5m) simulation_job=18993; plane=0.5; reduction_name=new_free_drift ;;
+    undulator_4p5m) simulation_job=18992; plane=4.5; reduction_name=new_undulator ;;
+    *) printf 'Unsupported spectral input case: %s\n' "$case_name" >&2; exit 2 ;;
+esac
+export APRL_SPECTRA_CASE="$case_name" APRL_SPECTRA_SIMULATION_JOB="$simulation_job"
 [[ -n ${SLURM_JOB_ID:-} ]] || exit 2
 python_bin=${PYTHON_BIN:-/public/home/wfollowm/micromamba/envs/physics/bin/python3}
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
@@ -23,15 +30,18 @@ step=(srun --mpi=none --exact --nodes=1 --ntasks=1 --cpus-per-task=8 --cpu-bind=
 import json,os,platform
 a=sorted(os.sched_getaffinity(0)); assert len(a)==8,a
 print(json.dumps(dict(host=platform.node(),job_id=os.environ['SLURM_JOB_ID'],allocated_cpus=128,
-    actual_cpus=8,fft_workers=8,blas_threads=1,affinity=a,purpose='Read completed 18993 fields only; no simulation')))
+    actual_cpus=8,fft_workers=8,blas_threads=1,affinity=a,
+    simulation_job=int(os.environ['APRL_SPECTRA_SIMULATION_JOB']),
+    case=os.environ['APRL_SPECTRA_CASE'],purpose='Read one completed field only; no simulation')))
 PY
 "${step[@]}" timeout 120 "$python_bin" scripts/analyze_spectra.py --self-test > self-test.log 2>&1
 "${step[@]}" timeout 1000 "$python_bin" scripts/reduce.py --kernel scripts/analyze_spectra.py \
-    --run "$workspace/results/moving_window_comparison_20261029/free_drift_0p5m" \
-    --output "$result_dir/new_free_drift" --plane 0.5 --job 18993 --workers 8 > reduction.log 2>&1
+    --run "$workspace/results/moving_window_comparison_20261029/$case_name" \
+    --output "$result_dir/$reduction_name" --plane "$plane" --job "$simulation_job" --workers 8 > reduction.log 2>&1
 "$python_bin" - <<'PY'
 import json,os
 from datetime import datetime,timezone
 json.dump(dict(complete=True,job_id=os.environ['SLURM_JOB_ID'],completed_utc=datetime.now(timezone.utc).isoformat(),
-    scope='Closed 18993 field reduced; old 18938 reduced data reused; plot and review follow'),open('REDUCTION_COMPLETE.json','w'),indent=2)
+    simulation_job=int(os.environ['APRL_SPECTRA_SIMULATION_JOB']),case=os.environ['APRL_SPECTRA_CASE'],
+    scope='One complete raw field reduced; other saved spectra reused; plot and review follow'),open('REDUCTION_COMPLETE.json','w'),indent=2)
 PY

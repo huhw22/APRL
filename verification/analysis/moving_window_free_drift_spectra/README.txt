@@ -20,6 +20,8 @@ Generate scripts/SHA256SUMS with paths relative to the new result root.
 
 Execution
 Submit run.sbatch with the prepared result directory and workspace arguments.
+Its optional third argument is free_drift_0p5m (default, 18993) or
+undulator_4p5m (18992); the latter writes new_undulator/ in the new result root.
 It allocates one exclusive 128-CPU node, actually binds 8 CPUs for FFT workers,
 uses 128 GiB memory, and has a 20-minute hard limit with a 1000-second reduction
 limit. There is no PIC simulation. The large new field is read only on Slurm.
@@ -38,6 +40,19 @@ the earlier two-case figures. It adds the 4.5 m old undulator on its own full
 150.795822 fs record and native frequency grid; the 0.5 m runs remain on their
 135.179018 fs records. Hann definition and normalization are unchanged, but
 the undulator's sample count differs. Do not crop, rebin or match amplitudes.
+
+Four-case view
+In a new result root, reuse hash-verified old_free_drift/, new_free_drift/ and
+old_undulator/ small NPZ/summary pairs. Reduce the completed 18992 field with
+the undulator_4p5m batch argument, using the same frozen reduce.py and FFT kernel.
+Run plot.py --input-dir RESULT --include-new-undulator (implicitly includes
+old undulator) to write figures_four_cases/. Run review.py --root RESULT
+--include-undulators for independent long-double integration and both pair
+checks. No prior delivered figures or production input files are overwritten.
+The old/new undulator records have identical 33487 timestamps; the old/new
+free-drift records have identical 30019 timestamps. Compare within each pair
+without alignment, and show the two physical cases on their own frequency
+grids and durations. The plotting metadata records these pair checks separately.
 
 Analysis definition
 Unchanged accepted per-pixel time FFT, then full physical-plane area sum.
