@@ -133,3 +133,16 @@ Its offline preparation/ballistic figures can be regenerated into a NEW director
 The default horizon256 excludes the legacy-geometry replay case. Optional
 --geometry-control OLD_CASE_DIRECTORY reports finite-domain sensitivity
 separately. This script reads existing data and never starts a simulation.
+
+Fast-reference design follow-up (2026-10-28):
+  FAST_REFERENCE_DESIGN.txt derives transverse DST plus longitudinal blocked
+  elimination, preserving distant source contributions without full-grid CG.
+  modal_reference_check.py is a fixed small algebra check, not PIC or a speed
+  benchmark. It uses the previous case's spacing/common beta, a full 3-D DST
+  oracle, block sizes1/7/16/33, and missing-far-source negative controls.
+  On authorized idle gnode1 after binding inspection, within the existing CPU
+  test lock, use one physical core/one BLAS worker and timeout180s:
+    python3 modal_reference_check.py --output /absolute/NEW/algebra.json
+  Candidate checkpoints still occupy O(A*Nz/block) RAM; disk-backed summaries,
+  particle streaming, native E/B reconstruction and production integration are
+  future work. Results: results/fast_reference_design_20261028/.
