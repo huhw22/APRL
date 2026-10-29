@@ -20,6 +20,8 @@
 #include "runtime_util.h"
 #include "shutdown_watchdog.h"
 #include "teardown_trace.h"
+#include "grid_work_audit.h"
+#include "field_stage_audit.h"
 
 namespace aprl
 {
@@ -337,8 +339,32 @@ namespace aprl
 
   void Simulation::solve()
   {
+    const char* gridAuditDirectory=std::getenv("APRL_GRID_WORK_AUDIT");
+    const char* stageAuditDirectory=std::getenv("APRL_FIELD_STAGE_AUDIT");
+    if(stageAuditDirectory && (!*stageAuditDirectory || !gridAuditDirectory))
+      throw std::invalid_argument("APRL_FIELD_STAGE_AUDIT requires a directory and APRL_GRID_WORK_AUDIT");
+    if(gridAuditDirectory && (!*gridAuditDirectory ||
+        !config_.mesh.movingWindow.enabled || !config_.energyLedger.enabled ||
+        config_.mesh.currentFilter!=EBCurrentFilter::None || checkpointEnabled_ ||
+        !config_.checkpoint.restartFrom.empty()))
+      throw std::invalid_argument("APRL_GRID_WORK_AUDIT requires a directory, moving window, ledger, unfiltered current and no checkpoint");
     const Double initializationStart = performanceNow();
     initialize();
+    std::unique_ptr<GridWorkAudit> gridWorkAudit;
+    std::unique_ptr<FieldStageAudit> fieldStageAudit;
+    if(gridAuditDirectory) {
+      gridWorkAudit.reset(new GridWorkAudit(gridAuditDirectory,rank_,
+        config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]));
+      movingWindow_->fields->setBeforeInletObserver(
+        &GridWorkAudit::beforeInlet,gridWorkAudit.get());
+      logRoot(communicator_,"[grid-work-audit] enabled; read-only native/cell-centred J dot E, pre-inlet endpoint; no discrete Cowan conservation claim");
+    }
+    if(stageAuditDirectory) {
+      fieldStageAudit.reset(new FieldStageAudit(stageAuditDirectory,rank_,
+        globalGeometry_.nz,localZOffset_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]));
+      movingWindow_->fields->setStageObserver(&FieldStageAudit::observe,fieldStageAudit.get());
+      logRoot(communicator_,"[field-stage-audit] enabled; read-only operation energy/flux/source trace");
+    }
     if (performanceInterval_)
       {
         const Double elapsed = MPI_Wtime() - initializationStart;
@@ -374,6 +400,9 @@ namespace aprl
         performanceSeconds_[ControlStage] += performanceNow() - stageStart;
         if (requestedStop) break;
 
+        if(gridWorkAudit) gridWorkAudit->begin(*fields_,step_);
+        if(fieldStageAudit)fieldStageAudit->begin(*fields_,step_,particles_.size(),pmlCarriers_.size());
+
         if (config_.mesh.movingWindow.enabled)
           {
             stageStart = performanceNow();
@@ -408,6 +437,7 @@ namespace aprl
           halo_->communicationSeconds() - communicationStart;
 
         pushDepositAndMigrate();
+        if(fieldStageAudit)fieldStageAudit->populations(particles_.size(),pmlCarriers_.size());
         if (config_.mesh.movingWindow.enabled)
           movingWindow_->particleHalo->clear(*fields_);
         stageStart = performanceNow();
@@ -416,6 +446,8 @@ namespace aprl
         if (incident_)
           incident_->correctAfterElectricUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
+        if(gridWorkAudit) gridWorkAudit->complete(*fields_);
+        if(fieldStageAudit)fieldStageAudit->sample("electric_mpi",*fields_);
         performanceSeconds_[FieldStage] += performanceNow() - stageStart;
         performanceSeconds_[FieldCommunicationStage] +=
           halo_->communicationSeconds() - communicationStart;
@@ -434,6 +466,10 @@ namespace aprl
           {
             const Double movingStart = performanceNow();
             finishMovingWindowStep();
+            if(fieldStageAudit) {
+              fieldStageAudit->populations(particles_.size(),pmlCarriers_.size());
+              fieldStageAudit->sample("remap",*fields_);
+            }
             performanceSeconds_[MovingWindowStage] += performanceNow() - movingStart;
           }
         if (config_.trajectory.enabled &&
@@ -459,6 +495,15 @@ namespace aprl
             break;
           }
       }
+
+    if(gridWorkAudit) {
+      movingWindow_->fields->setBeforeInletObserver(nullptr,nullptr);
+      gridWorkAudit->close();
+    }
+    if(fieldStageAudit) {
+      movingWindow_->fields->setStageObserver(nullptr,nullptr);
+      fieldStageAudit->close();
+    }
 
     reportPerformance(true);
 

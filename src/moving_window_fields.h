@@ -82,6 +82,12 @@ public:
   // Configure before the first beginStep. Disabled by default: no diagnostic
   // field traversal, extra MPI exchange, or timer is performed when disabled.
   void enableEnergyLedger(bool enabled = true);
+  // Optional read-only diagnostic hook after transverse CPML and before the
+  // inlet Ex/Ey overwrite. No field/current mutation is permitted by this API.
+  using BeforeInletObserver = void (*)(void*, const EBFieldGrid&);
+  void setBeforeInletObserver(BeforeInletObserver observer, void* context);
+  using StageObserver = void (*)(void*, const char*, const EBFieldGrid&);
+  void setStageObserver(StageObserver observer, void* context);
   const MovingWindowFieldEnergyLedger& energyLedger() const;
   // Call after MPI electric completion, before shift. The boundary callback
   // precedes MPI interface updates, so cannot provide the full end-step flux.
