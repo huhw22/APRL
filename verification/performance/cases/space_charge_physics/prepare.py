@@ -24,7 +24,7 @@ def geometry(data,last):
     # The common LAB snapshot must not back-propagate any plane event. This
     # selects a coordinate/time origin, not an extra physical propagation age.
     roundoff_margin=256*np.finfo(float).eps*max(1.,abs(float(required_center)))
-    initial_center=max(1e-7,float(required_center)+roundoff_margin)
+    initial_center=float(max(1e-7,float(required_center)+roundoff_margin))
     ref=(np.longdouble(initial_center)/c+mean_beta_time)/mean_beta
     assert ref>=np.max(arrival)
     # Held transverse trajectories omit transverse momentum in their velocity.
