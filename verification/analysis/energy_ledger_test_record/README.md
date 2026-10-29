@@ -1,8 +1,10 @@
 # 能量账本成功测试整理
 
 用户交付为工作区 `results/energy_ledger_test_record_20261030/README.md`。
-正文和新图仅介绍已完成的成功测试：真空脉冲、三维制造场、扰动识别、
-含粒子自由漂移、单／双节点开关对照、回归和读取器检查。
+展示正文介绍已知真空脉冲的解析对照和含粒子自由漂移的能量收支。
+自由漂移结果的结论限于离散能量收支一致性，不能扩展成束团动力学精度证明。
+三维制造场、扰动识别、开关逐位比较、软件回归、读取器和成本检查
+已移入独立的 `PROGRAM_VALIDATION.md`，不作为物理正确性的依据。
 
 `assemble.py` 是一次性整理脚本：同文件系统移动已完成的
 `results/discrete_energy_ledger_20261029/`，保留原路径的相对符号链接，
@@ -31,6 +33,9 @@ python3 source/aprl/verification/analysis/energy_ledger_test_record/validate.py 
 校验包括文件设备号／inode、非目录大小和 mtime、关键小文件 SHA256、
 链接、脚本快照及程序哈希。大型 H5 使用同文件系统原位重命名保留身份，
 没有声称重新扫描全部 H5 内容。完整原始验收记录保持原样。
+
+现有目录只刷新两份文档及交付哈希时，可导入 `assemble.py` 的
+`render_documents(evidence_root, bundle_root)`；不要重新执行搬迁入口。
 
 依赖：Python、NumPy、Matplotlib；工作区 `physics` 环境已提供。
 图的数值来自原始模块 summary 和逐步 CSV，绘图选用当前验收字段。

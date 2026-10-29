@@ -20,16 +20,25 @@ def validate(bundle):
         if item['kind']!='directory':assert a.st_size==item['size'] and a.st_mtime_ns==item['mtime_ns'],item['relative']
         if item['kind']=='link':assert os.readlink(p)==item['link_target'] and p.exists()==item['target_existed']
         if 'sha256' in item:assert sha(p)==item['sha256'];hashed+=1
-    markdown=(bundle/'README.md').read_text();links=[];images=[]
-    assert '{{' not in markdown and '旧差额' not in markdown
-    for m in re.finditer(r'(!?)\[[^\]]*\]\(([^)]+)\)',markdown):
-        relative=unquote(m[2].split('#',1)[0]);assert relative and not relative.startswith(('http:','https:'))
-        p=bundle/relative
-        # This validation report is written only after every other check passes.
-        if relative!='metadata/VALIDATION.json':assert p.exists(),relative
-        links.append(relative)
-        if m[1]:assert relative.startswith('figures/') and p.suffix=='.png';images.append(relative)
-    assert len(images)==5 and len(set(images))==5
+    links=[];images_by_document={}
+    expected_images={
+      'README.md':['figures/01_vacuum_pulse.png','figures/04_particle_free_drift.png'],
+      'PROGRAM_VALIDATION.md':['figures/02_manufactured_fields.png','figures/03_perturbation_detection.png','figures/05_audit_cost.png']}
+    for name,expected in expected_images.items():
+        markdown=(bundle/name).read_text();images=[]
+        assert '{{' not in markdown and '旧差额' not in markdown
+        if name=='README.md':
+            assert all(term not in markdown for term in ('required','软件回归','汇总读取器','负控','逐位','启用成本','逐点预测'))
+            assert '离散能量收支一致性' in markdown
+        for m in re.finditer(r'(!?)\[[^\]]*\]\(([^)]+)\)',markdown):
+            relative=unquote(m[2].split('#',1)[0]);assert relative and not relative.startswith(('http:','https:'))
+            p=bundle/relative
+            # This validation report is written only after every other check passes.
+            if relative!='metadata/VALIDATION.json':assert p.exists(),relative
+            links.append(relative)
+            if m[1]:assert relative.startswith('figures/') and p.suffix=='.png';images.append(relative)
+        assert images==expected,name
+        images_by_document[name]=images
     snapshots=json.loads((meta/'SNAPSHOT_SHA256.json').read_text());assert all(sha(bundle/p)==v for p,v in snapshots.items())
     render=json.loads((meta/'RENDER_SHA256.json').read_text());assert all(sha(bundle/p)==v for p,v in render.items())
     for stage in ('campaign-r2','mpi-r1'):
@@ -39,10 +48,10 @@ def validate(bundle):
         assert all(Path(p).exists() for p in frozen)
     program=json.loads((bundle/'programs/INDEX.json').read_text());assert all(sha(bundle/'programs'/name)==data['sha256'] for name,data in program.items())
     result={'checks_pass':True,'evidence_entries_preserved':len(inventory),'evidence_key_files_sha256_verified':hashed,
-      'markdown_links_checked':len(links),'embedded_success_figures':images,'script_snapshots_checked':len(snapshots),
+      'markdown_links_checked':len(links),'embedded_figures_by_document':images_by_document,'script_snapshots_checked':len(snapshots),
       'rendered_artifacts_sha256_verified':len(render),
       'compatibility_path_resolves_to_same_inode':True,'no_new_simulations':True,'scientific_files_rewritten':False,
-      'report_scope':'Successful completed validation only; figures re-render selected accepted-test fields.'}
+      'report_scope':'Main document: analytic vacuum propagation and scoped particle energy accounting. Program regression, diagnostics and performance in a separate record.'}
     (meta/'VALIDATION.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n')
     assert all((bundle/p).exists() for p in links)
     return result

@@ -104,6 +104,24 @@ def make_plots(root,output):
     fig.savefig(output/'05_audit_cost.png',dpi=180);fig.savefig(output/'05_audit_cost.pdf');plt.close(fig)
     save(output/'PLOT_DATA.json',data)
 
+def render_documents(root,target):
+    """Refresh authored documents without modifying archived test evidence."""
+    final=json.loads((root/'FINAL.json').read_text())
+    report=json.loads((root/'report-single-final/summary.json').read_text());perf=final['performance']
+    values={'FIELD_MAX':f"{final['max_cumulative_field_operator_residual_J']:.3g}",
+      'TOTAL_ABS':f"{abs(report['final']['discrete_total_residual_J']):.3g}",
+      'TOTAL_PERCENT':f"{100*abs(final['new_final_over_abs_net_particle_change']):.5f}"}
+    for label,key in [('SINGLE','single_node'),('MPI','two_node')]:
+        values[label+'_OFF']=f"{perf[key]['off_seconds_per_step']:.5f}";values[label+'_ON']=f"{perf[key]['on_seconds_per_step']:.5f}";values[label+'_COST']=f"{perf[key]['increment_percent']:.2f}"
+    for source,name in [('report_template.md','README.md'),('software_validation_template.md','PROGRAM_VALIDATION.md')]:
+        template=(HERE/source).read_text()
+        for key,value in values.items():template=template.replace('{{'+key+'}}',value)
+        assert '{{' not in template and '旧差额' not in template
+        (target/name).write_text(template)
+    save(target/'metadata/SUCCESS_METRICS.json',{'source':str(root/'FINAL.json'),'source_sha256':sha(root/'FINAL.json'),'values':values,'test_program_commit':'c7fcd20','new_simulations':0})
+    save(target/'metadata/RENDER_SHA256.json',{
+      str(q.relative_to(target)):sha(q) for q in [target/'README.md',target/'PROGRAM_VALIDATION.md',*(target/'figures').iterdir()] if q.is_file()})
+
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--workspace',type=Path,required=True);p.add_argument('--target',type=Path,required=True);p.add_argument('--confirmed-idle',action='store_true',required=True)
     a=p.parse_args();ws=a.workspace.resolve();target=a.target.absolute();old=ws/'results'/NAME
@@ -134,21 +152,9 @@ def main():
         index[name]={'target':str(path),'sha256':sha(path)}
     save(target/'programs/INDEX.json',index)
     make_plots(new,target/'figures')
-    report=json.loads((new/'report-single-final/summary.json').read_text());perf=final['performance']
-    values={'FIELD_MAX':f"{final['max_cumulative_field_operator_residual_J']:.3g}",
-      'TOTAL_ABS':f"{abs(report['final']['discrete_total_residual_J']):.3g}",
-      'TOTAL_PERCENT':f"{100*abs(final['new_final_over_abs_net_particle_change']):.5f}"}
-    for label,key in [('SINGLE','single_node'),('MPI','two_node')]:
-        values[label+'_OFF']=f"{perf[key]['off_seconds_per_step']:.5f}";values[label+'_ON']=f"{perf[key]['on_seconds_per_step']:.5f}";values[label+'_COST']=f"{perf[key]['increment_percent']:.2f}"
-    template=(HERE/'report_template.md').read_text()
-    for key,value in values.items():template=template.replace('{{'+key+'}}',value)
-    assert '{{' not in template and '旧差额' not in template
-    (target/'README.md').write_text(template)
-    save(target/'metadata/SUCCESS_METRICS.json',{'source':str(new/'FINAL.json'),'source_sha256':sha(new/'FINAL.json'),'values':values,'test_program_commit':'c7fcd20','new_simulations':0})
+    render_documents(new,target)
     save(target/'metadata/SNAPSHOT_SHA256.json',{str(q.relative_to(target)):sha(q) for q in (target/'scripts').rglob('*') if q.is_file()})
     shutil.copy2(HERE/'validate.py',target/'metadata/validate.py')
-    save(target/'metadata/RENDER_SHA256.json',{
-      str(q.relative_to(target)):sha(q) for q in [target/'README.md',*(target/'figures').iterdir()] if q.is_file()})
     import importlib.util
     spec=importlib.util.spec_from_file_location('validate_bundle',HERE/'validate.py');module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
     module.validate(target)
