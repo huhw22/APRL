@@ -97,6 +97,22 @@ def symlog_for_curves(axis, curves):
 
 
 def save_figure(figure, output, stem, outputs):
+    # The default symlog locator can stack zero and its adjacent labels.
+    # Retain its numeric ticks, but remove labels closer than24 display pixels.
+    figure.canvas.draw()
+    for axis in figure.axes:
+        if axis.get_yscale() != 'symlog':
+            continue
+        lower, upper = axis.get_ylim()
+        candidates = [value for value in axis.get_yticks() if lower <= value <= upper]
+        zero_y = axis.transData.transform((0, 0))[1]
+        candidates.sort(key=lambda value: abs(axis.transData.transform((0, value))[1]-zero_y))
+        selected, positions = [], []
+        for value in candidates:
+            position = axis.transData.transform((0, value))[1]
+            if all(abs(position-other)>=24 for other in positions):
+                selected.append(value); positions.append(position)
+        axis.set_yticks(sorted(selected))
     for extension in ('png', 'pdf'):
         path = output / (stem + '.' + extension)
         figure.savefig(path, dpi=180, bbox_inches='tight', facecolor='white')
@@ -180,6 +196,7 @@ def table(axis, columns, rows, widths):
         cell.set_edgecolor('#c8cdd2')
         if row == 0:
             cell.set_facecolor('#e9eff4'); cell.get_text().set_weight('bold')
+            cell.set_height(cell.get_height()*1.85)
         else:
             cell.set_facecolor('#ffffff' if row % 2 else '#f6f8fa')
     return display
@@ -263,22 +280,26 @@ def performance_figure(report, output, outputs):
         axes[0, column].set_title(LABELS[magnet] + ' | every throughput sample')
         axes[0, column].grid(axis='y', color='#dddddd', linewidth=.6)
         axes[0, column].legend(fontsize=9)
+        pair_values = []
         for comparison, name in enumerate(pairs):
             samples = values['comparisons'][name]['paired_percent_changes']
             require(len(samples) == 3 and np.isfinite(samples).all(), 'Missing paired measurements')
+            pair_values.append(samples)
             for repeat, value in enumerate(samples):
-                xpos = comparison + (repeat-1) * .18
-                axes[1, column].scatter(xpos, value, s=36, color=colors[repeat], zorder=3)
-                axes[1, column].annotate(format(value, '+.2f') + '%', (xpos, value), xytext=(0, 8 if repeat!=1 else -14),
-                    textcoords='offset points', ha='center', fontsize=8, color=colors[repeat])
                 paired_csv.append([magnet, name, repeat+1, value])
-            axes[1, column].plot([comparison-.26, comparison+.26], [np.median(samples)]*2, color='black', linewidth=1.3)
-        axes[1, column].set_xticks(x, pair_labels)
-        axes[1, column].set_ylabel('Paired time change [%]; positive costs more')
-        axes[1, column].set_title('All paired changes; black line = three-pair median')
-        axes[1, column].axhline(0, color='#555555', linewidth=.9)
-        axes[1, column].grid(axis='y', color='#dddddd', linewidth=.6)
-        axes[1, column].margins(x=.1, y=.25)
+        paired_rows = []
+        for repeat in range(3):
+            paired_rows.append(['Repeat '+str(repeat+1)] + [format(v[repeat], '+.2f')+'%' for v in pair_values])
+        paired_rows.append(['Paired median'] + [format(float(np.median(v)), '+.2f')+'%' for v in pair_values])
+        paired_rows.append(['Ratio of medians'] + [format(values['comparisons'][name]['ratio_of_medians_percent'], '+.2f')+'%' for name in pairs])
+        summary = table(axes[1, column], ['Time change'] + list(pair_labels), paired_rows, [.24,.19,.19,.19,.19])
+        summary.set_fontsize(8.7)
+        for (row, col), cell in summary.get_celld().items():
+            if row in (1,2,3):
+                cell.get_text().set_color(colors[row-1])
+            if row in (4,5):
+                cell.get_text().set_weight('bold')
+        axes[1, column].set_title('Every paired change [%]; positive costs more')
     figure.suptitle('Small-case diagnostic overhead | fixed 16 MPI × 8 threads | every repetition retained', fontsize=15)
     figure.text(.5, .015, 'Same-node paired cases, profiling disabled; timing excludes preparation and closing.\n'
         'Three repeats characterize this short fixture only. No production-cost extrapolation or strict zero-cost claim.',

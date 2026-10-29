@@ -45,6 +45,10 @@ length/time units, for example in an SI card:
 This creates audit-entry-energy.h5 and audit-exit-energy.h5. No raw field_planes or
 particle_planes are required. Empty/absent energy_planes disables the feature.
 Names must be distinct from other configured detector names.
+An energy plane upstream of moving-window admission takes the existing pending
+particle traversal fallback so its crossings are not lost; this can be costly
+for a full bunch. Prefer an in-window entrance such as the release plane when
+that matches the intended physical comparison. No guard is expanded for it.
 Positions must be chosen for the actual simulation; the example belongs only
 to the bounded acceptance fixture. Existing raw detector files are unchanged.
 
