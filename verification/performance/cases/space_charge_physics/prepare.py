@@ -18,7 +18,15 @@ def geometry(data,last):
     u=np.asarray(data['proper_velocity'],dtype=np.longdouble);arrival=np.asarray(data['arrival_time_offset_s'],dtype=np.longdouble)
     w=np.asarray(data['macro_weight'],dtype=np.longdouble);g=np.sqrt(1+np.sum(u*u,axis=1));bz=u[:,2]/g
     boost=np.longdouble(G_BOOST);gb=np.sqrt((boost-1)*(boost+1));beta=gb/boost
-    ref=(np.longdouble(1e-7)/c+np.sum(w*bz*arrival)/np.sum(w))/ (np.sum(w*bz)/np.sum(w))
+    mean_beta=np.sum(w*bz)/np.sum(w)
+    mean_beta_time=np.sum(w*bz*arrival)/np.sum(w)
+    required_center=np.longdouble(c)*(mean_beta*np.max(arrival)-mean_beta_time)
+    # The common LAB snapshot must not back-propagate any plane event. This
+    # selects a coordinate/time origin, not an extra physical propagation age.
+    roundoff_margin=256*np.finfo(float).eps*max(1.,abs(float(required_center)))
+    initial_center=max(1e-7,float(required_center)+roundoff_margin)
+    ref=(np.longdouble(initial_center)/c+mean_beta_time)/mean_beta
+    assert ref>=np.max(arrival)
     # Held transverse trajectories omit transverse momentum in their velocity.
     # heldLongitudinalBetaZ first removes LAB transverse momentum, then boosts.
     plus=(np.sqrt(1+u[:,2]**2)+u[:,2])/(boost+gb)
@@ -28,7 +36,7 @@ def geometry(data,last):
     frame_t0=np.min(input_time-2*DZ/(boost*c*(beta+held)))
     source=-boost*c*(beta+held)*(input_time-frame_t0)
     translation=-.5*(source.min()+source.max())
-    initial_ref=boost*boost*(np.longdouble(1e-7)+beta*c*frame_t0)
+    initial_ref=boost*boost*(np.longdouble(initial_center)+beta*c*frame_t0)
     active=math.ceil(last/(G_BOOST*DZ))+64+128+2
     # Full reference is streamed, and sized only from its actual query bounds.
     full=256
@@ -49,6 +57,7 @@ def geometry(data,last):
     return {'reference_cells':full,'active_cells':active,'initial_offset':offset,
       'duration_s':duration,'expected_stop_step':steps,'stop_reference_lab_z_m':stop,
       'reference_initial_lab_z_m':float(initial_ref),'input_reference_time_offset_s':float(ref),
+      'initial_center_lab_z_m':initial_center,'minimum_forward_snapshot_center_z_m':float(required_center),
       'initial_frame_lab_time_s':float(frame_t0),'box_translation_m':float(translation),
       'minimum_reference_query_cells':minimum,'maximum_reference_query_cells':maximum,
       'held_beta_range':[float(held.min()),float(held.max())],
@@ -56,6 +65,7 @@ def geometry(data,last):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--workspace',type=Path,required=True);p.add_argument('--root',type=Path,required=True)
+    p.add_argument('--cases',nargs='+',choices=('uniform','converging','gaussian'),default=['uniform','converging','gaussian'])
     a=p.parse_args();ws=a.workspace.resolve();root=a.root.resolve();root.mkdir(parents=True,exist_ok=False)
     here=Path(__file__).resolve().parent;binary=ws/'build/discrete-energy-ledger-20261029/aprl'
     assert sha(binary)=='c48c376929fbdabde4f9cbf08145aa11ea83f86e11839aec24e5f26f3601977b'
@@ -66,7 +76,7 @@ def main():
     shutil.copy2(here.parent/'discrete_energy_ledger/review_discrete.py',scripts/'review_discrete.py')
     shutil.copy2(here.parents[2]/'analysis/relative_energy_ledger/relative_ledger.py',scripts/'relative_ledger.py')
     cases=[]
-    for kind in ('uniform','converging','gaussian'):
+    for kind in a.cases:
         directory=root/kind;directory.mkdir();(directory/'reference_input').mkdir()
         model=Sphere(kind);entry=model.event(0.);count=len(model.weights)
         dtype=[('plane_position_m','<f8',(2,)),('arrival_time_offset_s','<f8'),('proper_velocity','<f8',(3,)),('source_id','<u8'),('macro_weight','<f8')]
@@ -93,7 +103,7 @@ def main():
         cfg['mesh']['cells']=[160,160,geo['reference_cells']];cfg['mesh']['duration']=geo['duration_s']
         cfg['mesh']['moving_window']['reference_directory']=str(directory/'reference')
         cfg['mesh']['moving_window']['cells']=geo['active_cells']
-        cfg['beam']['reference'].update(input_plane_z=0.,initial_center_z=1e-7,activation_plane_z=0.)
+        cfg['beam']['reference'].update(input_plane_z=0.,initial_center_z=geo['initial_center_lab_z_m'],activation_plane_z=0.)
         cfg['beam']['input'].update(file=str(inputfile),electrons=model.electrons)
         cfg['sources']={'incident_waves':[],'magnetic_elements':[]}
         cfg['detectors']['directory']=str(directory/'detectors');cfg['detectors']['field_planes']=[]
