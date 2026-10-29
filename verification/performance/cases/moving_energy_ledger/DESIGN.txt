@@ -1,0 +1,71 @@
+Moving-volume energy accounting (2026-10-29)
+
+Scope
+-----
+Read-only measurements around the existing field advance, inlet assignment,
+remap and particle deposition. Cowan, Boris, CPML, reference values, release
+events, deposit arguments and update ordering are unchanged. All energies are
+boost-frame quantities; this is not a radiation-only or lab-spectrum budget.
+
+Energy functional and signs
+---------------------------
+U uses the existing cell-centred E/B interpolation and the physical volume
+inside transverse CPML. K includes pending and retained particles; removed
+particle kinetic energy remains in the accounted K total. Positive W adds
+energy; positive Q is outward.
+
+R_raw = delta(K_retained + K_removed + U) + sum(Q_face) - W_prescribed.
+R = R_raw - W_ballistic_boundary - deltaU_remap - W_inlet
+          - W_frozen_constraint - W_carrier_constraint.
+Q_longitudinal = Q_zminus + Q_zplus - deltaU_remap - W_inlet.
+deltaU_remap = U_inserted - U_cropped + U_interface_correction.
+
+The inserted/cropped terms are components of remap, not additional terms in R.
+The six Q_face values represent propagation only. No duplicate -u*v sweep
+flux is added to the explicitly measured remap.
+
+Field sequence
+--------------
+At beginStep capture all six powers at the current fixed window location.
+The boundary callback follows electric/CPML updates but precedes MPI electric
+interface completion. It measures the inlet Ex/Ey assignment's change of the
+existing cell-centred energy and its local change in boundary power. After
+MPI completion, the full end power minus that assignment contribution gives
+the pre-assignment propagation endpoint. Trapezoid integration joins endpoints
+at one location, not the previous step's pre-remap boundary.
+
+Only cell 0 uses the replaced Ex/Ey node plane. Its energy difference includes
+unchanged neighbour nodes and their cross terms. It is not the squared energy
+of the replacement field or difference field. Remap retained cells map exactly
+to old cells. Each rank measures entering minus leaving cell energy; MPI
+interface discrepancies are explicitly retained, not assumed to cancel.
+Independent module tests compare these measurements to full-volume sums.
+
+Constrained sources
+-------------------
+Frozen particles and post-exit current carriers can deposit without changing
+their accounted kinetic energy. Actual locally deposited segments are clipped
+to the physical volume. Their separate supply-work estimate is
+  W = -sum(q_effective * dx dot (E_old + E_new)/2).
+Carriers use their actual deposited current weight. Each sample uses the path
+midpoint; new E receives the same MPI interpolation halo as old E. All ranks
+participate in this diagnostic halo exchange, including empty-sample ranks.
+This estimate is independent of the measured residual. It is NOT an exact
+adjoint of CIC deposition, and partial-step segments use Maxwell-step endpoint
+fields. It must remain labelled approximate, separate from device work.
+
+Limits and cost
+---------------
+Cell-centred E and staggered B, Cowan spatial filtering, particle/source
+approximations and approximate surface integration do not define an exact
+algebraic invariant. closure_valid retains its conservative existing tests;
+recording missing exchanges does not itself certify physical convergence.
+Tests report the residual without choosing a new percentage to call it PASS.
+
+Disabled diagnostics add no measurement scans, sample allocation, timers or
+communication. Enabled measurements traverse surfaces/boundary cells and
+actual constrained trajectories; no additional full-grid array is allocated.
+Two rank-seconds counters report boundary/remap and constrained-source costs.
+End-to-end profile-off paired timings, rather than these counters alone, are
+the performance evidence. New optional diagnostics are not a reason to alter
+the production window, timestep, input, default binary or simulation length.

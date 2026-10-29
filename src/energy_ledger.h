@@ -34,6 +34,18 @@ namespace aprl
     double prescribedWork;
     double boundarySourceWork;
     double boundarySourceAbsWork;
+    // Moving-volume terms. Positive remap/overwrite adds energy to the grid;
+    // longitudinalBoundaryOutward combines propagation, remap and overwrite.
+    double movingInsertedField;
+    double movingCroppedField;
+    double movingRemapFieldChange;
+    double movingRemapInterfaceCorrection;
+    double inletOverwriteWork;
+    double longitudinalBoundaryOutward;
+    double movingEnergyDiagnosticRankSeconds;
+    double frozenConstraintWork;
+    double carrierConstraintWork;
+    double constraintEnergyDiagnosticRankSeconds;
     double balanceResidualRaw;
     double balanceResidual;
     double relativeBalanceExchange;
@@ -69,7 +81,8 @@ namespace aprl
               std::size_t bufferRecords, unsigned int compressionLevel,
               bool durableProgress, bool overwrite = false,
               const RunMetadata* metadata = NULL,
-              bool approximateBoundaryInjection = false);
+              bool approximateBoundaryInjection = false,
+              bool movingVolume = false);
     void append(const EnergyLedgerRecord& record);
     void flush();
     /* Explicit snapshot durability; ordinary throughput flush is unchanged. */

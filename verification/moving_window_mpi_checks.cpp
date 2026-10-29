@@ -21,6 +21,8 @@ constexpr std::size_t NX=24,NY=26,NZ=48;
 constexpr Double DZ=1.2543262415359034e-6;
 std::uint64_t checked=0,causalChecked=0,poisonDifferences=0;
 double maximumFieldRelative=0.,maximumHistoryRelative=0.;
+std::uint64_t energyBitwiseChecked=0,energyStepsChecked=0;
+long double maximumEnergyScaledError=0.,maximumFluxScaledError=0.,poisonInterfaceEnergy=0.;
 void require(bool good,const char* message) {if(!good)throw std::runtime_error(message);}
 bool equal(Double a,Double b) {return std::memcmp(&a,&b,sizeof(Double))==0;}
 YeeComponent& component(EBFieldGrid& f,unsigned a) {
@@ -127,6 +129,181 @@ void current(EBFieldGrid& f,std::size_t local,std::ptrdiff_t offset,std::size_t 
       }
   }
 }
+
+// Independent full-volume oracle: no two-plane remap identity is assumed here.
+long double physicalEnergy(const EBFieldGrid& f) {
+  const auto p=parameters();const auto& g=f.geometry();long double value=0.;
+  const long double volume=static_cast<long double>(g.dx)*g.dy*g.dz;
+  for(std::size_t k=0;k<g.nz;++k)for(std::size_t j=p.cells[1];j<g.ny-p.cells[1];++j)
+    for(std::size_t i=p.cells[0];i<g.nx-p.cells[0];++i)
+      value+=static_cast<long double>(f.fieldEnergyDensityCell(i,j,k))*volume;
+  return value;
+}
+long double independentPlaneEnergy(const EBFieldGrid& f,std::size_t k) {
+  const auto p=parameters();const auto& g=f.geometry();long double value=0.;
+  const long double volume=static_cast<long double>(g.dx)*g.dy*g.dz;
+  for(std::size_t j=p.cells[1];j<g.ny-p.cells[1];++j)
+    for(std::size_t i=p.cells[0];i<g.nx-p.cells[0];++i)
+      value+=static_cast<long double>(f.radiationSampleCell(i,j,k).energyDensity)*volume;
+  return value;
+}
+std::array<long double,6> independentPower(const EBFieldGrid& f,int rank,int size) {
+  const auto p=parameters();const auto& g=f.geometry();std::array<long double,6> result{};
+  // Visit physical cells once and use the complete E-cross-B sample, instead
+  // of the implementation's separate face loops/component-only sampler.
+  const long double areas[3]={static_cast<long double>(g.dy)*g.dz,
+    static_cast<long double>(g.dx)*g.dz,static_cast<long double>(g.dx)*g.dy};
+  for(std::size_t k=0;k<g.nz;++k)for(std::size_t j=p.cells[1];j<g.ny-p.cells[1];++j)
+    for(std::size_t i=p.cells[0];i<g.nx-p.cells[0];++i) {
+      const auto sample=f.radiationSampleCell(i,j,k);
+      if(i==p.cells[0])result[0]-=static_cast<long double>(sample.poynting[0])*areas[0];
+      if(i+1==g.nx-p.cells[0])result[1]+=static_cast<long double>(sample.poynting[0])*areas[0];
+      if(j==p.cells[1])result[2]-=static_cast<long double>(sample.poynting[1])*areas[1];
+      if(j+1==g.ny-p.cells[1])result[3]+=static_cast<long double>(sample.poynting[1])*areas[1];
+      if(rank==0&&k==0)result[4]-=static_cast<long double>(sample.poynting[2])*areas[2];
+      if(rank+1==size&&k+1==g.nz)result[5]+=static_cast<long double>(sample.poynting[2])*areas[2];
+    }
+  return result;
+}
+struct EnergyReference {
+  EBFieldGrid* fields=nullptr;
+  bool capture=false;
+  std::uint64_t captured=0;
+  std::vector<Double> before[2];
+};
+Double energyReference(void* context,unsigned a,std::size_t i,std::size_t j,
+                       std::ptrdiff_t k,std::size_t n) {
+  auto& r=*static_cast<EnergyReference*>(context);
+  if(r.capture) {
+    require(a==0&&i==0&&j==0,"Unexpected first overwrite reference query");
+    // The first value query occurs after transverse CPML and before any
+    // overwrite. Save only the original native Ex/Ey plane for a later oracle.
+    for(unsigned c=0;c<2;++c) {
+      const auto& v=component(*r.fields,c);
+      r.before[c].assign(v.data(),v.data()+v.nx()*v.ny());
+    }
+    r.capture=false;++r.captured;
+  }
+  return wave(nullptr,a,i,j,k,n);
+}
+void copyFields(EBFieldGrid& to,EBFieldGrid& from) {
+  for(unsigned c=0;c<9;++c) {
+    const auto& source=component(from,c);auto& target=component(to,c);
+    std::copy(source.data(),source.data()+source.size(),target.data());
+  }
+}
+void requireEnergyClose(long double got,long double want,long double scale,const char* message) {
+  // Same cell-energy definition, independently summed whole volumes. Bound
+  // cancellation by the source energies and long-double accumulation length,
+  // never by a possibly zero operation energy itself; fixed before execution.
+  const long double error=std::abs(got-want)/std::max(scale,1e-90L);
+  maximumEnergyScaledError=std::max(maximumEnergyScaledError,error);
+  require(error<=128.L*NX*NY*NZ*std::numeric_limits<long double>::epsilon(),message);
+}
+void energyAccounting(int rank,int size,bool minimumSlab) {
+  const std::size_t globalNz=minimumSlab?2*static_cast<std::size_t>(size):NZ;
+  const std::size_t local=globalNz/size*rank;
+  EBFieldGrid measured(geometry(globalNz/size)),plain(geometry(globalNz/size)),oracle(geometry(globalNz/size));
+  EnergyReference capture;capture.fields=&measured;
+  MovingWindowReference measuredRef;measuredRef.value=energyReference;measuredRef.context=&capture;
+  MovingWindowReference plainRef;plainRef.value=wave;
+  MovingWindowFields w(measured.geometry(),globalNz,local,MPI_COMM_WORLD,parameters(),measuredRef);
+  MovingWindowFields off(plain.geometry(),globalNz,local,MPI_COMM_WORLD,parameters(),plainRef);
+  w.installBoundary(measured);off.installBoundary(plain);w.enableEnergyLedger();
+  EBZSlabHaloExchange wm(MPI_COMM_WORLD),pm(MPI_COMM_WORLD);
+  std::ptrdiff_t offset=100;fill(measured,local,offset,0,wave,false);fill(plain,local,offset,0,wave,false);
+  long double overwrite=0.,remap=0.,inserted=0.,cropped=0.,energyScale=0.;
+  std::array<long double,6> flux{},fluxScale{};
+  for(std::size_t n=0;n<8;++n) {
+    const auto startPower=independentPower(measured,rank,size);
+    current(measured,local,offset,n,rank,size);current(plain,local,offset,n,rank,size);
+    w.beginStep(measured,n,offset);off.beginStep(plain,n,offset);
+    bool rejected=false;
+    try{w.enableEnergyLedger(false);}catch(const std::logic_error&){rejected=true;}
+    require(rejected,"Energy accounting changed mode after the first step");
+    wm.advanceMagnetic(measured,w.physicalElectricHalos(measured,n));
+    pm.advanceMagnetic(plain,off.physicalElectricHalos(plain,n));
+    capture.capture=rank==0;
+    wm.advanceElectric(measured);pm.advanceElectric(plain);
+    require(!capture.capture,"Inlet overwrite oracle did not capture native values");
+    // Reconstruct the PRE-overwrite, POST-MPI endpoint independently. This
+    // specifically catches accounting at the earlier boundary callback, when
+    // MPI interface E has not yet received its final update.
+    copyFields(oracle,measured);
+    if(rank==0)for(unsigned c=0;c<2;++c)
+      std::copy(capture.before[c].begin(),capture.before[c].end(),component(oracle,c).data());
+    const long double before=physicalEnergy(oracle),after=physicalEnergy(measured);
+    overwrite+=after-before;energyScale+=std::abs(before)+std::abs(after);
+    const auto endPower=independentPower(oracle,rank,size);
+    for(unsigned face=0;face<6;++face) {
+      const long double halfDt=.5L*static_cast<long double>(measured.geometry().dt);
+      flux[face]+=halfDt*(startPower[face]+endPower[face]);
+      fluxScale[face]+=halfDt*(std::abs(startPower[face])+std::abs(endPower[face]));
+    }
+    rejected=false;try{w.shift(measured,n+1,offset-1);}catch(const std::logic_error&){rejected=true;}
+    require(rejected,"Shift accepted missing end-step energy sample");
+    w.finishEnergyLedgerStep(measured);off.finishEnergyLedgerStep(plain);
+    rejected=false;try{w.finishEnergyLedgerStep(measured);}catch(const std::logic_error&){rejected=true;}
+    require(rejected,"Duplicate energy flux integration was accepted");
+    const auto& e=w.energyLedger();
+    requireEnergyClose(e.inletOverwriteEnergyJ,overwrite,energyScale,"Inlet overwrite energy differs from full-volume oracle");
+    for(unsigned face=0;face<6;++face) {
+      const long double error=std::abs(e.outwardEnergyFace[face]-flux[face])/
+        std::max(fluxScale[face],1e-90L);
+      maximumFluxScaledError=std::max(maximumFluxScaledError,error);
+      require(error<=128.L*std::numeric_limits<Double>::epsilon(),"Same-origin pre-overwrite face integral differs from oracle");
+    }
+    // Deliberately make a duplicated upper Yee plane disagree with its peer.
+    // This artificial state tests remap-only bookkeeping, not propagation.
+    if(n==1&&rank+1<size)for(unsigned c:{0u,1u,5u}) {
+      auto& a=component(measured,c);auto& b=component(plain,c);
+      for(std::size_t j=0;j<a.ny();++j)for(std::size_t i=0;i<a.nx();++i) {
+        const Double delta=c<3?.75:.75/SI::c;
+        a(i,j,measured.geometry().nz)+=delta;b(i,j,plain.geometry().nz)+=delta;
+      }
+    }
+    const long double pre=physicalEnergy(measured);
+    if(rank+1==size)cropped+=independentPlaneEnergy(measured,measured.geometry().nz-1);
+    const long double previousCorrection=e.remapInterfaceCorrectionJ;
+    --offset;w.shift(measured,n+1,offset);off.shift(plain,n+1,offset);
+    const long double post=physicalEnergy(measured);remap+=post-pre;
+    energyScale+=std::abs(pre)+std::abs(post);
+    if(rank==0)inserted+=independentPlaneEnergy(measured,0);
+    requireEnergyClose(e.remapEnergyJ,remap,energyScale,"Two-plane remap differs from full-volume energy change");
+    requireEnergyClose(e.insertedEnergyJ,inserted,energyScale,"Physical insertion energy differs");
+    requireEnergyClose(e.croppedEnergyJ,cropped,energyScale,"Physical cropping energy differs");
+    requireEnergyClose(e.remapEnergyJ,e.insertedEnergyJ-e.croppedEnergyJ+e.remapInterfaceCorrectionJ,
+      energyScale,"Remap interface contribution was lost or counted twice");
+    if(n==1&&size>1) {
+      const long double delta=e.remapInterfaceCorrectionJ-previousCorrection;
+      long double total=0.,source=0.;MPI_Allreduce(&delta,&total,1,MPI_LONG_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+      MPI_Allreduce(&pre,&source,1,MPI_LONG_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
+      poisonInterfaceEnergy=std::max(poisonInterfaceEnergy,std::abs(total));
+      require(std::abs(total)>1024.L*std::numeric_limits<Double>::epsilon()*source,
+        "Poisoned shared Yee plane did not exercise a nonzero remap interface contribution");
+    }
+    for(unsigned c=0;c<9;++c) {
+      const auto& a=component(measured,c);const auto& b=component(plain,c);
+      for(std::size_t q=0;q<a.size();++q){++energyBitwiseChecked;require(equal(a.data()[q],b.data()[q]),"Energy diagnostics changed native fields/current");}
+    }
+    auto& a=dynamic_cast<EBConvolutionalPML&>(measured.boundary());
+    auto& b=dynamic_cast<EBConvolutionalPML&>(plain.boundary());
+    for(unsigned h=0;h<12;++h) {
+      const auto& av=a.checkpointHistory(h);const auto& bv=b.checkpointHistory(h);
+      for(std::size_t q=0;q<av.size();++q){++energyBitwiseChecked;require(equal(av[q],bv[q]),"Energy diagnostics changed CPML history");}
+    }
+    require(w.referenceValues()==off.referenceValues(),"Energy diagnostics issued extra reference queries");
+    require(e.fluxSteps==n+1&&e.remapSteps==n+1&&e.overwriteEvents==(rank==0?n+1:0),"Energy event count mismatch");
+    ++energyStepsChecked;
+  }
+  const auto& e=off.energyLedger();
+  require(!e.enabled&&e.diagnosticCellSamples==0&&e.diagnosticSeconds==0.&&e.fluxSteps==0&&e.remapSteps==0&&e.overwriteEvents==0,
+    "Disabled diagnostics did not stay idle");
+  require(e.inletOverwriteEnergyJ==0.&&e.insertedEnergyJ==0.&&e.croppedEnergyJ==0.&&e.remapEnergyJ==0.&&e.remapInterfaceCorrectionJ==0.,
+    "Disabled energy counters changed");
+  for(auto value:e.outwardEnergyFace)require(value==0.,"Disabled face energy changed");
+  require(w.energyLedger().diagnosticCellSamples>0&&w.energyLedger().diagnosticSeconds>=0.,"Enabled diagnostics were not measured");
+}
 void propagation(int rank,int size) {
   const auto local=NZ/size*rank;EBFieldGrid f(geometry(NZ/size)),serial(geometry(NZ));
   MovingWindowReference ref;ref.value=wave;
@@ -226,10 +403,15 @@ int main(int argc,char** argv) {
   try {
     configureComputeThreads(provided);require(size==1||size==2||size==4,"Use 1, 2 or 4 MPI ranks");
     stateRemap(rank,size,false);stateRemap(rank,size,true);propagation(rank,size);causality(rank,size);
+    energyAccounting(rank,size,false);energyAccounting(rank,size,true);
     unsigned long long local[3]={checked,causalChecked,poisonDifferences},global[3]={};
     MPI_Allreduce(local,global,3,MPI_UNSIGNED_LONG_LONG,MPI_SUM,MPI_COMM_WORLD);
     double errors[2]={maximumFieldRelative,maximumHistoryRelative},allErrors[2]={};
     MPI_Allreduce(errors,allErrors,2,MPI_DOUBLE,MPI_MAX,MPI_COMM_WORLD);
+    unsigned long long energyCounts[2]={energyBitwiseChecked,energyStepsChecked},allEnergyCounts[2]={};
+    MPI_Allreduce(energyCounts,allEnergyCounts,2,MPI_UNSIGNED_LONG_LONG,MPI_SUM,MPI_COMM_WORLD);
+    long double energyErrors[3]={maximumEnergyScaledError,maximumFluxScaledError,poisonInterfaceEnergy},allEnergyErrors[3]={};
+    MPI_Allreduce(energyErrors,allEnergyErrors,3,MPI_LONG_DOUBLE,MPI_MAX,MPI_COMM_WORLD);
     require(global[2]>0,"Right-end perturbation did not affect the sacrifice collar");
     if(rank==0) {
       std::ofstream file;if(argc>1)file.open(argv[1]);
@@ -239,6 +421,11 @@ int main(int argc,char** argv) {
         <<",\"remap_values_bitwise_checked\":"<<global[0]<<",\"causal_values_bitwise_checked\":"<<global[1]
         <<",\"poisoned_collar_differences\":"<<global[2]<<",\"maximum_field_relative_l2\":"<<allErrors[0]
         <<",\"maximum_history_relative_l2\":"<<allErrors[1]
+        <<",\"energy_diagnostic_bitwise_checked\":"<<allEnergyCounts[0]
+        <<",\"energy_steps_checked\":"<<allEnergyCounts[1]
+        <<",\"maximum_operation_energy_error_over_source_energy\":"<<allEnergyErrors[0]
+        <<",\"maximum_flux_error_over_absolute_integral\":"<<allEnergyErrors[1]
+        <<",\"poisoned_interface_energy_J\":"<<allEnergyErrors[2]
         <<",\"evolution_relative_tolerance\":2e-12,\"scope\":\"native fields and transverse CPML; fixed slabs; no particle/production/radiation acceptance\"}\n";
     }
     MPI_Finalize();return 0;

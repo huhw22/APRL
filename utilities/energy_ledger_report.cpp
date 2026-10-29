@@ -75,7 +75,7 @@ namespace
   }
 
   void printRecord(const char* label, const aprl::EnergyLedgerRecord& record,
-                   bool hasAbsoluteBoundaryWork)
+                   bool hasAbsoluteBoundaryWork, bool hasMovingWork)
   {
     std::cout << label << ": step=" << record.step
       << " time_box_s=" << record.timeBox
@@ -106,6 +106,15 @@ namespace
       << record.uncorrelatedSigmaGammaLab
       << " linear_chirp_gamma_per_m="
       << record.linearChirpGammaPerM << "\n";
+    if (hasMovingWork)
+      std::cout << "  longitudinal_boundary_outward_J=" << record.longitudinalBoundaryOutward
+        << " moving_inserted_field_J=" << record.movingInsertedField
+        << " moving_cropped_field_J=" << record.movingCroppedField
+        << " moving_remap_field_change_J=" << record.movingRemapFieldChange
+        << " moving_remap_interface_correction_J=" << record.movingRemapInterfaceCorrection
+        << " inlet_overwrite_work_J=" << record.inletOverwriteWork
+        << " frozen_constraint_work_J=" << record.frozenConstraintWork
+        << " carrier_constraint_work_J=" << record.carrierConstraintWork << "\n";
     if (hasAbsoluteBoundaryWork)
       {
         std::cout << "  boundary_source_abs_work_J="
@@ -139,7 +148,7 @@ int main(int argc, char** argv)
       group = H5Gopen2(file, "/energy_ledger", H5P_DEFAULT);
       requireHandle(group, "Cannot open /energy_ledger");
       const int formatVersion = readIntAttribute(group, "format_version");
-      if (formatVersion != 1 && formatVersion != 2 && formatVersion != 3)
+      if (formatVersion < 1 || formatVersion > 4)
         throw std::runtime_error("Unsupported energy-ledger format version");
       const std::uint64_t committed = readUnsigned(
         group, "committed_records");
@@ -179,10 +188,10 @@ int main(int argc, char** argv)
         << "format_version=" << formatVersion
         << " committed_records=" << committed
         << " complete=" << static_cast<unsigned int>(complete) << "\n";
-      printRecord("initial", initial, formatVersion >= 3);
+      printRecord("initial", initial, formatVersion >= 3, formatVersion >= 4);
       if (hasSelected)
         {
-          printRecord("selected", selected, formatVersion >= 3);
+          printRecord("selected", selected, formatVersion >= 3, formatVersion >= 4);
           std::cout
             << "initial_to_selected: particle_kinetic_accounted_J="
             << (selected.particleKineticActive +
@@ -201,7 +210,7 @@ int main(int argc, char** argv)
             << " sigma_gamma_lab="
             << (selected.sigmaGammaLab - initial.sigmaGammaLab) << "\n";
         }
-      printRecord("final", final, formatVersion >= 3);
+      printRecord("final", final, formatVersion >= 3, formatVersion >= 4);
       if (formatVersion >= 3 && final.boundaryInjectionEntries > 0)
         std::cout << "note: boundary-source work / stored field energy is "
           "a source-activity scale, not the fraction of missing external "

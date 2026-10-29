@@ -74,6 +74,9 @@ namespace aprl
         const FieldVector<Double>& end, Double startFraction,
         ParticleBoundaryHit& hit) const;
     void recordMovingWindowExit(Double charge);
+    void queueMovingConstraintWork(const FieldVector<Double>& start,
+        const FieldVector<Double>& end, Double charge, bool carrier);
+    void finalizeMovingConstraintWork();
     static Double movingWindowFieldValue(void* context, unsigned component,
         std::size_t i, std::size_t j, std::ptrdiff_t k, std::size_t step);
     void loadCheckpointGeometry();

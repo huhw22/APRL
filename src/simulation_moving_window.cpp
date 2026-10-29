@@ -47,15 +47,6 @@ template<class T,class Owner> void migrateWindowObjects(std::vector<T>& values,
   exchangeVector(lower,incoming,lo,hi,tag+2,comm);
   values.insert(values.end(),incoming.begin(),incoming.end());
 }
-long double planeEnergy(const EBFieldGrid& fields, std::size_t k,
-    const EBCPMLParameters& p) {
-  const auto& g=fields.geometry(); long double value=0.;
-  const long double volume=static_cast<long double>(g.dx)*g.dy*g.dz;
-  for(std::size_t j=p.cells[1];j<g.ny-p.cells[1];++j)
-    for(std::size_t i=p.cells[0];i<g.nx-p.cells[0];++i)
-      value+=static_cast<long double>(fields.fieldEnergyDensityCell(i,j,k))*volume;
-  return value;
-}
 }
 
 void Simulation::initializeMovingWindow() {
@@ -247,7 +238,7 @@ void Simulation::initializeMovingWindow() {
       <<" reference_solver_beta="<<w.solverBeta<<" translation_beta="<<w.translationBeta
       <<"; all source particles retained, source preparation on rank 0, per-rank bounded disk readers; no full-domain E/B donor.";
     logRoot(communicator_,message.str());
-    if(config_.energyLedger.enabled)logRoot(communicator_,"Moving-volume energy: window-rank-*.csv separately accounts inserted/cropped cell energy; the stationary-volume energy ledger residual alone is not a conservation or radiation estimate.");
+    if(config_.energyLedger.enabled)logRoot(communicator_,"Moving-volume energy: HDF5 accounts same-position six-face propagation, inlet overwrite and remap (including interface corrections); longitudinal_boundary_outward_J combines longitudinal exchanges. The residual remains a numerical/source convergence diagnostic, not a pure-radiation estimate.");
   }
 #endif
 }
@@ -282,6 +273,7 @@ void Simulation::installMovingWindowBoundary() {
   MovingWindowReference ref;ref.context=movingWindow_.get();ref.value=&Simulation::movingWindowFieldValue;
   movingWindow_->fields.reset(new MovingWindowFields(localGeometry_,globalGeometry_.nz,localZOffset_,communicator_,config_.boundary.cpml,ref));
   movingWindow_->fields->installBoundary(*fields_);
+  movingWindow_->fields->enableEnergyLedger(config_.energyLedger.enabled);
   movingWindow_->particleHalo.reset(new EBParticleFieldHalo(localGeometry_,communicator_));
 }
 void Simulation::initializeMovingWindowFields() {
@@ -298,13 +290,14 @@ EBElectricHaloView Simulation::beginMovingWindowStep() {
 }
 void Simulation::finishMovingWindowStep() {
   auto& w=*movingWindow_;
-  if(config_.energyLedger.enabled&&rank_==size_-1)
-    w.croppedFieldEnergy+=planeEnergy(*fields_,localGeometry_.nz-1,config_.boundary.cpml);
   w.offset=w.initialOffset-static_cast<std::ptrdiff_t>(step_);
   const auto report=w.fields->shift(*fields_,step_,w.offset);
   w.shiftSeconds+=report.totalSeconds;w.movedBytes+=report.fieldMovedBytes+report.historyMovedBytes;
   w.communicatedBytes+=report.sentBytes+report.receivedBytes;
-  if(config_.energyLedger.enabled&&rank_==0)w.insertedFieldEnergy+=planeEnergy(*fields_,0,config_.boundary.cpml);
+  if(config_.energyLedger.enabled) {
+    w.insertedFieldEnergy=w.fields->energyLedger().insertedEnergyJ;
+    w.croppedFieldEnergy=w.fields->energyLedger().croppedEnergyJ;
+  }
   globalOriginBox_[2]=std::fma(static_cast<double>(w.offset),globalGeometry_.dz,w.referenceOrigin[2]);
   localOriginBox_[2]=std::fma(static_cast<double>(localZOffset_),globalGeometry_.dz,globalOriginBox_[2]);
   unsigned long long counts[6];Double charges[6];particleBoundary_->checkpointCumulative(counts,charges);

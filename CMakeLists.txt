@@ -132,6 +132,7 @@ set(DIRECT_EB_SOURCES
   src/simulation.cpp
   src/simulation_checkpoint.cpp
   src/simulation_moving_window.cpp
+  src/simulation_energy_work.cpp
   src/teardown_trace.cpp
   src/trajectory_writer.cpp
 )

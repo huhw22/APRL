@@ -54,6 +54,9 @@ struct MovingWindowFields::Impl {
     std::size_t step=0;
     std::ptrdiff_t offset=0;
     std::vector<Double> lower[3],upper[3];
+    std::array<long double,6> startPower{};
+    std::array<long double,6> overwritePowerDelta{};
+    bool energyStepFinished=false;
     std::uint64_t queries=0;
 
     explicit Boundary(MovingWindowFields::Impl& p):EBConvolutionalPML(p.geometry,p.globalNz,
@@ -77,6 +80,12 @@ struct MovingWindowFields::Impl {
          k==std::numeric_limits<std::ptrdiff_t>::min())
         throw std::overflow_error("Moving-window step/origin overflow");
       step=n;offset=k;established=true;
+      if(owner.energy.enabled) {
+        const auto diagnosticStart=Clock::now();
+        startPower=owner.boundaryPower(f);
+        overwritePowerDelta.fill(0.);energyStepFinished=false;
+        owner.energy.diagnosticSeconds+=seconds(diagnosticStart);
+      }
       if(owner.rank==0)for(unsigned a=0;a<3;++a) {
         const auto& c=component(f,a);
         for(std::size_t j=0;j<c.ny();++j)for(std::size_t i=0;i<c.nx();++i)
@@ -99,10 +108,31 @@ struct MovingWindowFields::Impl {
     void afterElectricUpdate(EBFieldGrid& f) override {
       if(phase!=Phase::Electric)throw std::logic_error("Moving-window electric phase mismatch");
       EBConvolutionalPML::afterElectricUpdate(f);
+      // Only physical cell k=0 uses the overwritten native Ex/Ey k=0 plane.
+      // Measure its collocated energy, including the unchanged k=1 samples;
+      // squaring the replaced native plane alone would miss the cross terms.
+      long double energyBefore=0.;
+      std::array<long double,6> powerBefore{};
+      const bool measure=owner.energy.enabled&&owner.rank==0;
+      if(measure) {
+        const auto diagnosticStart=Clock::now();
+        energyBefore=owner.planeEnergy(f,0);
+        powerBefore=owner.boundaryPower(f,true);
+        owner.energy.diagnosticSeconds+=seconds(diagnosticStart);
+      }
       if(owner.rank==0)for(unsigned a=0;a<2;++a) {
         auto& c=component(f,a);
         for(std::size_t j=0;j<c.ny();++j)for(std::size_t i=0;i<c.nx();++i)
           c(i,j,0)=reference(a,i,j,offset,step+1);
+      }
+      if(measure) {
+        const auto diagnosticStart=Clock::now();
+        owner.energy.inletOverwriteEnergyJ+=owner.planeEnergy(f,0)-energyBefore;
+        const auto powerAfter=owner.boundaryPower(f,true);
+        for(unsigned face=0;face<6;++face)
+          overwritePowerDelta[face]=powerAfter[face]-powerBefore[face];
+        ++owner.energy.overwriteEvents;
+        owner.energy.diagnosticSeconds+=seconds(diagnosticStart);
       }
       phase=Phase::Complete;
     }
@@ -130,6 +160,7 @@ struct MovingWindowFields::Impl {
   std::array<History,12> histories;
   Packet resetPacket,preservePacket;
   std::vector<Double> send,receive;
+  MovingWindowFieldEnergyLedger energy;
 
   Impl(const EBGridGeometry& g,std::size_t nz,std::size_t local,
        MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r)
@@ -187,10 +218,70 @@ struct MovingWindowFields::Impl {
       if(boundary->checkpointHistory(h).size()!=histories[h].values)
         throw std::logic_error("Moving-window transverse history layout mismatch");
   }
+  long double planeEnergy(const EBFieldGrid& f,std::size_t k) {
+    const long double volume=static_cast<long double>(geometry.dx)*
+      static_cast<long double>(geometry.dy)*static_cast<long double>(geometry.dz);
+    long double value=0.;
+    for(std::size_t j=parameters.cells[1];j<geometry.ny-parameters.cells[1];++j)
+      for(std::size_t i=parameters.cells[0];i<geometry.nx-parameters.cells[0];++i) {
+        value+=static_cast<long double>(f.fieldEnergyDensityCell(i,j,k))*volume;
+        ++energy.diagnosticCellSamples;
+      }
+    if(!std::isfinite(value))throw std::runtime_error("Non-finite moving-window energy diagnostic");
+    return value;
+  }
+  std::array<long double,6> boundaryPower(const EBFieldGrid& f,bool inletOnly=false) {
+    std::array<long double,6> power{};
+    const std::size_t i0=parameters.cells[0],i1=geometry.nx-i0;
+    const std::size_t j0=parameters.cells[1],j1=geometry.ny-j0;
+    const long double yz=static_cast<long double>(geometry.dy)*geometry.dz;
+    const long double xz=static_cast<long double>(geometry.dx)*geometry.dz;
+    const long double xy=static_cast<long double>(geometry.dx)*geometry.dy;
+    for(std::size_t k=0;k<(inletOnly?1:geometry.nz);++k) {
+      for(std::size_t j=j0;j<j1;++j) {
+        power[0]-=static_cast<long double>(f.poyntingComponentCell(i0,j,k,0))*yz;
+        power[1]+=static_cast<long double>(f.poyntingComponentCell(i1-1,j,k,0))*yz;
+      }
+      for(std::size_t i=i0;i<i1;++i) {
+        power[2]-=static_cast<long double>(f.poyntingComponentCell(i,j0,k,1))*xz;
+        power[3]+=static_cast<long double>(f.poyntingComponentCell(i,j1-1,k,1))*xz;
+      }
+    }
+    if(rank==0||rank+1==size)
+      for(std::size_t j=j0;j<j1;++j)for(std::size_t i=i0;i<i1;++i) {
+        if(rank==0)power[4]-=static_cast<long double>(f.poyntingComponentCell(i,j,0,2))*xy;
+        if(!inletOnly&&rank+1==size)power[5]+=static_cast<long double>(f.poyntingComponentCell(i,j,geometry.nz-1,2))*xy;
+      }
+    for(const auto value:power)
+      if(!std::isfinite(value))throw std::runtime_error("Non-finite moving-window boundary power");
+    return power;
+  }
+  void finishEnergyLedgerStep(const EBFieldGrid& f) {
+    if(!energy.enabled)return;
+    validate(f);
+    if(boundary->phase!=Boundary::Phase::Complete||boundary->energyStepFinished)
+      throw std::logic_error("Moving-window energy flux requires one completed MPI field step");
+    const auto diagnosticStart=Clock::now();
+    const auto endPower=boundaryPower(f);
+    const long double halfDt=.5L*static_cast<long double>(geometry.dt);
+    for(unsigned face=0;face<6;++face)
+      energy.outwardEnergyFace[face]+=halfDt*(boundary->startPower[face]+
+        endPower[face]-boundary->overwritePowerDelta[face]);
+    ++energy.fluxSteps;boundary->energyStepFinished=true;
+    energy.diagnosticSeconds+=seconds(diagnosticStart);
+  }
   MovingWindowFieldShiftReport shift(EBFieldGrid& f,std::size_t n,std::ptrdiff_t k,bool reset) {
     const auto started=Clock::now();validate(f);
     if(boundary->phase!=Boundary::Phase::Complete||n!=boundary->step+1||k!=boundary->offset-1)
       throw std::logic_error("Moving-window requires one left shift after each complete step");
+    if(energy.enabled&&!boundary->energyStepFinished)
+      throw std::logic_error("Moving-window energy flux must finish after MPI and before shift");
+    long double removedLocal=0.;
+    if(energy.enabled) {
+      const auto diagnosticStart=Clock::now();
+      removedLocal=planeEnergy(f,geometry.nz-1);
+      energy.diagnosticSeconds+=seconds(diagnosticStart);
+    }
     const auto& p=reset?resetPacket:preservePacket;
     const std::size_t oldK=geometry.nz-1;
     for(unsigned a=0;a<p.fields;++a) {
@@ -239,6 +330,22 @@ struct MovingWindowFields::Impl {
         report.historyMovedBytes+=bytes;
       }
     }
+    if(energy.enabled) {
+      const auto diagnosticStart=Clock::now();
+      const long double insertedLocal=planeEnergy(f,0);
+      // Every retained local cell k>=1 is exactly old cell k-1, including
+      // its nz+1 Yee nodes. Thus this two-plane difference measures the full
+      // local remap energy change without traversing the volume. Across ranks
+      // the entering/leaving cell energies cancel only if shared nodes match;
+      // keep that interface contribution instead of assuming cancellation.
+      energy.remapEnergyJ+=insertedLocal-removedLocal;
+      if(rank==0)energy.insertedEnergyJ+=insertedLocal;
+      if(rank+1==size)energy.croppedEnergyJ+=removedLocal;
+      energy.remapInterfaceCorrectionJ+=(rank>0?insertedLocal:0.L)-
+        (rank+1<size?removedLocal:0.L);
+      ++energy.remapSteps;
+      energy.diagnosticSeconds+=seconds(diagnosticStart);
+    }
     boundary->step=n;boundary->offset=k;boundary->phase=Boundary::Phase::Idle;
     report.totalSeconds=seconds(started);return report;
   }
@@ -253,6 +360,17 @@ void MovingWindowFields::installBoundary(EBFieldGrid& f) {
   if(impl_->boundary)throw std::logic_error("Moving-window boundary already installed");
   std::unique_ptr<Impl::Boundary> p(new Impl::Boundary(*impl_));
   impl_->boundary=p.get();f.setBoundary(std::move(p));impl_->validate(f);
+}
+void MovingWindowFields::enableEnergyLedger(bool enabled) {
+  if(impl_->boundary&&impl_->boundary->established)
+    throw std::logic_error("Moving-window energy ledger must be configured before the first step");
+  impl_->energy.enabled=enabled;
+}
+const MovingWindowFieldEnergyLedger& MovingWindowFields::energyLedger() const {
+  return impl_->energy;
+}
+void MovingWindowFields::finishEnergyLedgerStep(const EBFieldGrid& f) {
+  impl_->finishEnergyLedgerStep(f);
 }
 void MovingWindowFields::beginStep(EBFieldGrid& f,std::size_t n,std::ptrdiff_t k) {
   impl_->validate(f);impl_->boundary->begin(f,n,k);

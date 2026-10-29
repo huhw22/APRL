@@ -3,6 +3,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <array>
 #include <memory>
 #include <mpi.h>
 #include "eb_cpml.h"
@@ -28,6 +29,34 @@ struct MovingWindowFieldShiftReport {
   double totalSeconds = 0.;
 };
 
+// Rank-local cumulative diagnostics, in joules in the computational frame.
+// Use MPI_SUM for energies/counts (remapSteps is a per-rank step count).
+// All energies use EBFieldGrid::fieldEnergyDensityCell over the transverse
+// physical aperture, excluding xy CPML. Positive overwrite/remap means field
+// energy added. Inserted/cropped are positive stored energies, not fluxes.
+// These are changes caused by the named boundary operations, not corrections
+// fitted to a propagation residual and not an exact Maxwell energy invariant.
+struct MovingWindowFieldEnergyLedger {
+  bool enabled = false;
+  long double inletOverwriteEnergyJ = 0.;
+  long double insertedEnergyJ = 0.;
+  long double croppedEnergyJ = 0.;
+  long double remapEnergyJ = 0.;
+  // After summing ranks: remap - (inserted - cropped). This explicitly keeps
+  // any contribution from inconsistent duplicated Yee nodes at MPI interfaces.
+  long double remapInterfaceCorrectionJ = 0.;
+  // Outward Poynting flux through x-,x+,y-,y+,z-,z+, trapezoid-integrated
+  // at the same fixed window origin: beginStep and post-CPML/post-MPI,
+  // with the measured inlet overwrite contribution removed from the endpoint.
+  // This is S dot n only; remap is the separate moving-volume contribution.
+  std::array<long double,6> outwardEnergyFace{};
+  std::uint64_t overwriteEvents = 0;
+  std::uint64_t fluxSteps = 0;
+  std::uint64_t remapSteps = 0;
+  std::uint64_t diagnosticCellSamples = 0;
+  double diagnosticSeconds = 0.;
+};
+
 // Fixed z-slab partition, Cowan c*dt=dz, one-cell motion toward -z after each
 // complete field step. No z CPML or z PEC; only transverse CPML is installed.
 // beginStep -> MPI magnetic -> original particle/J work -> MPI electric ->
@@ -50,6 +79,14 @@ public:
   MovingWindowFields& operator=(const MovingWindowFields&) = delete;
 
   void installBoundary(EBFieldGrid& fields);
+  // Configure before the first beginStep. Disabled by default: no diagnostic
+  // field traversal, extra MPI exchange, or timer is performed when disabled.
+  void enableEnergyLedger(bool enabled = true);
+  const MovingWindowFieldEnergyLedger& energyLedger() const;
+  // Call after MPI electric completion, before shift. The boundary callback
+  // precedes MPI interface updates, so cannot provide the full end-step flux.
+  // This call is a no-op when disabled; enabled steps require it exactly once.
+  void finishEnergyLedgerStep(const EBFieldGrid& fields);
   void beginStep(EBFieldGrid& fields, std::size_t step,
                  std::ptrdiff_t globalWindowOffset);
   EBElectricHaloView physicalElectricHalos(const EBFieldGrid& fields,

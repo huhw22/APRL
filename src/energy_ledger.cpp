@@ -49,6 +49,16 @@ namespace aprl
       {"prescribed_work_J", HOFFSET(EnergyLedgerRecord, prescribedWork)},
       {"boundary_source_work_J", HOFFSET(EnergyLedgerRecord, boundarySourceWork)},
       {"boundary_source_abs_work_J", HOFFSET(EnergyLedgerRecord, boundarySourceAbsWork)},
+      {"moving_inserted_field_J", HOFFSET(EnergyLedgerRecord, movingInsertedField)},
+      {"moving_cropped_field_J", HOFFSET(EnergyLedgerRecord, movingCroppedField)},
+      {"moving_remap_field_change_J", HOFFSET(EnergyLedgerRecord, movingRemapFieldChange)},
+      {"moving_remap_interface_correction_J", HOFFSET(EnergyLedgerRecord, movingRemapInterfaceCorrection)},
+      {"inlet_overwrite_work_J", HOFFSET(EnergyLedgerRecord, inletOverwriteWork)},
+      {"longitudinal_boundary_outward_J", HOFFSET(EnergyLedgerRecord, longitudinalBoundaryOutward)},
+      {"moving_energy_diagnostic_rank_seconds", HOFFSET(EnergyLedgerRecord, movingEnergyDiagnosticRankSeconds)},
+      {"frozen_constraint_work_J", HOFFSET(EnergyLedgerRecord, frozenConstraintWork)},
+      {"carrier_constraint_work_J", HOFFSET(EnergyLedgerRecord, carrierConstraintWork)},
+      {"constraint_energy_diagnostic_rank_seconds", HOFFSET(EnergyLedgerRecord, constraintEnergyDiagnosticRankSeconds)},
       {"balance_residual_raw_J", HOFFSET(EnergyLedgerRecord, balanceResidualRaw)},
       {"balance_residual_J", HOFFSET(EnergyLedgerRecord, balanceResidual)},
       {"relative_balance_exchange", HOFFSET(EnergyLedgerRecord, relativeBalanceExchange)},
@@ -79,6 +89,12 @@ namespace aprl
       fieldEnergyInterior(0.0), outwardFieldEnergy(0.0),
       prescribedWork(0.0), boundarySourceWork(0.0),
       boundarySourceAbsWork(0.0),
+      movingInsertedField(0.0), movingCroppedField(0.0),
+      movingRemapFieldChange(0.0), movingRemapInterfaceCorrection(0.0),
+      inletOverwriteWork(0.0), longitudinalBoundaryOutward(0.0),
+      movingEnergyDiagnosticRankSeconds(0.0),
+      frozenConstraintWork(0.0), carrierConstraintWork(0.0),
+      constraintEnergyDiagnosticRankSeconds(0.0),
       balanceResidualRaw(0.0), balanceResidual(0.0),
       relativeBalanceExchange(0.0), relativeBalanceInitial(0.0),
       fieldFractionKinetic(0.0), fieldFractionIncludingRest(0.0),
@@ -201,7 +217,7 @@ namespace aprl
   void EnergyLedgerWriter::open(const std::string& filename, int mpiSize,
       std::size_t bufferRecords, unsigned int compressionLevel,
       bool durableProgress, bool overwrite, const RunMetadata* metadata,
-      bool approximateBoundaryInjection)
+      bool approximateBoundaryInjection, bool movingVolume)
   {
     if (isOpen_) throw std::runtime_error("Energy ledger is already open");
     if (filename.empty())
@@ -266,12 +282,13 @@ namespace aprl
         writeUnsignedScalar(committedDataset_, 0);
         writeByteScalar(completeDataset_, 0);
 
-        writeIntAttribute(group_, "format_version", 3);
+        writeIntAttribute(group_, "format_version", 4);
         writeIntAttribute(group_, "mpi_size", mpiSize);
         writeStringAttribute(group_, "frame", "boosted computational frame");
         writeStringAttribute(group_, "face_order", "x-,x+,y-,y+,z-,z+");
         writeStringAttribute(group_, "balance_equation",
-          approximateBoundaryInjection ?
+          movingVolume ?
+            "delta(active_kinetic+removed_kinetic+interior_field)+outward_field-prescribed_work-boundary_source_work-moving_remap_field_change-inlet_overwrite_work-frozen_constraint_work-carrier_constraint_work=residual" : approximateBoundaryInjection ?
             "delta(all_kinetic+interior_field)+outward_field-prescribed_work-boundary_source_work=approximate_residual" :
             "delta(active_kinetic+removed_kinetic+interior_field)+outward_field-prescribed_work=residual");
         writeStringAttribute(group_, "boundary_source_work_model",
@@ -283,7 +300,19 @@ namespace aprl
             "sum of absolute per-entry boundary-current work estimates; a source-activity proxy, not missing external field energy" :
             "disabled");
         writeStringAttribute(group_, "field_surface",
-          "first interior cell-centre layer next to CPML; grid outer layer for PEC");
+          movingVolume ?
+            "physical cell-centre boundary: xy adjacent to CPML, z first/last cell without CPML; face energies count propagation only" :
+            "first interior cell-centre layer next to CPML; grid outer layer for PEC");
+        writeStringAttribute(group_, "moving_volume_accounting",
+          movingVolume ?
+            "positive remap/overwrite adds grid energy; longitudinal_boundary_outward=outward_z_faces-moving_remap_field_change-inlet_overwrite_work; remap=inserted-cropped+interface_correction; source and solver approximations remain diagnostic" : "disabled");
+        writeStringAttribute(group_, "constrained_source_work_model",
+          movingVolume ?
+            "approximate negative charge-displacement dot temporal-midpoint electric field along prescribed frozen/carrier segments clipped to the physical volume; carrier uses deposited current weight; distinct from analytic-device work; not an exact CIC/Cowan energy identity" : "disabled");
+        writeStringAttribute(group_, "boundary_power_time_integration",
+          movingVolume ?
+            "trapezoid at one fixed window position per field advance, before inlet overwrite; shift/overwrite energy measured separately with the same cell-centred energy functional" :
+            "trapezoid of consecutive field-step boundary power samples");
         writeStringAttribute(group_, "staggering_note",
           "cell-centred E and half-step B give a convergence diagnostic, not an exact algebraic Yee invariant");
         writeStringAttribute(group_, "spread_note",

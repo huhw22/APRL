@@ -419,6 +419,7 @@ namespace aprl
         if (config_.energyLedger.enabled)
           {
             finalizeBoundaryInjectionWorkStep();
+            if (movingWindow_) finalizeMovingConstraintWork();
             advanceEnergyLedgerStep();
           }
 
@@ -1342,6 +1343,9 @@ namespace aprl
       modeled += movingWindow_->pending->memoryBytes();
     if (movingWindow_ && movingWindow_->pendingStatistics)
       modeled += movingWindow_->pendingStatistics->storageBytes();
+    if (movingWindow_)
+      modeled += static_cast<long double>(movingWindow_->constraintWorkSamples.capacity()) *
+        sizeof(SimulationMovingWindowState::ConstraintWorkSample);
     if (config_.mesh.ballisticOutsideTransverse &&
         config_.energyLedger.enabled)
       modeled += static_cast<long double>(particles_.size()) *
@@ -3227,8 +3231,9 @@ namespace aprl
         config_.energyLedger.bufferRecords,
         config_.energyLedger.compression,
         config_.runtime.interactive(), config_.output.overwrite,
-        &runMetadata_, config_.mesh.ballisticOutsideTransverse);
-    if (config_.checkpoint.restartFrom.empty())
+        &runMetadata_, config_.mesh.ballisticOutsideTransverse,
+        config_.mesh.movingWindow.enabled);
+    if (config_.checkpoint.restartFrom.empty() && !movingWindow_)
       localInteriorBoundaryPower(energyLedgerPreviousPower_);
     if (rank_ == 0)
       {
@@ -3267,6 +3272,15 @@ namespace aprl
 
   void Simulation::advanceEnergyLedgerStep()
   {
+    if (movingWindow_)
+      {
+        // Called after MPI electric interfaces have completed, before remap.
+        movingWindow_->fields->finishEnergyLedgerStep(*fields_);
+        const auto& ledger = movingWindow_->fields->energyLedger();
+        for (unsigned int face = 0; face < 6; ++face)
+          energyLedgerOutwardEnergy_[face] = ledger.outwardEnergyFace[face];
+        return;
+      }
     long double currentPower[6] = {};
     localInteriorBoundaryPower(currentPower);
     const long double halfDt = 0.5L *
@@ -3325,7 +3339,7 @@ namespace aprl
         step_ % config_.energyLedger.sampleIntervalSteps != 0)
       return;
 
-    long double local[18] = {};
+    long double local[27] = {};
     Double localMinimumGamma = std::numeric_limits<Double>::infinity();
     Double localMaximumGamma =
       -std::numeric_limits<Double>::infinity();
@@ -3398,8 +3412,21 @@ namespace aprl
     if (guardFinalCollectives)
       armShutdownWatchdog("final-energy-reductions");
     local[17] = energyLedgerBoundarySourceAbsWork_;
-    long double global[18] = {};
-    MPI_Allreduce(local, global, 18, MPI_LONG_DOUBLE, MPI_SUM,
+    if (movingWindow_)
+      {
+        const auto& ledger = movingWindow_->fields->energyLedger();
+        local[18] = ledger.insertedEnergyJ;
+        local[19] = ledger.croppedEnergyJ;
+        local[20] = ledger.remapEnergyJ;
+        local[21] = ledger.remapInterfaceCorrectionJ;
+        local[22] = ledger.inletOverwriteEnergyJ;
+        local[23] = ledger.diagnosticSeconds;
+        local[24] = movingWindow_->frozenConstraintWork;
+        local[25] = movingWindow_->carrierConstraintWork;
+        local[26] = movingWindow_->constraintDiagnosticSeconds;
+      }
+    long double global[27] = {};
+    MPI_Allreduce(local, global, 27, MPI_LONG_DOUBLE, MPI_SUM,
                   communicator_);
     unsigned long long localCounts[4] = {
       static_cast<unsigned long long>(storedParticleCount()),
@@ -3486,13 +3513,15 @@ namespace aprl
       outward += global[10 + face];
     const long double rawResidual = currentDynamic - initialDynamic +
       outward - global[9];
-    const long double residual = rawResidual - global[16];
+    const long double residual = rawResidual - global[16] - global[20] - global[22]
+      - global[24] - global[25];
     const long double deltaParticle =
       particleAccounted - energyLedgerInitialKinetic_;
     const long double deltaField = global[6] - energyLedgerInitialField_;
     const long double exchangeScale = std::abs(deltaParticle) +
       std::abs(deltaField) + std::abs(outward) + std::abs(global[9]) +
-      std::abs(global[16]);
+      std::abs(global[16]) + std::abs(global[20]) + std::abs(global[22]) +
+      std::abs(global[24]) + std::abs(global[25]);
     long double varianceGamma = weight > 0.0L ?
       std::max(0.0L, globalCentred[0] / weight) : 0.0L;
     long double varianceGammaBox = weight > 0.0L ?
@@ -3542,6 +3571,17 @@ namespace aprl
     record.prescribedWork = static_cast<Double>(global[9]);
     record.boundarySourceWork = static_cast<Double>(global[16]);
     record.boundarySourceAbsWork = static_cast<Double>(global[17]);
+    record.movingInsertedField = static_cast<Double>(global[18]);
+    record.movingCroppedField = static_cast<Double>(global[19]);
+    record.movingRemapFieldChange = static_cast<Double>(global[20]);
+    record.movingRemapInterfaceCorrection = static_cast<Double>(global[21]);
+    record.inletOverwriteWork = static_cast<Double>(global[22]);
+    record.longitudinalBoundaryOutward = movingWindow_ ? static_cast<Double>(
+      global[14] + global[15] - global[20] - global[22]) : 0.0;
+    record.movingEnergyDiagnosticRankSeconds = static_cast<Double>(global[23]);
+    record.frozenConstraintWork = static_cast<Double>(global[24]);
+    record.carrierConstraintWork = static_cast<Double>(global[25]);
+    record.constraintEnergyDiagnosticRankSeconds = static_cast<Double>(global[26]);
     record.balanceResidualRaw = static_cast<Double>(rawResidual);
     record.balanceResidual = static_cast<Double>(residual);
     record.relativeBalanceExchange = exchangeScale > 0.0L ?
@@ -3592,6 +3632,16 @@ namespace aprl
           << lastEnergyLedgerRecord_.outwardFieldEnergy
           << " prescribed_work_J="
           << lastEnergyLedgerRecord_.prescribedWork
+          << " longitudinal_boundary_outward_J="
+          << lastEnergyLedgerRecord_.longitudinalBoundaryOutward
+          << " moving_remap_field_change_J="
+          << lastEnergyLedgerRecord_.movingRemapFieldChange
+          << " inlet_overwrite_work_J="
+          << lastEnergyLedgerRecord_.inletOverwriteWork
+          << " frozen_constraint_work_J="
+          << lastEnergyLedgerRecord_.frozenConstraintWork
+          << " carrier_constraint_work_J="
+          << lastEnergyLedgerRecord_.carrierConstraintWork
           << " boundary_source_work_J="
           << lastEnergyLedgerRecord_.boundarySourceWork
           << " boundary_source_abs_work_J="
@@ -4032,6 +4082,9 @@ namespace aprl
       const Double endWeight = carrier.currentWeight * endDamping;
       depositor.depositSegment(segmentStart, segmentEnd,
                                carrier.charge * depositedWeight);
+      if (movingWindow_ && config_.energyLedger.enabled)
+        queueMovingConstraintWork(segmentStart, segmentEnd,
+          carrier.charge * depositedWeight, true);
 
       if (endAction == RemoveCarrier)
         {
@@ -4368,6 +4421,9 @@ namespace aprl
                   ((*activationKink)[axis] - segmentStart[axis]);
               depositor.depositSegment(segmentStart, interfacePosition,
                                        particle.charge);
+              if (movingWindow_ && config_.energyLedger.enabled)
+                queueMovingConstraintWork(segmentStart, interfacePosition,
+                  particle.charge, false);
               TransferPacket transfer = {};
               transfer.particle = packParticle(particle);
               transfer.pendingActivePush = pendingActivePush ? 1 : 0;
@@ -4392,6 +4448,9 @@ namespace aprl
             }
           depositor.depositSegment(segmentStart, *activationKink,
                                    particle.charge);
+          if (movingWindow_ && config_.energyLedger.enabled)
+            queueMovingConstraintWork(segmentStart, *activationKink,
+              particle.charge, false);
           segmentStart = *activationKink;
           segmentStartFraction = activationKinkFraction;
         }
@@ -4484,6 +4543,9 @@ namespace aprl
         }
 
       depositor.depositSegment(segmentStart, segmentEnd, particle.charge);
+      if (movingWindow_ && config_.energyLedger.enabled && particle.frozen)
+        queueMovingConstraintWork(segmentStart, segmentEnd,
+          particle.charge, false);
       const Double globalEndFraction = segmentStartFraction +
         localEndFraction * (1.0 - segmentStartFraction);
       if (endAction == EnterCpml)
