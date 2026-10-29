@@ -3,6 +3,20 @@
 This workflow analyzes existing output. It does not launch APRL, alter the accepted
 compute implementation, change an old input, or compare implementation performance.
 
+`export_delta_gamma.py` reuses a completed `particle-summary.json` and a current
+inventory to export the per-ID mean and population standard deviation of
+`gamma_entry - gamma_plane`, plus `std/mean`. It divides the existing exact
+ID-matched energy-loss moments by the recorded electron rest energy; it does not
+subtract two projected energy spreads or use histogram bins. The reference is
+the -0.03 m entry detector, not the original -0.05 m input. Equal unit weights,
+the old full-scan quality flags, current file size/mtime and committed counts are
+required. This lightweight export does not repeat the original HDF5 full scan.
+Mean loss is independently checked against the difference of recorded mean gamma.
+At zero average the ratio is undefined. Results from the 1 m and 3 m historical
+detectors retain the known full-step momentum-interpolation bias and must not be
+interpreted as validated radiation losses. The 2026-10-29 export and input
+inventory are in `results/particle_delta_gamma_20261029/` under the workspace.
+
 ## Controlling source
 
 The historical folder is `/public/home/wfollowm/APRL_Project/APRL_Elegant_4m_2nodes`.
