@@ -42,6 +42,7 @@ PY
 timeout --signal=TERM --kill-after=10 120 srun --mpi="${SRUN_MPI:-pmix_v3}" --exact \
   --nodes=1 --ntasks=2 --cpus-per-task=1 --cpu-bind=cores --kill-on-bad-exit=1 --wait=30 \
   "$build/verification/aprl_moving_window_mpi_checks" "$root/moving-2rank.json" > "$root/moving-2rank.log" 2>&1
+timeout --signal=TERM --kill-after=5 60 "$build/verification/aprl_pending_particle_statistics_checks" > "$root/pending-statistics.log" 2>&1
 timeout --signal=TERM --kill-after=15 600 ctest -L required --output-on-failure -j 1 > "$root/required.log" 2>&1
 timeout --signal=TERM --kill-after=10 120 srun --mpi="${SRUN_MPI:-pmix_v3}" --exact \
   --nodes=1 --ntasks=4 --cpus-per-task=1 --cpu-bind=cores --kill-on-bad-exit=1 --wait=30 \

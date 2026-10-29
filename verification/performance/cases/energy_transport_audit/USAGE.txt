@@ -1,0 +1,74 @@
+Energy diagnostics: two independent frames
+==========================================
+
+Keep energy_ledger.enabled: true for the boost moving-volume audit. The v5 file
+retains the legacy prescribed_work_J and balance_residual_J for comparison.
+Use balance_residual_boris_J for the new work audit, and inspect the entire
+record sequence rather than only the final residual.
+
+  build/energy-transport-audit-20261029/energy_ledger_report LEDGER.h5 [INDEX]
+
+The split is:
+  particle_work_balance_residual = delta_K_box - W_grid - W_prescribed - dK_magnetic
+  field_exchange_residual = delta_U + outward + W_grid - imposed_sources
+  balance_residual_boris = particle_work_balance_residual
+                         + field_exchange_residual + dK_magnetic
+imposed_sources contains ballistic, remap, inlet-overwrite, frozen and carrier
+terms. The grid/prescribed electric works come directly from the actual Boris
+kicks, independently of these balance residuals. A terminal fraction inside a
+Boris substep uses a linear prefix and is counted by partial_work_substeps.
+particle_removal_interpolation_delta_J separates the change from the legacy
+whole-step terminal interpolation. A previously uncounted cross-rank release
+and terminal event in the same step is also included by the new bookkeeping.
+
+The particle lab change is recorded directly, including removed particles,
+and checked against Gamma * (delta_K_box + beta * delta_cPz_box). cPz has units
+of joules. Particle inventory in this diagnostic lies on a common boost-time
+slice; it is not a simultaneous lab-volume inventory. No energy-only boost
+factor guess is required. Pending particles use cached block/suffix totals.
+
+For fixed lab transport add independent planes using the input card's usual
+length/time units, for example in an SI card:
+
+  detectors:
+    directory: /absolute/new/output/detectors
+    energy_planes:
+      - {name: entry, z: -0.05, rhythm: 1.0e-15, buffer_samples: 64}
+      - {name: exit, z: 0.06, rhythm: 1.0e-15, buffer_samples: 64}
+
+This creates entry-energy.h5 and exit-energy.h5. No raw field_planes or
+particle_planes are required. Empty/absent energy_planes disables the feature.
+Positions must be chosen for the actual simulation; the example belongs only
+to the bounded acceptance fixture. Existing raw detector files are unchanged.
+
+Field power is the signed lab integral of (E x B)_z / mu0 over the plane.
+It is sampled at every Maxwell step and integrated in time by trapezoids;
+rhythm controls only file writing. Full and physical transverse apertures are
+separate. The latter excludes transverse CPML cells. E/B retain their original
+Yee time staggering; prescribed device fields are not part of self-field flux.
+field_energy_per_length_lab_J_per_m means integral of field energy density over
+area, in J/m; it is not an enclosed field-energy inventory in J.
+
+Particle crossings use actual Boris substep endpoints, interpolating energy
+and longitudinal momentum as separate scalars. This avoids the artificial
+energy drop caused by interpolating the momentum vector then taking its norm.
+The interpolated diagnostic is not an on-shell particle snapshot. Mass/charge
+already include macro weight. Signed and absolute crossing counts and physical
+aperture totals are retained. Accumulators expose high/low double parts;
+reconstruct in long double before subtracting large entry/exit energies.
+
+A complete file does not imply full field coverage. Check field_available,
+field_sample_count, outside_field_window_steps, field_gap_count and first/last
+field times. Counts include the initial step-zero sample; gaps count recovery
+after unavailable intervals. No integration bridges missing intervals.
+Particle totals alone do not prove identical IDs or physical-aperture cohorts.
+
+All field quantities are total self-consistent E/B, not isolated near fields
+or radiation. Entry/exit particle-plus-field transport is a useful comparison,
+not a closed lab control-volume balance: transverse flux, stored energy and
+sources for that same spacetime volume would also be needed. The boost ledger
+provides the separate full-volume balance. No diagnostic pass upgrades
+closure_valid or establishes the physical origin of a production energy loss.
+
+This version rejects old native checkpoint ABI v1; energy_planes plus any
+checkpoint/restart is rejected explicitly. Snapshot work is outside this task.

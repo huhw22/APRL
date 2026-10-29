@@ -168,8 +168,8 @@ void sameWork(const BorisWork& a,const BorisWork& b,const char* message) {
 }
 
 void subcycleChecks() {
-  const Double dt=4e-15;
-  EBGridGeometry geometry(8,8,8,5e-6,5e-6,1.25e-6,dt,EBMaxwellSolver::CowanZ);
+  const Double dz=1.25e-6,dt=dz/SI::c;
+  EBGridGeometry geometry(8,8,8,5e-6,5e-6,dz,dt,EBMaxwellSolver::CowanZ);
   EBFieldGrid grid(geometry);
   grid.ex().fill(1e5); grid.ey().fill(-3e5); grid.ez().fill(2e5);
   grid.bx().fill(1e-3); grid.by().fill(2e-3); grid.bz().fill(-3e-3);
