@@ -75,7 +75,10 @@ def main():
             g=h.create_group('particles');g.attrs['format_version']=4
             g.attrs['scope']='Theory worldline crossings of fixed lab plane; weighted quiet-start continuum quadrature'
             g.create_dataset('records',data=data)
-        target_taus=[.6,1.2,1.7,2.4,3.]
+        # Covers the coherent inward-chirp turning point (~1.71 t0), with
+        # a post-turn observation. The first pilot measured the audit cost;
+        # 2.2 t0 keeps each physical comparison within its bounded budget.
+        target_taus=[.6,1.,1.4,1.75,2.2]
         planes=[{'name':'entry','z':0.}]+[{'name':f'probe-{i+1}','z':float(model.manifest()['beam_gamma_lab']*np.sqrt(1-model.manifest()['beam_gamma_lab']**-2)*c*(t*model.t0-model.entry_center_time))} for i,t in enumerate(target_taus)]
         assert all(p['z']>0 for p in planes[1:])
         expected={}
