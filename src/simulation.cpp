@@ -225,6 +225,8 @@ namespace aprl
       RelativisticParticleSI particle;
       RelativisticParticleSI activeStart;
       Double prescribedWork;
+      BorisWork borisWork;
+      ParticleEnergyTrace auditTrace;
       Double activeStartTime;
       bool hasActiveSegment;
       bool pendingActivePush;
@@ -261,6 +263,9 @@ namespace aprl
       energyLedgerBoundarySourceAbsWork_(0.0L),
       energyLedgerRemovedKinetic_(0.0L),
       energyLedgerRemovedTotal_(0.0L),
+      energyLedgerBorisWork_(), energyLedgerRemovedMoment_(),
+      energyLedgerReleasedMoment_(), energyLedgerInitialMoment_(),
+      energyLedgerReleasedCharge_(0), energyLedgerPartialWorkSubsteps_(0),
       energyLedgerInitialKinetic_(0.0L),
       energyLedgerInitialField_(0.0L),
       energyLedgerRemovedMacroparticles_(0),
@@ -790,6 +795,9 @@ namespace aprl
              i < config_.detectors.particlePlanes.size(); ++i)
           paths.push_back(joinPath(config_.detectors.directory,
             config_.detectors.particlePlanes[i].name + ".h5"));
+        for (const auto& plane : config_.detectors.energyPlanes)
+          paths.push_back(joinPath(config_.detectors.directory,
+            plane.name + "-energy.h5"));
         if (config_.energyLedger.enabled)
           paths.push_back(joinPath(config_.energyLedger.directory,
             config_.energyLedger.filename));
@@ -1355,8 +1363,17 @@ namespace aprl
     const long double planePoints =
       static_cast<long double>(globalGeometry_.nx) *
       static_cast<long double>(globalGeometry_.ny);
-    if (!detectorConfig_.fieldPlanes.empty())
+    if (!detectorConfig_.fieldPlanes.empty() || !detectorConfig_.energyPlanes.empty())
       modeled += planePoints * fieldPointBytes;
+    if (config_.energyLedger.enabled)
+      modeled += static_cast<long double>(ParticleWorkspace::PreparationBatchCapacity) *
+        particleSubsteps_ * sizeof(ParticleEnergyTrace::Segment);
+    if (!detectorConfig_.energyPlanes.empty())
+      modeled += static_cast<long double>(ParticleWorkspace::PreparationBatchCapacity) *
+        particleSubsteps_ * detectorConfig_.energyPlanes.size() * sizeof(EnergyPlaneCrossing);
+    if (rank_ == 0)
+      for (const auto& plane : detectorConfig_.energyPlanes)
+        modeled += static_cast<long double>(plane.bufferSamples) * 1024.L;
     if (rank_ == 0)
       {
         const long double particlePlaneRecordBytes = 112.0L;
@@ -3086,6 +3103,7 @@ namespace aprl
                 << detectorConfig_.fieldPlanes.size()
                 << ", particles="
                 << detectorConfig_.particlePlanes.size()
+                << ", energy=" << detectorConfig_.energyPlanes.size()
                 << "; detector HDF5 is written only by MPI rank zero.";
         logRoot(communicator_, message.str());
       }
@@ -3339,7 +3357,7 @@ namespace aprl
         step_ % config_.energyLedger.sampleIntervalSteps != 0)
       return;
 
-    long double local[27] = {};
+    long double local[45] = {};
     Double localMinimumGamma = std::numeric_limits<Double>::infinity();
     Double localMaximumGamma =
       -std::numeric_limits<Double>::infinity();
@@ -3366,6 +3384,9 @@ namespace aprl
             local[3] = pending.representedWeight * pending.mean[0];
             local[4] = pending.representedWeight * pending.mean[1];
             local[5] = pending.representedWeight * pendingMeanLabZ;
+            local[32] = pending.kineticEnergyLab;
+            local[33] = pending.cMomentumZBox;
+            local[34] = pending.cMomentumZLab;
             localMinimumGamma = pending.minimumGammaLab;
             localMaximumGamma = pending.maximumGammaLab;
           }
@@ -3398,6 +3419,11 @@ namespace aprl
         local[4] += represented * static_cast<long double>(gammaBox);
         local[5] += represented * static_cast<long double>(
           frame_.labZFromBoxZT(particle.position[2], timeBoxSI_));
+        const ParticleEnergyMoment auditMoment =
+          ParticleEnergyMoment::sample(particle, frame_);
+        local[32] += auditMoment.kineticLab;
+        local[33] += auditMoment.cPzBox;
+        local[34] += auditMoment.cPzLab;
         localMinimumGamma = std::min(localMinimumGamma, gammaLab);
         localMaximumGamma = std::max(localMaximumGamma, gammaLab);
       }
@@ -3425,8 +3451,23 @@ namespace aprl
         local[25] = movingWindow_->carrierConstraintWork;
         local[26] = movingWindow_->constraintDiagnosticSeconds;
       }
-    long double global[27] = {};
-    MPI_Allreduce(local, global, 27, MPI_LONG_DOUBLE, MPI_SUM,
+    local[27] = energyLedgerBorisWork_.gridWork;
+    local[28] = energyLedgerBorisWork_.prescribedWork;
+    local[29] = energyLedgerBorisWork_.magneticRotationDeltaK;
+    local[30] = energyLedgerBorisWork_.totalDeltaK;
+    local[31] = energyLedgerBorisWork_.roundoffResidual;
+    local[35] = energyLedgerRemovedMoment_.kineticLab;
+    local[36] = energyLedgerRemovedMoment_.cPzBox;
+    local[37] = energyLedgerRemovedMoment_.cPzLab;
+    local[38] = energyLedgerReleasedMoment_.kineticBox;
+    local[39] = energyLedgerReleasedMoment_.kineticLab;
+    local[40] = energyLedgerReleasedMoment_.cPzBox;
+    local[41] = energyLedgerReleasedMoment_.cPzLab;
+    local[42] = energyLedgerReleasedCharge_;
+    local[43] = energyLedgerPartialWorkSubsteps_;
+    local[44] = energyLedgerRemovedMoment_.kineticBox;
+    long double global[45] = {};
+    MPI_Allreduce(local, global, 45, MPI_LONG_DOUBLE, MPI_SUM,
                   communicator_);
     unsigned long long localCounts[4] = {
       static_cast<unsigned long long>(storedParticleCount()),
@@ -3502,6 +3543,10 @@ namespace aprl
       {
         energyLedgerInitialKinetic_ = global[0];
         energyLedgerInitialField_ = global[6];
+        energyLedgerInitialMoment_.kineticBox = global[0];
+        energyLedgerInitialMoment_.kineticLab = global[32];
+        energyLedgerInitialMoment_.cPzBox = global[33];
+        energyLedgerInitialMoment_.cPzLab = global[34];
         energyLedgerHasReference_ = true;
       }
     const long double particleAccounted = global[0] + global[7];
@@ -3582,6 +3627,47 @@ namespace aprl
     record.frozenConstraintWork = static_cast<Double>(global[24]);
     record.carrierConstraintWork = static_cast<Double>(global[25]);
     record.constraintEnergyDiagnosticRankSeconds = static_cast<Double>(global[26]);
+    const long double deltaParticleAudit = global[0] + global[44] - energyLedgerInitialKinetic_;
+    record.particleKineticBoxRemovedEvent = static_cast<Double>(global[44]);
+    record.particleRemovalInterpolationDelta = static_cast<Double>(global[44] - global[7]);
+    record.particleGridWork = static_cast<Double>(global[27]);
+    record.prescribedBorisWork = static_cast<Double>(global[28]);
+    record.magneticRotationDeltaK = static_cast<Double>(global[29]);
+    record.borisPushDeltaK = static_cast<Double>(global[30]);
+    record.borisRoundoffResidual = static_cast<Double>(global[31]);
+    record.particleKineticLabActive = static_cast<Double>(global[32]);
+    record.particleCPzBoxActive = static_cast<Double>(global[33]);
+    record.particleCPzLabActive = static_cast<Double>(global[34]);
+    record.particleKineticLabRemoved = static_cast<Double>(global[35]);
+    record.particleCPzBoxRemoved = static_cast<Double>(global[36]);
+    record.particleCPzLabRemoved = static_cast<Double>(global[37]);
+    record.releasedKineticBox = static_cast<Double>(global[38]);
+    record.releasedKineticLab = static_cast<Double>(global[39]);
+    record.releasedCPzBox = static_cast<Double>(global[40]);
+    record.releasedCPzLab = static_cast<Double>(global[41]);
+    record.releasedCharge = static_cast<Double>(global[42]);
+    record.partialWorkSubsteps = static_cast<Double>(global[43]);
+    const long double deltaLab = global[32] + global[35] -
+      energyLedgerInitialMoment_.kineticLab;
+    const long double deltaCPz = global[33] + global[36] -
+      energyLedgerInitialMoment_.cPzBox;
+    record.deltaParticleKineticBox = static_cast<Double>(deltaParticleAudit);
+    record.deltaParticleKineticLab = static_cast<Double>(deltaLab);
+    record.deltaParticleCPzBox = static_cast<Double>(deltaCPz);
+    record.deltaFieldEnergy = static_cast<Double>(deltaField);
+    record.boostGamma = frame_.gamma();
+    record.boostBeta = frame_.beta();
+    record.particleLorentzDeltaResidual = static_cast<Double>(deltaLab -
+      static_cast<long double>(frame_.gamma()) * deltaParticleAudit -
+      static_cast<long double>(frame_.gammaBeta()) * deltaCPz);
+    const long double fieldExchange = deltaField + outward - global[16] -
+      global[20] - global[22] - global[24] - global[25] + global[27];
+    record.fieldExchangeResidual = static_cast<Double>(fieldExchange);
+    record.particleWorkBalanceResidual = static_cast<Double>(deltaParticleAudit -
+      global[27] - global[28] - global[29]);
+    record.balanceResidualBoris = static_cast<Double>(deltaParticleAudit + deltaField +
+      outward - global[28] - global[16] - global[20] - global[22] -
+      global[24] - global[25]);
     record.balanceResidualRaw = static_cast<Double>(rawResidual);
     record.balanceResidual = static_cast<Double>(residual);
     record.relativeBalanceExchange = exchangeScale > 0.0L ?
@@ -3655,6 +3741,10 @@ namespace aprl
         message
           << " balance_residual_raw_J="
           << lastEnergyLedgerRecord_.balanceResidualRaw
+          << " residual_boris_J=" << lastEnergyLedgerRecord_.balanceResidualBoris
+          << " particle_work_residual_J=" << lastEnergyLedgerRecord_.particleWorkBalanceResidual
+          << " field_exchange_residual_J=" << lastEnergyLedgerRecord_.fieldExchangeResidual
+          << " delta_K_lab_J=" << lastEnergyLedgerRecord_.deltaParticleKineticLab
           << " residual_J="
           << lastEnergyLedgerRecord_.balanceResidual
           << " relative_exchange="
@@ -4633,6 +4723,13 @@ namespace aprl
             "An active particle is upstream of the moving window; "
             "the inlet guard did not contain its release event");
         result.prescribedWork = 0.0;
+        const bool transportAudit = detectors_ && detectors_->hasEnergyPlanes();
+        const bool auditEnabled = config_.energyLedger.enabled || transportAudit;
+        if (auditEnabled) {
+          result.borisWork.clear();
+          result.auditTrace.reset(frame_, transportAudit ? detectors_.get() : NULL,
+                                  config_.energyLedger.enabled);
+        }
         result.activeStart = particle;
         result.activeStartTime = timeBoxSI_;
         result.hasActiveSegment = !particle.frozen;
@@ -4713,7 +4810,9 @@ namespace aprl
                           particleSubsteps_,
                           config_.energyLedger.enabled ?
                             &prescribedWork : 0,
-                          config_.mesh.selfFieldFeedback);
+                          config_.mesh.selfFieldFeedback,
+                          config_.energyLedger.enabled ? &result.borisWork : NULL,
+                          auditEnabled ? &result.auditTrace : NULL);
                   }
               }
             else if (holdTransverse)
@@ -4729,7 +4828,9 @@ namespace aprl
             particle, *fields_, localOriginBox_, sources_, frame_,
             timeBoxSI_, globalGeometry_.dt, particleSubsteps_,
             config_.energyLedger.enabled ? &prescribedWork : 0,
-            config_.mesh.selfFieldFeedback);
+            config_.mesh.selfFieldFeedback,
+            config_.energyLedger.enabled ? &result.borisWork : NULL,
+            auditEnabled ? &result.auditTrace : NULL);
 
       };
 
@@ -4793,7 +4894,19 @@ namespace aprl
             const bool hasActiveSegment = result.hasActiveSegment;
             const bool pendingActivePush = result.pendingActivePush;
             if (particles_[index].frozen && hasActiveSegment)
-              ++frozenPlaneActivations_;
+              {
+                ++frozenPlaneActivations_;
+                if (config_.energyLedger.enabled) {
+                  energyLedgerReleasedMoment_.add(
+                    ParticleEnergyMoment::sample(activeStart, frame_));
+                  energyLedgerReleasedCharge_ += activeStart.charge;
+                }
+              }
+            if (detectors_ && detectors_->hasEnergyPlanes() &&
+                particles_[index].frozen && (!hasActiveSegment || activeStartTime > timeBoxSI_))
+              detectors_->captureEnergyParticleStep(particles_[index],
+                hasActiveSegment ? activeStart : particle, timeBoxSI_,
+                hasActiveSegment ? activeStartTime : timeBoxSI_ + globalGeometry_.dt);
             if (detectors_ && result.captureFrozenSegment)
               detectors_->captureParticleStep(particles_[index],
                 hasActiveSegment ? activeStart : particle, timeBoxSI_,
@@ -4862,8 +4975,19 @@ namespace aprl
 
             if (config_.mesh.ballisticOutsideTransverse)
               {
-                if (config_.energyLedger.enabled)
+                if (config_.energyLedger.enabled) {
                   energyLedgerPrescribedWork_ += prescribedWork;
+                  energyLedgerBorisWork_.add(result.auditTrace.prefix(
+                    timeBoxSI_ + globalGeometry_.dt, &energyLedgerPartialWorkSubsteps_));
+                }
+                if (detectors_ && detectors_->hasEnergyPlanes() && hasActiveSegment) {
+                  if (result.auditTrace.observedSubsteps)
+                    detectors_->commitEnergyParticleCrossings(result.auditTrace.crossings,
+                      timeBoxSI_ + globalGeometry_.dt);
+                  else
+                    detectors_->captureEnergyParticleStep(activeStart,particle,
+                      activeStartTime,timeBoxSI_ + globalGeometry_.dt);
+                }
                 if (detectors_ && hasActiveSegment &&
                     activeStartTime < timeBoxSI_ + globalGeometry_.dt)
                   detectors_->captureParticleStep(
@@ -4938,6 +5062,9 @@ namespace aprl
                   globalGeometry_.dt;
                 if (config_.energyLedger.enabled)
                   {
+                    const ParticleEnergyMoment removed = result.auditTrace.at(
+                      diagnosticTime, particle, frame_);
+                    energyLedgerRemovedMoment_.add(removed);
                     const RelativisticParticleSI& beginning = particles_[index];
                     const Double gammaBeginning =
                       BoostFrameTransform::gammaFromProperVelocity(
@@ -4965,6 +5092,17 @@ namespace aprl
                     ++energyLedgerRemovedMacroparticles_;
                   }
               }
+            if (config_.energyLedger.enabled)
+              energyLedgerBorisWork_.add(result.auditTrace.prefix(
+                diagnosticTime, &energyLedgerPartialWorkSubsteps_));
+            if (detectors_ && detectors_->hasEnergyPlanes() && hasActiveSegment) {
+              if (result.auditTrace.observedSubsteps)
+                detectors_->commitEnergyParticleCrossings(result.auditTrace.crossings,
+                  diagnosticTime);
+              else
+                detectors_->captureEnergyParticleStep(activeStart,diagnosticEnd,
+                  activeStartTime,diagnosticTime);
+            }
             if (detectors_ && hasActiveSegment &&
                 activeStartTime < diagnosticTime)
               detectors_->captureParticleStep(
@@ -5051,6 +5189,12 @@ namespace aprl
           const Double remaining =
             (1.0 - transfer.activationKinkFraction) * globalGeometry_.dt;
           Double prescribedWork = 0.0;
+          const bool transportAudit = detectors_ && detectors_->hasEnergyPlanes();
+          const bool auditEnabled = config_.energyLedger.enabled || transportAudit;
+          BorisWork borisWork;
+          ParticleEnergyTrace auditTrace;
+          if (auditEnabled) auditTrace.reset(frame_,
+            transportAudit ? detectors_.get() : NULL, config_.energyLedger.enabled);
           if (remaining > 0.0)
             {
               if (config_.mesh.ballisticOutsideTransverse &&
@@ -5063,10 +5207,52 @@ namespace aprl
                     activeEnd, *fields_, localOriginBox_, sources_, frame_,
                     activeStartTime, remaining, particleSubsteps_,
                     config_.energyLedger.enabled ? &prescribedWork : 0,
-                    config_.mesh.selfFieldFeedback);
+                    config_.mesh.selfFieldFeedback,
+                    config_.energyLedger.enabled ? &borisWork : NULL,
+                    auditEnabled ? &auditTrace : NULL);
             }
-          if (config_.energyLedger.enabled)
+          Double auditStop = timeBoxSI_ + globalGeometry_.dt;
+          bool auditTerminal = false;
+          if (auditEnabled && !config_.mesh.ballisticOutsideTransverse) {
+            ParticleBoundaryHit cpml, outer, retirement;
+            const bool entersCpml = config_.mesh.movingWindow.enabled ?
+              firstMovingWindowEntry(activeStart.position,activeEnd.position,
+                transfer.activationKinkFraction,cpml) :
+              particleCPML_->firstEntry(activeStart.position,activeEnd.position,cpml);
+            const bool exitsOuter = particleBoundary_->firstExit(
+              activeStart.position,activeEnd.position,outer);
+            const bool entersRetirement = labPlaneCrossing(activeStart.position,
+              activeEnd.position,transfer.activationKinkFraction,
+              config_.particleRetirement.entranceZ,retirement);
+            Double fraction = 1.;
+            const auto selectAudit = [&](bool hit, const ParticleBoundaryHit& crossing) {
+              if (hit && crossing.fraction <= fraction + crossingTolerance) {
+                auditTerminal=true; fraction=crossing.fraction;
+              }
+            };
+            selectAudit(exitsOuter,outer); selectAudit(entersCpml,cpml);
+            selectAudit(entersRetirement,retirement);
+            if (auditTerminal) auditStop=activeStartTime+fraction*remaining;
+          }
+          if (config_.energyLedger.enabled) {
             energyLedgerPrescribedWork_ += prescribedWork;
+            energyLedgerBorisWork_.add(auditTrace.prefix(
+              auditStop,&energyLedgerPartialWorkSubsteps_));
+            if (auditTerminal) {
+              const auto removed=auditTrace.at(auditStop,activeEnd,frame_);
+              energyLedgerRemovedMoment_.add(removed);
+              energyLedgerRemovedKinetic_+=removed.kineticBox;
+              energyLedgerRemovedTotal_+=removed.totalBox;
+              ++energyLedgerRemovedMacroparticles_;
+            }
+          }
+          if (transportAudit && remaining > 0.) {
+            if (auditTrace.observedSubsteps)
+              detectors_->commitEnergyParticleCrossings(auditTrace.crossings,auditStop);
+            else
+              detectors_->captureEnergyParticleStep(activeStart,activeEnd,
+                activeStartTime,auditStop);
+          }
           if (detectors_ && remaining > 0.0)
             detectors_->captureParticleStep(
               activeStart, activeEnd, activeStartTime,

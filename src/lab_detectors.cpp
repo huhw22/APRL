@@ -27,6 +27,7 @@ namespace aprl
     const int CROSSING_EVENT_TAG = 8701;
     const int FIELD_SAMPLE_TAG = 8702;
     const int FIELD_NEIGHBOUR_TAG = 8703;
+    const int ENERGY_SAMPLE_TAG = 8704;
 
     struct FieldInterpolationAxis
     {
@@ -1452,6 +1453,217 @@ namespace aprl
       hid_t validationFileType_;
     };
 
+    struct EnergyParticleRecord
+    {
+      std::uint64_t downstream, upstream;
+      double charge;
+      double value[6], low[6];
+    };
+
+    struct EnergyPlaneRecord
+    {
+      double timeBox, timeLab;
+      std::uint8_t available;
+      std::uint64_t samples, outside, gaps;
+      double firstTime, lastTime;
+      double power, physicalPower, energy, physicalEnergy;
+      double energyPerLength, physicalEnergyPerLength;
+      EnergyParticleRecord particle[2];
+    };
+
+    struct EnergyPlaneRuntime
+    {
+      long double particle[18];
+      long double energy[2], previousPower[2];
+      double firstTime, lastTime, nextTime;
+      std::uint64_t samples, outside, gaps;
+      bool previousAvailable, haveRecord, wroteLastRecord;
+      EnergyPlaneRecord lastRecord;
+      EnergyPlaneRuntime()
+        : energy{0, 0}, previousPower{0, 0}, firstTime(0), lastTime(0),
+          nextTime(0), samples(0), outside(0), gaps(0),
+          previousAvailable(false), haveRecord(false), wroteLastRecord(false),
+          lastRecord()
+      { std::fill(particle, particle + 18, 0.0L); }
+    };
+
+    hid_t createEnergyPlaneType(bool disk)
+    {
+      hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(EnergyPlaneRecord));
+      requireHandle(type, "Cannot create energy-plane compound type");
+      const hid_t real = disk ? H5T_IEEE_F64LE : H5T_NATIVE_DOUBLE;
+      const hid_t count = disk ? H5T_STD_U64LE : H5T_NATIVE_UINT64;
+      const hid_t byte = disk ? H5T_STD_U8LE : H5T_NATIVE_UINT8;
+#define ENERGY_MEMBER(name, member, datatype) \
+      requireStatus(H5Tinsert(type, name, HOFFSET(EnergyPlaneRecord, member), datatype), \
+                    "Cannot define energy-plane record member")
+      ENERGY_MEMBER("time_box_s", timeBox, real);
+      ENERGY_MEMBER("time_lab_s", timeLab, real);
+      ENERGY_MEMBER("field_available", available, byte);
+      ENERGY_MEMBER("field_sample_count", samples, count);
+      ENERGY_MEMBER("outside_field_window_steps", outside, count);
+      ENERGY_MEMBER("field_gap_count", gaps, count);
+      ENERGY_MEMBER("first_field_time_lab_s", firstTime, real);
+      ENERGY_MEMBER("last_field_time_lab_s", lastTime, real);
+      ENERGY_MEMBER("field_power_lab_W", power, real);
+      ENERGY_MEMBER("physical_field_power_lab_W", physicalPower, real);
+      ENERGY_MEMBER("field_energy_lab_J", energy, real);
+      ENERGY_MEMBER("physical_field_energy_lab_J", physicalEnergy, real);
+      ENERGY_MEMBER("field_energy_per_length_lab_J_per_m", energyPerLength, real);
+      ENERGY_MEMBER("physical_field_energy_per_length_lab_J_per_m", physicalEnergyPerLength, real);
+#undef ENERGY_MEMBER
+      const char* names[6] = {"kinetic_lab_J", "total_lab_J", "cpz_lab_J",
+                              "kinetic_box_J", "total_box_J", "cpz_box_J"};
+      for (unsigned int aperture = 0; aperture < 2; ++aperture)
+        {
+          const std::string prefix = aperture ? "physical_particle_" : "particle_";
+          const std::size_t base = HOFFSET(EnergyPlaneRecord, particle) +
+            aperture * sizeof(EnergyParticleRecord);
+          requireStatus(H5Tinsert(type, (prefix + "downstream_count").c_str(),
+            base + HOFFSET(EnergyParticleRecord, downstream), count), "Cannot define energy count");
+          requireStatus(H5Tinsert(type, (prefix + "upstream_count").c_str(),
+            base + HOFFSET(EnergyParticleRecord, upstream), count), "Cannot define energy count");
+          requireStatus(H5Tinsert(type, (prefix + "charge_C").c_str(),
+            base + HOFFSET(EnergyParticleRecord, charge), real), "Cannot define energy charge");
+          for (unsigned int i = 0; i < 6; ++i)
+            {
+              requireStatus(H5Tinsert(type, (prefix + names[i]).c_str(),
+                base + HOFFSET(EnergyParticleRecord, value) + i * sizeof(double), real),
+                "Cannot define particle energy");
+              requireStatus(H5Tinsert(type, (prefix + names[i] + "_low").c_str(),
+                base + HOFFSET(EnergyParticleRecord, low) + i * sizeof(double), real),
+                "Cannot define particle energy low part");
+            }
+        }
+      return type;
+    }
+
+    class EnergyPlaneWriter
+    {
+    public:
+      EnergyPlaneWriter() : file_(-1), group_(-1), dataset_(-1), committedDataset_(-1),
+        completeDataset_(-1), memoryType_(-1), fileType_(-1), committed_(0), limit_(1) {}
+      ~EnergyPlaneWriter() { try { close(false); } catch (...) { release(); } }
+      void open(const std::string& filename, const EnergyDetectorPlaneConfig& config,
+                const EBGridGeometry& geometry, const FieldVector<Double>& origin,
+                const std::size_t* guards, const BoostFrameTransform& frame,
+                bool overwrite, const RunMetadata* metadata)
+      {
+        limit_ = config.bufferSamples;
+        file_ = H5Fcreate(filename.c_str(), overwrite ? H5F_ACC_TRUNC : H5F_ACC_EXCL,
+                          H5P_DEFAULT, H5P_DEFAULT);
+        requireHandle(file_, "Cannot create energy-plane file: " + filename);
+        group_ = H5Gcreate2(file_, "/energy_plane", H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        requireHandle(group_, "Cannot create energy-plane group");
+        memoryType_ = createEnergyPlaneType(false);
+        fileType_ = createEnergyPlaneType(true);
+        hsize_t initial[1] = {0}, maximum[1] = {H5S_UNLIMITED};
+        hid_t space = H5Screate_simple(1, initial, maximum);
+        hid_t creation = H5Pcreate(H5P_DATASET_CREATE);
+        hsize_t chunk[1] = {static_cast<hsize_t>(limit_)};
+        requireStatus(H5Pset_chunk(creation, 1, chunk), "Cannot set energy-plane chunk");
+        if (config.compression)
+          {
+            requireStatus(H5Pset_shuffle(creation), "Cannot shuffle energy-plane records");
+            requireStatus(H5Pset_deflate(creation, config.compression), "Cannot compress energy-plane records");
+          }
+        dataset_ = H5Dcreate2(group_, "records", fileType_, space, H5P_DEFAULT, creation, H5P_DEFAULT);
+        H5Pclose(creation); H5Sclose(space);
+        requireHandle(dataset_, "Cannot create energy-plane records");
+        space = H5Screate(H5S_SCALAR);
+        committedDataset_ = H5Dcreate2(group_, "committed_records", H5T_STD_U64LE,
+                                      space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        completeDataset_ = H5Dcreate2(group_, "complete", H5T_STD_U8LE,
+                                     space, H5P_DEFAULT, H5P_DEFAULT, H5P_DEFAULT);
+        H5Sclose(space);
+        requireHandle(committedDataset_, "Cannot create energy-plane commit marker");
+        requireHandle(completeDataset_, "Cannot create energy-plane completion marker");
+        writeUnsignedScalar(committedDataset_, 0, "Cannot initialize energy commit");
+        writeByteScalar(completeDataset_, 0, "Cannot initialize energy completion");
+        writeUnsignedAttribute(group_, "format_version", 1);
+        writeStringAttribute(group_, "name", config.name);
+        writeStringAttribute(group_, "scope", "fixed-lab end-plane transport comparison; not a closed control-volume balance; interior storage and lateral flux not included");
+        writeStringAttribute(group_, "particle_quadrature", "linear interpolation of substep endpoint energy and four-momentum; not an on-shell particle snapshot; never gamma of interpolated three-momentum");
+        writeStringAttribute(group_, "particle_weight", "represented-particle mass/charge already include macro weight; weight is not multiplied again");
+        writeStringAttribute(group_, "sign_convention", "field +z Poynting; particle direction times energy/momentum/charge; counts positive separately by direction");
+        writeStringAttribute(group_, "field_scope", "raw total self-consistent grid E/B; prescribed external fields excluded; no near-field subtraction");
+        writeStringAttribute(group_, "field_quadrature", "cell-centre global Yee trilinear interpolation; signed trapezoid every field step; no integration across unavailable samples");
+        writeStringAttribute(group_, "magnetic_time_stagger", "native stored Yee leapfrog B half time; no temporal correction");
+        writeStringAttribute(group_, "aperture", "field full mesh; particle full includes all crossings even outside mesh; physical_ uses common inner CPML rectangle, lower-inclusive upper-exclusive");
+        writeStringAttribute(group_, "precision", "particle energies accumulated in long double; reconstruct high + _low in extended precision");
+        writeStringAttribute(group_, "completion", "complete marks run completion only; inspect field availability/sample count/first/last/gaps and particle counts separately");
+        writeStringAttribute(group_, "energy_per_length_units", "J/m = integral of lab energy density over plane area, not stored energy J");
+        writeDoubleAttribute(group_, "z_lab_m", config.z);
+        writeDoubleAttribute(group_, "rhythm_s", config.rhythm);
+        writeDoubleAttribute(group_, "time_lab_origin_s", frame.labTimeOrigin());
+        writeDoubleAttribute(group_, "boost_gamma", frame.gamma());
+        writeDoubleAttribute(group_, "boost_beta", frame.beta());
+        writeDoubleAttribute(group_, "dx_m", geometry.dx);
+        writeDoubleAttribute(group_, "dy_m", geometry.dy);
+        writeDoubleAttribute(group_, "full_aperture_area_m2", geometry.nx * geometry.ny * geometry.dx * geometry.dy);
+        writeDoubleAttribute(group_, "physical_aperture_area_m2", (geometry.nx-2*guards[0]) * (geometry.ny-2*guards[1]) * geometry.dx * geometry.dy);
+        writeDoubleAttribute(group_, "physical_x_min_m", origin[0]+guards[0]*geometry.dx);
+        writeDoubleAttribute(group_, "physical_x_max_m", origin[0]+(geometry.nx-guards[0])*geometry.dx);
+        writeDoubleAttribute(group_, "physical_y_min_m", origin[1]+guards[1]*geometry.dy);
+        writeDoubleAttribute(group_, "physical_y_max_m", origin[1]+(geometry.ny-guards[1])*geometry.dy);
+        writeUnsignedAttribute(group_, "nx", geometry.nx);
+        writeUnsignedAttribute(group_, "ny", geometry.ny);
+        if (metadata)
+          {
+            writeStringAttribute(group_, "run_id", metadata->runId);
+            writeStringAttribute(group_, "configuration_digest_fnv1a64", metadata->configurationDigest);
+            writeStringAttribute(group_, "source_revision", metadata->sourceRevision);
+            writeStringAttribute(group_, "run_manifest", metadata->manifestPath);
+          }
+        records_.reserve(limit_);
+      }
+      void append(const EnergyPlaneRecord& record)
+      { records_.push_back(record); if (records_.size() >= limit_) flush(); }
+      void flush()
+      {
+        if (records_.empty()) return;
+        const hsize_t start[1] = {committed_}, count[1] = {records_.size()};
+        const hsize_t extent[1] = {committed_ + records_.size()};
+        requireStatus(H5Dset_extent(dataset_, extent), "Cannot extend energy-plane records");
+        hid_t fileSpace = H5Dget_space(dataset_);
+        requireStatus(H5Sselect_hyperslab(fileSpace, H5S_SELECT_SET, start, NULL, count, NULL),
+                      "Cannot select energy-plane batch");
+        hid_t memorySpace = H5Screate_simple(1, count, NULL);
+        const herr_t status = H5Dwrite(dataset_, memoryType_, memorySpace, fileSpace, H5P_DEFAULT, records_.data());
+        H5Sclose(memorySpace); H5Sclose(fileSpace);
+        requireStatus(status, "Cannot write energy-plane batch");
+        committed_ += records_.size();
+        writeUnsignedScalar(committedDataset_, committed_, "Cannot commit energy-plane batch");
+        records_.clear();
+      }
+      void close(bool complete)
+      {
+        if (dataset_ >= 0)
+          {
+            flush();
+            writeByteScalar(completeDataset_, complete ? 1 : 0, "Cannot complete energy-plane output");
+            requireStatus(H5Fflush(file_, H5F_SCOPE_GLOBAL), "Cannot flush energy-plane output");
+          }
+        release();
+      }
+    private:
+      void release() noexcept
+      {
+        if (dataset_ >= 0) H5Dclose(dataset_);
+        if (committedDataset_ >= 0) H5Dclose(committedDataset_);
+        if (completeDataset_ >= 0) H5Dclose(completeDataset_);
+        if (memoryType_ >= 0) H5Tclose(memoryType_);
+        if (fileType_ >= 0) H5Tclose(fileType_);
+        if (group_ >= 0) H5Gclose(group_);
+        if (file_ >= 0) H5Fclose(file_);
+        file_ = group_ = dataset_ = committedDataset_ = completeDataset_ = memoryType_ = fileType_ = -1;
+      }
+      hid_t file_, group_, dataset_, committedDataset_, completeDataset_, memoryType_, fileType_;
+      std::uint64_t committed_;
+      std::size_t limit_;
+      std::vector<EnergyPlaneRecord> records_;
+    };
+
     struct FieldPlaneRuntime
     {
       bool sampled;
@@ -1488,7 +1700,10 @@ namespace aprl
         crossingCounts_(), receivedCrossingEvents_(), fieldSample_(),
         fieldNeighbour_(),
         fieldWriters_(), particleWriters_(), referenceWriters_(),
-        validationEntries_(), validationStats_()
+        validationEntries_(), validationStats_(),
+        energyRuntime_(config.energyPlanes.size()),
+        localEnergyParticle_(config.energyPlanes.size()*18, 0.0L),
+        reducedEnergyParticle_(config.energyPlanes.size()*18, 0.0L), energyWriters_()
     {
       MPI_Comm_rank(communicator_, &rank_);
       MPI_Comm_size(communicator_, &size_);
@@ -1505,6 +1720,15 @@ namespace aprl
             config_.fieldPlanes[detector].referenceValidation;
         }
 
+      if (!config_.energyPlanes.empty())
+        {
+          if (config_.physicalGuardCells[0] >= (globalGeometry_.nx+1)/2 ||
+              config_.physicalGuardCells[1] >= (globalGeometry_.ny+1)/2)
+            throw std::invalid_argument("Energy-plane physical aperture is empty");
+          for (std::size_t i = 0; i < energyRuntime_.size(); ++i)
+            energyRuntime_[i].nextTime = frame_.labTimeOrigin();
+        }
+
       createDirectories(config_.directory, communicator_);
       int failed = 0;
       std::string failureMessage;
@@ -1512,6 +1736,14 @@ namespace aprl
         {
           try
             {
+              for (std::size_t i = 0; i < config_.energyPlanes.size(); ++i)
+                {
+                  std::unique_ptr<EnergyPlaneWriter> writer(new EnergyPlaneWriter());
+                  writer->open(joinPath(config_.directory, config_.energyPlanes[i].name + "-energy.h5"),
+                    config_.energyPlanes[i], globalGeometry_, globalOriginBox_, config_.physicalGuardCells,
+                    frame_, overwrite, metadata);
+                  energyWriters_.push_back(std::move(writer));
+                }
               fieldWriters_.reserve(config_.fieldPlanes.size());
               for (std::size_t i = 0; i < config_.fieldPlanes.size(); ++i)
                 {
@@ -1580,6 +1812,225 @@ namespace aprl
     {
       try { close(false); }
       catch (...) {}
+    }
+
+    bool hasEnergyPlanes() const { return !config_.energyPlanes.empty(); }
+
+    void previewEnergyParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,
+                                   Double t0, Double t1,
+                                   std::vector<EnergyPlaneCrossing>& events) const
+    {
+      if (!hasEnergyPlanes()) return;
+      Double labT0, labZ0, labT1, labZ1;
+      frame_.boxToLab(t0, before.position[2], labT0, labZ0);
+      frame_.boxToLab(t1, after.position[2], labT1, labZ1);
+      for (std::size_t i = 0; i < config_.energyPlanes.size(); ++i)
+        {
+          const Double z = config_.energyPlanes[i].z;
+          const int direction = labZ0 < z && labZ1 >= z ? 1 :
+            (labZ0 > z && labZ1 <= z ? -1 : 0);
+          if (!direction) continue;
+          const long double a = std::max(0.0L, std::min(1.0L,
+            (static_cast<long double>(z)-labZ0)/(static_cast<long double>(labZ1)-labZ0)));
+          EnergyPlaneCrossing event = {};
+          event.planeIndex = i; event.direction = direction; event.particleId = after.id;
+          event.timeBox = t0 + a * (t1-t0);
+          event.timeLab = labT0 + a * (labT1-labT0);
+          event.x = before.position[0] + a*(after.position[0]-before.position[0]);
+          event.y = before.position[1] + a*(after.position[1]-before.position[1]);
+          event.charge = before.charge + a*(after.charge-before.charge);
+          long double endpoint[2][6];
+          const RelativisticParticleSI* states[2] = {&before, &after};
+          for (unsigned int e = 0; e < 2; ++e)
+            {
+              const RelativisticParticleSI& p = *states[e];
+              long double u2 = 0;
+              for (unsigned int d = 0; d < 3; ++d)
+                u2 += static_cast<long double>(p.properVelocity[d])*p.properVelocity[d];
+              const long double gamma = std::sqrt(1.0L+u2);
+              const long double mc2 = static_cast<long double>(p.mass)*SI::c*SI::c;
+              const long double totalBox = mc2*gamma;
+              const long double cpzBox = mc2*p.properVelocity[2];
+              const long double totalLab = frame_.gamma()*totalBox + frame_.gammaBeta()*cpzBox;
+              const long double cpzLab = frame_.gamma()*cpzBox + frame_.gammaBeta()*totalBox;
+              /* K_lab through the transformed on-shell endpoint norm avoids
+               * cancellation for cold particles, then interpolate K itself. */
+              const long double uzLab = frame_.gamma()*static_cast<long double>(p.properVelocity[2]) + frame_.gammaBeta()*gamma;
+              const long double labU2 = static_cast<long double>(p.properVelocity[0])*p.properVelocity[0] +
+                static_cast<long double>(p.properVelocity[1])*p.properVelocity[1] + uzLab*uzLab;
+              endpoint[e][0] = mc2*labU2/(std::sqrt(1.0L+labU2)+1.0L);
+              endpoint[e][1] = totalLab; endpoint[e][2] = cpzLab;
+              endpoint[e][3] = mc2*u2/(gamma+1.0L);
+              endpoint[e][4] = totalBox; endpoint[e][5] = cpzBox;
+            }
+          long double* destination[6] = {&event.kineticLab, &event.totalLab, &event.cpzLab,
+                                         &event.kineticBox, &event.totalBox, &event.cpzBox};
+          for (unsigned int k = 0; k < 6; ++k)
+            *destination[k] = endpoint[0][k] + a*(endpoint[1][k]-endpoint[0][k]);
+          events.push_back(event);
+        }
+    }
+
+    void commitEnergyParticleCrossings(const std::vector<EnergyPlaneCrossing>& events,
+                                       Double maximumTimeBox)
+    {
+      for (std::size_t e = 0; e < events.size(); ++e)
+        {
+          const EnergyPlaneCrossing& event = events[e];
+          if (event.timeBox > maximumTimeBox) continue;
+          if (event.planeIndex >= config_.energyPlanes.size() ||
+              (event.direction != 1 && event.direction != -1))
+            throw std::runtime_error("Invalid energy-plane crossing");
+          const bool physical =
+            event.x >= globalOriginBox_[0]+config_.physicalGuardCells[0]*globalGeometry_.dx &&
+            event.x < globalOriginBox_[0]+(globalGeometry_.nx-config_.physicalGuardCells[0])*globalGeometry_.dx &&
+            event.y >= globalOriginBox_[1]+config_.physicalGuardCells[1]*globalGeometry_.dy &&
+            event.y < globalOriginBox_[1]+(globalGeometry_.ny-config_.physicalGuardCells[1])*globalGeometry_.dy;
+          const long double value[7] = {event.charge, event.kineticLab, event.totalLab,
+            event.cpzLab, event.kineticBox, event.totalBox, event.cpzBox};
+          for (unsigned int aperture = 0; aperture < (physical ? 2U : 1U); ++aperture)
+            {
+              long double* sum = &localEnergyParticle_[event.planeIndex*18+aperture*9];
+              sum[event.direction > 0 ? 0 : 1] += 1.0L;
+              for (unsigned int k = 0; k < 7; ++k)
+                {
+                  if (!std::isfinite(value[k])) throw std::runtime_error("Nonfinite energy-plane particle event");
+                  sum[2+k] += event.direction*value[k];
+                }
+            }
+        }
+    }
+
+    void captureEnergyParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,
+                                   Double t0, Double t1)
+    {
+      if (!hasEnergyPlanes()) return;
+      std::vector<EnergyPlaneCrossing> events;
+      previewEnergyParticleStep(before, after, t0, t1, events);
+      commitEnergyParticleCrossings(events, t1);
+    }
+
+    void collectEnergyParticleCrossings()
+    {
+      if (!hasEnergyPlanes()) return;
+      if (localEnergyParticle_.size() > static_cast<std::size_t>(INT_MAX))
+        throw std::overflow_error("Too many energy planes for MPI reduction");
+      MPI_Reduce(localEnergyParticle_.data(), reducedEnergyParticle_.data(),
+                 static_cast<int>(localEnergyParticle_.size()), MPI_LONG_DOUBLE,
+                 MPI_SUM, 0, communicator_);
+      if (rank_ == 0)
+        for (std::size_t i = 0; i < energyRuntime_.size(); ++i)
+          for (unsigned int k = 0; k < 18; ++k)
+            energyRuntime_[i].particle[k] += reducedEnergyParticle_[i*18+k];
+      std::fill(localEnergyParticle_.begin(), localEnergyParticle_.end(), 0.0L);
+    }
+
+    void sampleEnergyPlanes(const EBFieldGrid& localFields, Double timeBox)
+    {
+      for (std::size_t detector = 0; detector < config_.energyPlanes.size(); ++detector)
+        {
+          const EnergyDetectorPlaneConfig& plane = config_.energyPlanes[detector];
+          const double boxZ = frame_.boxZFromLabZAndBoxT(plane.z, timeBox);
+          const double timeLab = frame_.labTFromLabZBoxT(plane.z, timeBox);
+          const int owner = ownerRank(boxZ);
+          long double integral[4] = {0, 0, 0, 0};
+          if (owner >= 0)
+            {
+              const double coordinate = (boxZ-globalOriginBox_[2])/globalGeometry_.dz;
+              const FieldInterpolationAxis halfZ = interpolationAxis(coordinate-0.5, globalGeometry_.nz);
+              const std::size_t begin = slabOffset(owner), end = slabOffset(owner+1);
+              int neighbour = -1;
+              if (halfZ.lower < begin && halfZ.fraction != 1.0) neighbour = owner-1;
+              else if (halfZ.lower+1 >= end && halfZ.fraction != 0.0) neighbour = owner+1;
+              if (neighbour >= 0 && neighbour < size_)
+                exchangeFieldNeighbour(localFields, owner, neighbour);
+              else neighbour = -1;
+              if (rank_ == owner)
+                {
+                  samplePlane(localFields, coordinate, halfZ, begin, neighbour >= 0,
+                              plane.z, timeLab, fieldSample_, false);
+                  const long double area = static_cast<long double>(globalGeometry_.dx)*globalGeometry_.dy;
+                  for (std::size_t j = 0; j < globalGeometry_.ny; ++j)
+                    for (std::size_t i = 0; i < globalGeometry_.nx; ++i)
+                      {
+                        const FieldPointRecord& point = fieldSample_[j*globalGeometry_.nx+i];
+                        const long double power = area/SI::mu0 *
+                          (static_cast<long double>(point.electric[0])*point.magnetic[1] -
+                           static_cast<long double>(point.electric[1])*point.magnetic[0]);
+                        long double density = 0;
+                        for (unsigned int k = 0; k < 3; ++k)
+                          density += 0.5L*area*(SI::epsilon0*static_cast<long double>(point.electric[k])*point.electric[k] +
+                            static_cast<long double>(point.magnetic[k])*point.magnetic[k]/SI::mu0);
+                        integral[0] += power; integral[2] += density;
+                        if (i >= config_.physicalGuardCells[0] && i < globalGeometry_.nx-config_.physicalGuardCells[0] &&
+                            j >= config_.physicalGuardCells[1] && j < globalGeometry_.ny-config_.physicalGuardCells[1])
+                          { integral[1] += power; integral[3] += density; }
+                      }
+                }
+              if (owner != 0)
+                {
+                  if (rank_ == owner) MPI_Send(integral, 4, MPI_LONG_DOUBLE, 0, ENERGY_SAMPLE_TAG, communicator_);
+                  else if (rank_ == 0) MPI_Recv(integral, 4, MPI_LONG_DOUBLE, owner, ENERGY_SAMPLE_TAG, communicator_, MPI_STATUS_IGNORE);
+                }
+            }
+          if (rank_ != 0) continue;
+          EnergyPlaneRuntime& runtime = energyRuntime_[detector];
+          EnergyPlaneRecord record = {};
+          record.timeBox = timeBox; record.timeLab = timeLab; record.available = owner >= 0;
+          if (owner >= 0)
+            {
+              for (unsigned int k = 0; k < 4; ++k)
+                if (!std::isfinite(integral[k])) throw std::runtime_error("Nonfinite energy-plane field integral");
+              if (runtime.samples == 0) runtime.firstTime = timeLab;
+              else if (!runtime.previousAvailable) ++runtime.gaps;
+              if (runtime.previousAvailable)
+                {
+                  const long double dt = static_cast<long double>(timeLab)-runtime.lastTime;
+                  if (!(dt > 0)) throw std::runtime_error("Energy-plane field sample times must increase");
+                  for (unsigned int k = 0; k < 2; ++k)
+                    runtime.energy[k] += 0.5L*dt*(runtime.previousPower[k]+integral[k]);
+                }
+              runtime.lastTime = timeLab;
+              ++runtime.samples;
+              runtime.previousPower[0] = integral[0]; runtime.previousPower[1] = integral[1];
+              record.power = integral[0]; record.physicalPower = integral[1];
+              record.energyPerLength = integral[2]; record.physicalEnergyPerLength = integral[3];
+            }
+          else
+            {
+              ++runtime.outside;
+              record.power = record.physicalPower = record.energyPerLength = record.physicalEnergyPerLength =
+                std::numeric_limits<double>::quiet_NaN();
+            }
+          runtime.previousAvailable = owner >= 0;
+          record.samples = runtime.samples; record.outside = runtime.outside; record.gaps = runtime.gaps;
+          record.firstTime = runtime.firstTime; record.lastTime = runtime.lastTime;
+          record.energy = runtime.energy[0]; record.physicalEnergy = runtime.energy[1];
+          for (unsigned int a = 0; a < 2; ++a)
+            {
+              const long double* values = runtime.particle+a*9;
+              record.particle[a].downstream = static_cast<std::uint64_t>(values[0]);
+              record.particle[a].upstream = static_cast<std::uint64_t>(values[1]);
+              record.particle[a].charge = values[2];
+              for (unsigned int k = 0; k < 6; ++k)
+                {
+                  record.particle[a].value[k] = values[3+k];
+                  record.particle[a].low[k] = values[3+k]-static_cast<long double>(record.particle[a].value[k]);
+                }
+            }
+          const double tolerance = 64*std::numeric_limits<double>::epsilon()*
+            std::max(plane.rhythm, std::max(std::abs(timeLab), std::abs(runtime.nextTime)));
+          const bool due = !runtime.haveRecord || timeLab >= runtime.nextTime-tolerance;
+          runtime.lastRecord = record; runtime.haveRecord = true; runtime.wroteLastRecord = due;
+          if (due)
+            {
+              energyWriters_[detector]->append(record);
+              const double ticks = std::max(1.0, std::floor((timeLab-runtime.nextTime+tolerance)/plane.rhythm)+1.0);
+              runtime.nextTime += ticks*plane.rhythm;
+            }
+        }
     }
 
     void captureParticleStep(const RelativisticParticleSI& before,
@@ -1665,6 +2116,7 @@ namespace aprl
 
     void collectParticleCrossings()
     {
+      collectEnergyParticleCrossings();
       if (config_.particlePlanes.empty() && !hasReferencePlanes_) return;
       const unsigned long long localCount =
         static_cast<unsigned long long>(localCrossingEvents_.size());
@@ -1816,6 +2268,7 @@ namespace aprl
               while (runtime.nextTimeLab <= timeLab + tolerance);
             }
         }
+      sampleEnergyPlanes(localFields, timeBox);
     }
 
     void flushForCheckpoint()
@@ -2024,6 +2477,12 @@ namespace aprl
       if (closed_) return;
       if (rank_ == 0)
         {
+          for (std::size_t i = 0; i < energyWriters_.size(); ++i)
+            {
+              if (energyRuntime_[i].haveRecord && !energyRuntime_[i].wroteLastRecord)
+                energyWriters_[i]->append(energyRuntime_[i].lastRecord);
+              energyWriters_[i]->close(completed);
+            }
           for (std::size_t i = 0; i < fieldWriters_.size(); ++i)
             fieldWriters_[i]->close(completed);
           for (std::size_t i = 0; i < particleWriters_.size(); ++i)
@@ -2147,7 +2606,8 @@ namespace aprl
                      const FieldInterpolationAxis& halfZ,
                      std::size_t localZOffset, bool hasNeighbour,
                      double planeZLab, double timeLab,
-                     std::vector<FieldPointRecord>& sample) const
+                     std::vector<FieldPointRecord>& sample,
+                     bool subtractBackground = true) const
     {
       sample.resize(globalGeometry_.nx * globalGeometry_.ny);
       const FieldInterpolationAxis vertexZ =
@@ -2192,7 +2652,7 @@ namespace aprl
                                    electricLab, magneticLab);
               FieldVector<Double> externalElectric(0.0);
               FieldVector<Double> externalMagnetic(0.0);
-              if (externalBackground_)
+              if (subtractBackground && externalBackground_)
                 {
                   externalBackground_->sampleLab(position, timeLab,
                     externalElectric, externalMagnetic);
@@ -2364,6 +2824,9 @@ namespace aprl
     std::vector<std::unique_ptr<ParticlePlaneWriter> > referenceWriters_;
     std::vector<std::unique_ptr<ValidationEntryMap> > validationEntries_;
     std::vector<BallisticValidationStats> validationStats_;
+    std::vector<EnergyPlaneRuntime> energyRuntime_;
+    std::vector<long double> localEnergyParticle_, reducedEnergyParticle_;
+    std::vector<std::unique_ptr<EnergyPlaneWriter> > energyWriters_;
   };
 
   LabDetectorManager::LabDetectorManager(
@@ -2391,6 +2854,23 @@ namespace aprl
   {
     impl_->captureParticleStep(before, after, timeBoxBefore, timeBoxAfter);
   }
+
+  bool LabDetectorManager::hasEnergyPlanes() const { return impl_->hasEnergyPlanes(); }
+
+  void LabDetectorManager::previewEnergyParticleStep(
+      const RelativisticParticleSI& before, const RelativisticParticleSI& after,
+      Double timeBoxBefore, Double timeBoxAfter,
+      std::vector<EnergyPlaneCrossing>& events) const
+  { impl_->previewEnergyParticleStep(before, after, timeBoxBefore, timeBoxAfter, events); }
+
+  void LabDetectorManager::commitEnergyParticleCrossings(
+      const std::vector<EnergyPlaneCrossing>& events, Double maximumTimeBox)
+  { impl_->commitEnergyParticleCrossings(events, maximumTimeBox); }
+
+  void LabDetectorManager::captureEnergyParticleStep(
+      const RelativisticParticleSI& before, const RelativisticParticleSI& after,
+      Double timeBoxBefore, Double timeBoxAfter)
+  { impl_->captureEnergyParticleStep(before, after, timeBoxBefore, timeBoxAfter); }
 
   void LabDetectorManager::collectParticleCrossings()
   {

@@ -1,3 +1,14 @@
+add_executable(aprl_boris_work_checks boris_work_checks.cpp)
+add_executable(aprl_energy_plane_checks energy_plane_checks.cpp)
+foreach(target aprl_boris_work_checks aprl_energy_plane_checks)
+  target_link_libraries(${target} PRIVATE direct_eb_core)
+  target_compile_options(${target} PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+endforeach()
+add_test(NAME boris_work_audit COMMAND aprl_boris_work_checks)
+set_tests_properties(boris_work_audit PROPERTIES LABELS "required;energy_audit")
+# MPI energy-plane modules are run explicitly by the bounded cluster campaign.
+
 option(APRL_ENABLE_PHYSICS_ANALYSIS
   "Register optional non-gating particle/field energy-budget examples" OFF)
 

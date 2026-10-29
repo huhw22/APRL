@@ -18,6 +18,7 @@ struct CompensatedSum {
 };
 struct Sample {
   long double weight, kinetic, total, value[4];
+  long double kineticLab, cMomentumBox, cMomentumLab;
 };
 Sample sample(const RelativisticParticleSI& particle,
               const BoostFrameTransform& frame, Double heldDistance) {
@@ -44,8 +45,19 @@ Sample sample(const RelativisticParticleSI& particle,
   result.value[1] = gammaBox;
   result.value[2] = particle.position[2];
   result.value[3] = heldDistance * particle.frozenBetaZ;
+  // Keep the old energy/moment expressions above unchanged. Additional lab
+  // kinetic energy uses a stable long-double norm, matching the new event
+  // audit, without another frame transform or a scan at every field step.
+  long double labNorm2 = 0.;
+  for (unsigned axis = 0; axis < 3; ++axis)
+    labNorm2 += static_cast<long double>(properVelocityLab[axis]) * properVelocityLab[axis];
+  result.kineticLab = rest * labNorm2 / (std::sqrt(1.L + labNorm2) + 1.L);
+  result.cMomentumBox = rest * particle.properVelocity[2];
+  result.cMomentumLab = rest * properVelocityLab[2];
   if (!(result.weight > 0.) || !std::isfinite(result.weight) ||
-      !std::isfinite(result.kinetic) || !std::isfinite(result.total))
+      !std::isfinite(result.kinetic) || !std::isfinite(result.total) ||
+      !std::isfinite(result.kineticLab) || !std::isfinite(result.cMomentumBox) ||
+      !std::isfinite(result.cMomentumLab))
     throw std::invalid_argument("Nonfinite pending particle energy");
   for (unsigned axis = 0; axis < 4; ++axis)
     if (!std::isfinite(result.value[axis]))
@@ -56,6 +68,7 @@ Sample sample(const RelativisticParticleSI& particle,
 
 PendingParticleStatisticsSnapshot::PendingParticleStatisticsSnapshot()
   : count(0), representedWeight(0.), kineticEnergy(0.), totalEnergy(0.),
+    kineticEnergyLab(0.), cMomentumZBox(0.), cMomentumZLab(0.),
     minimumGammaLab(std::numeric_limits<double>::infinity()),
     maximumGammaLab(-std::numeric_limits<double>::infinity()) {
   std::fill(mean, mean + 4, 0.L);
@@ -77,7 +90,7 @@ PendingParticleStatistics::PendingParticleStatistics(
   }
   const std::size_t blocks = count / BlockSize + (count % BlockSize != 0);
   suffix_.resize(blocks + 1);
-  CompensatedSum kinetic, total;
+  CompensatedSum kinetic, total, kineticLab, cMomentumBox, cMomentumLab;
   for (std::size_t b = blocks; b > 0; --b) {
     const std::size_t begin = (b - 1) * BlockSize;
     const Snapshot part = block(begin, std::min(count, begin + BlockSize));
@@ -86,13 +99,19 @@ PendingParticleStatistics::PendingParticleStatistics(
     total.add(part.totalEnergy);
     suffix_[b - 1].kineticEnergy = kinetic.value();
     suffix_[b - 1].totalEnergy = total.value();
+    kineticLab.add(part.kineticEnergyLab);
+    cMomentumBox.add(part.cMomentumZBox);
+    cMomentumLab.add(part.cMomentumZLab);
+    suffix_[b - 1].kineticEnergyLab = kineticLab.value();
+    suffix_[b - 1].cMomentumZBox = cMomentumBox.value();
+    suffix_[b - 1].cMomentumZLab = cMomentumLab.value();
   }
 }
 
 PendingParticleStatistics::Snapshot PendingParticleStatistics::block(
     std::size_t begin, std::size_t end) const {
   Snapshot result;
-  CompensatedSum kinetic, total;
+  CompensatedSum kinetic, total, kineticLab, cMomentumBox, cMomentumLab;
   for (std::size_t k = begin; k < end; ++k) {
     const Sample item = sample(queue_.orderedInitialParticle(k), frame_, heldDistancePerBeta_);
     long double delta[4], relative[4];
@@ -111,6 +130,9 @@ PendingParticleStatistics::Snapshot PendingParticleStatistics::block(
     result.representedWeight = newWeight;
     kinetic.add(item.kinetic);
     total.add(item.total);
+    kineticLab.add(item.kineticLab);
+    cMomentumBox.add(item.cMomentumBox);
+    cMomentumLab.add(item.cMomentumLab);
     result.minimumGammaLab = std::min(result.minimumGammaLab,
       static_cast<double>(item.value[0]));
     result.maximumGammaLab = std::max(result.maximumGammaLab,
@@ -119,6 +141,9 @@ PendingParticleStatistics::Snapshot PendingParticleStatistics::block(
   }
   result.kineticEnergy = kinetic.value();
   result.totalEnergy = total.value();
+  result.kineticEnergyLab = kineticLab.value();
+  result.cMomentumZBox = cMomentumBox.value();
+  result.cMomentumZLab = cMomentumLab.value();
   return result;
 }
 
@@ -131,6 +156,9 @@ PendingParticleStatistics::Snapshot PendingParticleStatistics::combine(
   result.representedWeight = first.representedWeight + second.representedWeight;
   result.kineticEnergy = first.kineticEnergy + second.kineticEnergy;
   result.totalEnergy = first.totalEnergy + second.totalEnergy;
+  result.kineticEnergyLab = first.kineticEnergyLab + second.kineticEnergyLab;
+  result.cMomentumZBox = first.cMomentumZBox + second.cMomentumZBox;
+  result.cMomentumZLab = first.cMomentumZLab + second.cMomentumZLab;
   const long double fraction = second.representedWeight / result.representedWeight;
   const long double crossWeight = first.representedWeight * fraction;
   long double delta[4];

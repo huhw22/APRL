@@ -203,6 +203,9 @@ void Simulation::initializeMovingWindow() {
   for (const auto& plane : detectorConfig_.particlePlanes)
     if (frame_.boxZFromLabZAndBoxT(plane.z, 0.) < windowOrigin)
       schedulePending = false;
+  for (const auto& plane : detectorConfig_.energyPlanes)
+    if (frame_.boxZFromLabZAndBoxT(plane.z, 0.) < windowOrigin)
+      schedulePending = false;
   for (const auto& plane : detectorConfig_.fieldPlanes)
     if (plane.particleBackgroundReference) schedulePending = false;
   if (rank_ == 0 && schedulePending) {

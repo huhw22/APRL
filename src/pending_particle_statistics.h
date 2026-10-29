@@ -14,6 +14,9 @@ namespace aprl {
 struct PendingParticleStatisticsSnapshot {
   std::size_t count;
   long double representedWeight, kineticEnergy, totalEnergy;
+  // Cached four-momentum diagnostics; cP has energy units (J). These totals
+  // use represented mass once and never modify the pending particle state.
+  long double kineticEnergyLab, cMomentumZBox, cMomentumZLab;
   long double mean[4], centered[4][4];
   double minimumGammaLab, maximumGammaLab;
   PendingParticleStatisticsSnapshot();

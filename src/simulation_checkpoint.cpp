@@ -70,7 +70,7 @@ namespace aprl
     {
       const unsigned int endian = 1;
       std::ostringstream out;
-      out << "aprl-step-checkpoint-v1;endian="
+      out << "aprl-step-checkpoint-v2;endian="
           << static_cast<unsigned int>(
                *reinterpret_cast<const unsigned char*>(&endian))
           << ";size=" << sizeof(std::size_t)
@@ -180,9 +180,9 @@ namespace aprl
       std::vector<unsigned char>& bytes, bool reading, bool geometry)
   {
     StateBuffer state(bytes,reading);
-    unsigned int version=1;
+    unsigned int version=2;
     state.value(version);
-    if (version!=1) throw std::runtime_error("Unsupported simulation checkpoint schema");
+    if (version!=2) throw std::runtime_error("Unsupported simulation checkpoint schema");
     if (geometry)
       {
         state.value(config_.mesh.cells);
@@ -220,6 +220,18 @@ namespace aprl
         state.value(energyLedgerPrescribedWork_); state.value(energyLedgerBoundarySourceWork_);
         state.value(energyLedgerBoundarySourceAbsWork_); state.value(energyLedgerRemovedKinetic_);
         state.value(energyLedgerRemovedTotal_); state.value(energyLedgerInitialKinetic_);
+        state.value(energyLedgerBorisWork_.gridWork);
+        state.value(energyLedgerBorisWork_.prescribedWork);
+        state.value(energyLedgerBorisWork_.magneticRotationDeltaK);
+        state.value(energyLedgerBorisWork_.totalDeltaK);
+        state.value(energyLedgerBorisWork_.roundoffResidual);
+        for (ParticleEnergyMoment* moment : {&energyLedgerRemovedMoment_,
+             &energyLedgerReleasedMoment_, &energyLedgerInitialMoment_}) {
+          state.value(moment->kineticBox); state.value(moment->totalBox);
+          state.value(moment->cPzBox); state.value(moment->kineticLab);
+          state.value(moment->totalLab); state.value(moment->cPzLab);
+        }
+        state.value(energyLedgerReleasedCharge_); state.value(energyLedgerPartialWorkSubsteps_);
         state.value(energyLedgerInitialField_); state.value(energyLedgerRemovedMacroparticles_);
         state.value(energyLedgerLastSampleStep_); state.value(energyLedgerHasReference_);
         state.value(localLostParticles_); state.value(lostParticles_);
@@ -251,6 +263,46 @@ namespace aprl
         state.value(r.minimumGammaLab); state.value(r.maximumGammaLab);
         state.value(r.linearChirpGammaPerM); state.value(r.uncorrelatedSigmaGammaLab);
         state.value(r.meanGammaBox); state.value(r.sigmaGammaBox);
+        state.value(r.movingInsertedField);
+        state.value(r.movingCroppedField);
+        state.value(r.movingRemapFieldChange);
+        state.value(r.movingRemapInterfaceCorrection);
+        state.value(r.inletOverwriteWork);
+        state.value(r.longitudinalBoundaryOutward);
+        state.value(r.movingEnergyDiagnosticRankSeconds);
+        state.value(r.frozenConstraintWork);
+        state.value(r.carrierConstraintWork);
+        state.value(r.constraintEnergyDiagnosticRankSeconds);
+        state.value(r.particleKineticBoxRemovedEvent);
+        state.value(r.particleRemovalInterpolationDelta);
+        state.value(r.particleGridWork);
+        state.value(r.prescribedBorisWork);
+        state.value(r.magneticRotationDeltaK);
+        state.value(r.borisPushDeltaK);
+        state.value(r.borisRoundoffResidual);
+        state.value(r.particleWorkBalanceResidual);
+        state.value(r.fieldExchangeResidual);
+        state.value(r.balanceResidualBoris);
+        state.value(r.particleKineticLabActive);
+        state.value(r.particleKineticLabRemoved);
+        state.value(r.particleCPzBoxActive);
+        state.value(r.particleCPzBoxRemoved);
+        state.value(r.particleCPzLabActive);
+        state.value(r.particleCPzLabRemoved);
+        state.value(r.deltaParticleKineticBox);
+        state.value(r.deltaParticleKineticLab);
+        state.value(r.deltaParticleCPzBox);
+        state.value(r.particleLorentzDeltaResidual);
+        state.value(r.deltaFieldEnergy);
+        state.value(r.releasedKineticBox);
+        state.value(r.releasedKineticLab);
+        state.value(r.releasedCPzBox);
+        state.value(r.releasedCPzLab);
+        state.value(r.releasedCharge);
+        state.value(r.partialWorkSubsteps);
+        state.value(r.boostGamma);
+        state.value(r.boostBeta);
+
       }
     state.finish();
   }

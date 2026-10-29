@@ -1,0 +1,49 @@
+Energy-transport acceptance contract
+
+Two separate coordinate/event contracts are mandatory:
+1. Boost moving-volume ledger: field inventory, propagation through all six
+   faces, remap/overwrite supply, constrained sources and all particle kinetic
+   energy including removed particles. New pusher-work and momentum identities
+   are independent diagnostics. No residual is assigned to an invented work term.
+2. Fixed-lab energy planes: signed +z particle transport and Poynting integral,
+   full and physical xy apertures separately. Surface integral of energy density
+   has units J/m, not J, and is not added to a particle crossing energy.
+
+Each energy plane writes /energy_plane/records with transactional
+committed_records/complete markers. The high/low energy and cpz fields must be
+recombined in long double. Particle rest energy and signed charge provide an
+independent consistency check of total minus kinetic energy. Lab/boost total E
+and cpz for the same events must satisfy the Lorentz transform. Current and
+removed particle states must never be confused with a matching crossing cohort.
+
+Incoming/outgoing cumulative K is compared only after particle counts, charge,
+direction and event coverage are checked. New energy-plane values are checked
+independently; unchanged legacy field/particle/trajectory files are compared
+byte-for-byte after source-ID sorting where legacy append ordering requires it.
+
+field_available, field_sample_count, outside_field_window_steps and field_gap_count
+describe coverage. Complete=1 only means the writer closed normally. A missing
+interval is not implicitly zero field and is not bridged by the reviewer.
+Where every consecutive field sample is written, recompute signed trapezoidal
+energy from recorded powers and lab times; otherwise mark that specific check
+unavailable rather than relabel cadence-limited output as an independent full
+flux integration. Particle accounting is independent of field coverage.
+
+For a lab-plane pair, the diagnostic transport difference is
+  [K_in + integral(Sz_in)] - [K_out + integral(Sz_out)].
+It is not called an energy-conservation residual: lateral flux, simultaneous
+interior-field change and source work over the same control volume are not
+automatically supplied by two crossing planes. Total field is not pure near
+field. The review never mixes this quantity with a boost scalar energy sum.
+
+Software acceptance: all outputs finite and transaction-complete, expected
+cohort coverage, exact unchanged legacy states, reconstructable identities,
+normal physical termination and MPI finalization. Numerical bounds for
+identity reconstruction use original source magnitudes and floating-point
+precision; they are not allowed physical error percentages. Zero physical
+denominators are reported as null, not silently replaced by total beam energy.
+
+Physics reporting: plot/report the whole time series and the largest imbalance,
+its step and denominator, as well as terminal values; separate kernel work
+identity, grid exchange, boundary supply and event reconstruction errors. No
+closure_valid promotion, no winner-dependent retry and no dropped timing sample.

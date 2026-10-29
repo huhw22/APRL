@@ -24,6 +24,38 @@ namespace aprl
     RelativisticParticleSI();
   };
 
+  /* Read-only work accounting for the actual two electric kicks and magnetic
+   * rotation of a Boris update. All fields are represented-particle energies
+   * in joules; charge/mass already include the macro-particle weight.
+   * roundoffResidual is a local arithmetic remainder, not a field/PIC energy
+   * conservation residual. Source work is evaluated independently of it. */
+  struct BorisWork
+  {
+    long double gridWork;
+    long double prescribedWork;
+    long double magneticRotationDeltaK;
+    long double totalDeltaK;
+    long double roundoffResidual;
+
+    BorisWork();
+    void clear();
+    void add(const BorisWork& other, long double fraction = 1.0L);
+  };
+
+  /* Called only when explicitly supplied. The states and optional work are
+   * valid only for this call; implementations that defer output must copy
+   * their needed data. Parallel particle preparation requires an observer
+   * private to the prepared particle, with no MPI/HDF5 from this callback. */
+  class ParticleSubstepObserver
+  {
+  public:
+    virtual ~ParticleSubstepObserver() {}
+    virtual void observe(const RelativisticParticleSI& before,
+                         const RelativisticParticleSI& after,
+                         Double timeBefore, Double timeAfter,
+                         const BorisWork* work) = 0;
+  };
+
   class RelativisticBorisPusher
   {
   public:
@@ -32,6 +64,18 @@ namespace aprl
         const FieldVector<Double>& electric,
         const FieldVector<Double>& magnetic,
         Double charge, Double mass, Double timeStep);
+
+    /* Same state arithmetic as pushMomentum. totalElectric must be the same
+     * already-combined value used by the ordinary pusher; the two components
+     * are used only to attribute the electric work. Overwrites work. */
+    static void pushMomentumWithWork(
+        FieldVector<Double>& properVelocity,
+        const FieldVector<Double>& totalElectric,
+        const FieldVector<Double>& totalMagnetic,
+        const FieldVector<Double>& gridElectric,
+        const FieldVector<Double>& prescribedElectric,
+        Double charge, Double mass, Double timeStep,
+        BorisWork& work);
 
     static void pushPosition(FieldVector<Double>& position,
                              const FieldVector<Double>& properVelocity,
@@ -73,7 +117,9 @@ namespace aprl
         Double fieldTimeStep,
         unsigned int substeps,
         Double* prescribedWorkJ = 0,
-        bool includeGridFields = true);
+        bool includeGridFields = true,
+        BorisWork* borisWork = 0,
+        ParticleSubstepObserver* observer = 0);
   };
 }
 

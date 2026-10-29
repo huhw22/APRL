@@ -174,7 +174,8 @@ namespace aprl
   {
     MagneticDevice,
     FieldDetectorPlane,
-    ParticleDetectorPlane
+    ParticleDetectorPlane,
+    EnergyDetectorPlane
   };
 
   /* Stopping uses this generic laboratory-frame extent instead of the magnet
@@ -365,6 +366,17 @@ namespace aprl
     ParticleDetectorPlaneConfig();
   };
 
+  /* Scalar transport diagnostics, independent of raw E/B and particle files. */
+  struct EnergyDetectorPlaneConfig
+  {
+    std::string name;
+    Double z;
+    Double rhythm;
+    std::size_t bufferSamples;
+    unsigned int compression;
+    EnergyDetectorPlaneConfig();
+  };
+
   /* Detector lists are empty by default.  The simulation uses that fact to
    * avoid constructing a manager, allocating buffers, or entering detector
    * MPI collectives when laboratory detector planes are not requested. */
@@ -373,6 +385,9 @@ namespace aprl
     std::string directory;
     std::vector<FieldDetectorPlaneConfig> fieldPlanes;
     std::vector<ParticleDetectorPlaneConfig> particlePlanes;
+    std::vector<EnergyDetectorPlaneConfig> energyPlanes;
+    /* Derived from the transverse CPML, never an independent input knob. */
+    std::size_t physicalGuardCells[2];
 
     DetectorConfig();
     bool enabled() const;

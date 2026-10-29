@@ -246,7 +246,7 @@ namespace aprl
       if (detectors)
         {
           validateMapKeys(detectors, "detectors", {
-            "enabled", "directory", "field_planes", "particle_planes"
+            "enabled", "directory", "field_planes", "particle_planes", "energy_planes"
           });
           const YAML::Node fieldPlanes = detectors["field_planes"];
           if (fieldPlanes)
@@ -286,6 +286,16 @@ namespace aprl
                         "enabled", "minimum_photon_energy_eV", "cycles"
                       });
                 }
+            }
+          const YAML::Node energyPlanes = detectors["energy_planes"];
+          if (energyPlanes)
+            {
+              if (!energyPlanes.IsSequence())
+                throw configError(energyPlanes, "detectors.energy_planes must be a sequence");
+              for (std::size_t i = 0; i < energyPlanes.size(); ++i)
+                validateMapKeys(energyPlanes[i], "detectors.energy_planes", {
+                  "name", "z", "rhythm", "buffer_samples", "compression"
+                });
             }
           const YAML::Node particlePlanes = detectors["particle_planes"];
           if (particlePlanes)
@@ -808,13 +818,17 @@ namespace aprl
     : name(), z(0.0), bufferRecords(16384), compression(0)
   {}
 
-  DetectorConfig::DetectorConfig()
-    : directory("output/detectors"), fieldPlanes(), particlePlanes()
+  EnergyDetectorPlaneConfig::EnergyDetectorPlaneConfig()
+    : name(), z(0.0), rhythm(0.0), bufferSamples(128), compression(0)
   {}
+
+  DetectorConfig::DetectorConfig()
+    : directory("output/detectors"), fieldPlanes(), particlePlanes(), energyPlanes()
+  { physicalGuardCells[0] = physicalGuardCells[1] = 0; }
 
   bool DetectorConfig::enabled() const
   {
-    return !fieldPlanes.empty() || !particlePlanes.empty();
+    return !fieldPlanes.empty() || !particlePlanes.empty() || !energyPlanes.empty();
   }
 
   WaveConfig::WaveConfig()
@@ -1630,6 +1644,37 @@ namespace aprl
               }
           }
 
+        const YAML::Node energyPlanes = detectors["energy_planes"];
+        if (detectorsEnabled && energyPlanes)
+          {
+            for (std::size_t i = 0; i < energyPlanes.size(); ++i)
+              {
+                const YAML::Node node = energyPlanes[i];
+                EnergyDetectorPlaneConfig plane;
+                plane.name = required(node, "name").as<std::string>();
+                if (!validDetectorName(plane.name))
+                  throw configError(node["name"], "invalid energy detector name");
+                if (!detectorNames.insert(plane.name).second)
+                  throw configError(node["name"], "detector names must be unique");
+                plane.z = finiteDouble(required(node, "z"), "energy detector z") * result.inputUnits.length;
+                plane.rhythm = finiteDouble(required(node, "rhythm"), "energy detector rhythm") * result.inputUnits.time;
+                if (!(plane.rhythm > 0.0))
+                  throw configError(node, "energy detector rhythm must be positive");
+                if (node["buffer_samples"])
+                  plane.bufferSamples = positiveSize(node["buffer_samples"], "energy detector buffer_samples");
+                if (node["compression"])
+                  plane.compression = node["compression"].as<unsigned int>();
+                if (plane.compression > 9)
+                  throw configError(node, "energy detector compression must be in [0,9]");
+                result.detectors.energyPlanes.push_back(plane);
+                BeamlineElementExtent extent;
+                extent.role = BeamlineElementRole::EnergyDetectorPlane;
+                extent.physicalEntrance = extent.physicalExit = plane.z;
+                extent.interactionEntrance = extent.interactionExit = plane.z;
+                result.beamlineElements.push_back(extent);
+              }
+          }
+
         const YAML::Node particlePlanes = detectors["particle_planes"];
         if (detectorsEnabled && particlePlanes)
           {
@@ -1992,6 +2037,29 @@ namespace aprl
         result.trajectory.flushEverySamples == 0)
       throw configError(trajectory,
         "interactive trajectory flush_every_samples must be positive");
+    if (!result.detectors.energyPlanes.empty())
+      {
+        std::set<std::string> outputStems;
+        for (std::size_t i = 0; i < result.detectors.fieldPlanes.size(); ++i)
+          {
+            const FieldDetectorPlaneConfig& plane = result.detectors.fieldPlanes[i];
+            outputStems.insert(plane.name);
+            if (plane.particleBackgroundReference)
+              outputStems.insert(plane.name + "-ballistic-reference");
+          }
+        for (std::size_t i = 0; i < result.detectors.particlePlanes.size(); ++i)
+          outputStems.insert(result.detectors.particlePlanes[i].name);
+        for (std::size_t i = 0; i < result.detectors.energyPlanes.size(); ++i)
+          if (!outputStems.insert(result.detectors.energyPlanes[i].name + "-energy").second)
+            throw configError(detectors, "energy plane output filename collides with another detector file");
+      }
+    if (result.boundary.type == EBBoundaryType::Cpml)
+      for (unsigned int axis = 0; axis < 2; ++axis)
+        result.detectors.physicalGuardCells[axis] = result.boundary.cpml.cells[axis];
+    if (!result.detectors.energyPlanes.empty() &&
+        (result.checkpoint.enabled() || !result.checkpoint.restartFrom.empty()))
+      throw configError(detectors,
+        "energy_planes do not support checkpoint/restart; use an independent diagnostics run");
     return result;
   }
 }

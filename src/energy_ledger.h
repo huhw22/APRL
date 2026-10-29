@@ -46,6 +46,37 @@ namespace aprl
     double frozenConstraintWork;
     double carrierConstraintWork;
     double constraintEnergyDiagnosticRankSeconds;
+    // v5: independent particle-work and energy-momentum audit. Legacy v4
+    // residual/work remain available for a like-for-like diagnostic comparison.
+    double particleKineticBoxRemovedEvent;
+    double particleRemovalInterpolationDelta;
+    double particleGridWork;
+    double prescribedBorisWork;
+    double magneticRotationDeltaK;
+    double borisPushDeltaK;
+    double borisRoundoffResidual;
+    double particleWorkBalanceResidual;
+    double fieldExchangeResidual;
+    double balanceResidualBoris;
+    double particleKineticLabActive;
+    double particleKineticLabRemoved;
+    double particleCPzBoxActive;
+    double particleCPzBoxRemoved;
+    double particleCPzLabActive;
+    double particleCPzLabRemoved;
+    double deltaParticleKineticBox;
+    double deltaParticleKineticLab;
+    double deltaParticleCPzBox;
+    double particleLorentzDeltaResidual;
+    double deltaFieldEnergy;
+    double releasedKineticBox;
+    double releasedKineticLab;
+    double releasedCPzBox;
+    double releasedCPzLab;
+    double releasedCharge;
+    double partialWorkSubsteps;
+    double boostGamma;
+    double boostBeta;
     double balanceResidualRaw;
     double balanceResidual;
     double relativeBalanceExchange;

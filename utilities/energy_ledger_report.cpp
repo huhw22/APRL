@@ -75,7 +75,7 @@ namespace
   }
 
   void printRecord(const char* label, const aprl::EnergyLedgerRecord& record,
-                   bool hasAbsoluteBoundaryWork, bool hasMovingWork)
+                   bool hasAbsoluteBoundaryWork, bool hasMovingWork, bool hasBorisWork)
   {
     std::cout << label << ": step=" << record.step
       << " time_box_s=" << record.timeBox
@@ -115,6 +115,23 @@ namespace
         << " inlet_overwrite_work_J=" << record.inletOverwriteWork
         << " frozen_constraint_work_J=" << record.frozenConstraintWork
         << " carrier_constraint_work_J=" << record.carrierConstraintWork << "\n";
+    if (hasBorisWork)
+      std::cout << "  delta_particle_kinetic_box_J=" << record.deltaParticleKineticBox
+        << " delta_particle_kinetic_lab_J=" << record.deltaParticleKineticLab
+        << " delta_particle_cPz_box_J=" << record.deltaParticleCPzBox
+        << " particle_lorentz_delta_residual_J=" << record.particleLorentzDeltaResidual
+        << " delta_field_energy_J=" << record.deltaFieldEnergy << "\n"
+        << "  particle_grid_work_J=" << record.particleGridWork
+        << " prescribed_boris_work_J=" << record.prescribedBorisWork
+        << " magnetic_rotation_delta_K_J=" << record.magneticRotationDeltaK
+        << " boris_roundoff_residual_J=" << record.borisRoundoffResidual << "\n"
+        << "  particle_work_balance_residual_J=" << record.particleWorkBalanceResidual
+        << " field_exchange_residual_J=" << record.fieldExchangeResidual
+        << " balance_residual_boris_J=" << record.balanceResidualBoris
+        << " partial_work_substeps=" << record.partialWorkSubsteps << "\n"
+        << "  released_kinetic_box_J=" << record.releasedKineticBox
+        << " released_kinetic_lab_J=" << record.releasedKineticLab
+        << " released_charge_C=" << record.releasedCharge << "\n";
     if (hasAbsoluteBoundaryWork)
       {
         std::cout << "  boundary_source_abs_work_J="
@@ -148,7 +165,7 @@ int main(int argc, char** argv)
       group = H5Gopen2(file, "/energy_ledger", H5P_DEFAULT);
       requireHandle(group, "Cannot open /energy_ledger");
       const int formatVersion = readIntAttribute(group, "format_version");
-      if (formatVersion < 1 || formatVersion > 4)
+      if (formatVersion < 1 || formatVersion > 5)
         throw std::runtime_error("Unsupported energy-ledger format version");
       const std::uint64_t committed = readUnsigned(
         group, "committed_records");
@@ -188,10 +205,10 @@ int main(int argc, char** argv)
         << "format_version=" << formatVersion
         << " committed_records=" << committed
         << " complete=" << static_cast<unsigned int>(complete) << "\n";
-      printRecord("initial", initial, formatVersion >= 3, formatVersion >= 4);
+      printRecord("initial", initial, formatVersion >= 3, formatVersion >= 4, formatVersion >= 5);
       if (hasSelected)
         {
-          printRecord("selected", selected, formatVersion >= 3, formatVersion >= 4);
+          printRecord("selected", selected, formatVersion >= 3, formatVersion >= 4, formatVersion >= 5);
           std::cout
             << "initial_to_selected: particle_kinetic_accounted_J="
             << (selected.particleKineticActive +
@@ -210,7 +227,7 @@ int main(int argc, char** argv)
             << " sigma_gamma_lab="
             << (selected.sigmaGammaLab - initial.sigmaGammaLab) << "\n";
         }
-      printRecord("final", final, formatVersion >= 3, formatVersion >= 4);
+      printRecord("final", final, formatVersion >= 3, formatVersion >= 4, formatVersion >= 5);
       if (formatVersion >= 3 && final.boundaryInjectionEntries > 0)
         std::cout << "note: boundary-source work / stored field energy is "
           "a source-activity scale, not the fraction of missing external "

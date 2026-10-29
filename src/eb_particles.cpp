@@ -11,6 +11,79 @@ namespace aprl
       weight(1.0), id(0), sourceId(0), frozen(false), frozenBetaZ(0.0)
   {}
 
+  BorisWork::BorisWork() { clear(); }
+
+  void BorisWork::clear()
+  {
+    gridWork = prescribedWork = magneticRotationDeltaK = 0.0L;
+    totalDeltaK = roundoffResidual = 0.0L;
+  }
+
+  void BorisWork::add(const BorisWork& other, long double fraction)
+  {
+    gridWork += fraction * other.gridWork;
+    prescribedWork += fraction * other.prescribedWork;
+    magneticRotationDeltaK += fraction * other.magneticRotationDeltaK;
+    totalDeltaK += fraction * other.totalDeltaK;
+    roundoffResidual += fraction * other.roundoffResidual;
+  }
+
+  namespace
+  {
+    long double auditGamma(const FieldVector<Double>& u)
+    {
+      long double norm = 1.0L;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        norm += static_cast<long double>(u[axis]) * u[axis];
+      return std::sqrt(norm);
+    }
+
+    long double auditDeltaK(const FieldVector<Double>& before,
+                            const FieldVector<Double>& after,
+                            long double restOverGammaSum)
+    {
+      long double difference = 0.0L;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        difference +=
+          (static_cast<long double>(after[axis]) - before[axis]) *
+          (static_cast<long double>(after[axis]) + before[axis]);
+      return restOverGammaSum * difference;
+    }
+
+    long double auditElectricKick(const FieldVector<Double>& before,
+                                  const FieldVector<Double>& after,
+                                  const FieldVector<Double>& electric,
+                                  Double electricKick,
+                                  long double restOverGammaSum)
+    {
+      long double dot = 0.0L;
+      for (unsigned int axis = 0; axis < 3; ++axis)
+        dot += (static_cast<long double>(after[axis]) + before[axis]) *
+          electric[axis];
+      return restOverGammaSum * static_cast<long double>(electricKick) * dot;
+    }
+
+    void pushSubstepWithWork(RelativisticParticleSI& particle,
+                             const FieldVector<Double>& electric,
+                             const FieldVector<Double>& magnetic,
+                             const FieldVector<Double>& gridElectric,
+                             const FieldVector<Double>& prescribedElectric,
+                             Double dt, BorisWork* work)
+    {
+      if (work)
+        {
+          RelativisticBorisPusher::pushMomentumWithWork(
+            particle.properVelocity, electric, magnetic,
+            gridElectric, prescribedElectric,
+            particle.charge, particle.mass, dt, *work);
+          RelativisticBorisPusher::pushPosition(
+            particle.position, particle.properVelocity, dt);
+        }
+      else
+        RelativisticBorisPusher::push(particle, electric, magnetic, dt);
+    }
+  }
+
   void RelativisticBorisPusher::pushMomentum(
       FieldVector<Double>& properVelocity,
       const FieldVector<Double>& electric,
@@ -51,6 +124,68 @@ namespace aprl
     const Double gamma =
       BoostFrameTransform::gammaFromProperVelocity(properVelocity);
     position.pmv(SI::c * timeStep / gamma, properVelocity);
+  }
+
+  void RelativisticBorisPusher::pushMomentumWithWork(
+      FieldVector<Double>& properVelocity,
+      const FieldVector<Double>& totalElectric,
+      const FieldVector<Double>& totalMagnetic,
+      const FieldVector<Double>& gridElectric,
+      const FieldVector<Double>& prescribedElectric,
+      Double charge, Double mass, Double timeStep,
+      BorisWork& work)
+  {
+    if (!(mass > 0.0) || !std::isfinite(mass) ||
+        !std::isfinite(charge) || !(timeStep > 0.0) ||
+        !std::isfinite(timeStep))
+      throw std::invalid_argument("Invalid SI particle pusher parameters");
+
+    // Keep every state-producing expression in the same order as the
+    // original pushMomentum. All extended-precision work below is a reader
+    // of these states and never feeds the push or field sampling.
+    const FieldVector<Double> before(properVelocity);
+    const Double electricKick = charge * timeStep /
+                                (2.0 * mass * SI::c);
+    FieldVector<Double> uMinus(properVelocity);
+    uMinus.pmv(electricKick, totalElectric);
+
+    const Double gammaMinus =
+      BoostFrameTransform::gammaFromProperVelocity(uMinus);
+    FieldVector<Double> rotation(0.0);
+    rotation.mv(charge * timeStep / (2.0 * mass * gammaMinus), totalMagnetic);
+    FieldVector<Double> uPrime = cross(uMinus, rotation);
+    uPrime += uMinus;
+
+    FieldVector<Double> s(rotation);
+    s *= 2.0 / (1.0 + rotation.norm2());
+    FieldVector<Double> uPlus = cross(uPrime, s);
+    uPlus += uMinus;
+
+    properVelocity = uPlus;
+    properVelocity.pmv(electricKick, totalElectric);
+
+    const long double c = SI::c;
+    const long double rest = static_cast<long double>(mass) * c * c;
+    const long double gammaBefore = auditGamma(before);
+    const long double gammaMinusAudit = auditGamma(uMinus);
+    const long double gammaPlus = auditGamma(uPlus);
+    const long double gammaAfter = auditGamma(properVelocity);
+    const long double firstKickScale = rest / (gammaBefore + gammaMinusAudit);
+    const long double secondKickScale = rest / (gammaPlus + gammaAfter);
+    work.gridWork = auditElectricKick(before, uMinus,
+        gridElectric, electricKick, firstKickScale) +
+      auditElectricKick(uPlus, properVelocity,
+        gridElectric, electricKick, secondKickScale);
+    work.prescribedWork = auditElectricKick(before, uMinus,
+        prescribedElectric, electricKick, firstKickScale) +
+      auditElectricKick(uPlus, properVelocity,
+        prescribedElectric, electricKick, secondKickScale);
+    work.magneticRotationDeltaK = auditDeltaK(uMinus, uPlus,
+      rest / (gammaMinusAudit + gammaPlus));
+    work.totalDeltaK = auditDeltaK(before, properVelocity,
+      rest / (gammaBefore + gammaAfter));
+    work.roundoffResidual = work.totalDeltaK - work.gridWork -
+      work.prescribedWork - work.magneticRotationDeltaK;
   }
 
   void RelativisticBorisPusher::push(
@@ -105,7 +240,9 @@ namespace aprl
       Double fieldTimeStep,
       unsigned int substeps,
       Double* prescribedWorkJ,
-      bool includeGridFields)
+      bool includeGridFields,
+      BorisWork* borisWork,
+      ParticleSubstepObserver* observer)
   {
     if (substeps == 0 || !(fieldTimeStep > 0.0) ||
         !std::isfinite(fieldTimeStep))
@@ -128,6 +265,7 @@ namespace aprl
       }
     const Double particleDt = fieldTimeStep /
       static_cast<Double>(substeps);
+    if (borisWork) borisWork->clear();
     Double work = 0.0;
     for (unsigned int substep = 0; substep < substeps; ++substep)
       {
@@ -142,7 +280,25 @@ namespace aprl
                                  prescribedElectric, prescribedMagnetic);
         electric += prescribedElectric;
         magnetic += prescribedMagnetic;
-        push(particle, electric, magnetic, particleDt);
+        if (borisWork || observer)
+          {
+            BorisWork substepWork;
+            BorisWork* collected = borisWork ? &substepWork : 0;
+            if (observer)
+              {
+                const RelativisticParticleSI before(particle);
+                pushSubstepWithWork(particle, electric, magnetic,
+                  gridElectric, prescribedElectric, particleDt, collected);
+                observer->observe(before, particle, substepTime,
+                  substepTime + particleDt, collected);
+              }
+            else
+              pushSubstepWithWork(particle, electric, magnetic,
+                gridElectric, prescribedElectric, particleDt, collected);
+            if (borisWork) borisWork->add(substepWork);
+          }
+        else
+          push(particle, electric, magnetic, particleDt);
         if (prescribedWorkJ)
           {
             FieldVector<Double> endElectric(0.0);

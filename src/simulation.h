@@ -18,6 +18,7 @@
 #include "eb_particles.h"
 #include "eb_sources.h"
 #include "energy_ledger.h"
+#include "particle_energy_audit.h"
 #include "lab_detectors.h"
 #include "longitudinal_mesh.h"
 #include "particle_boundary.h"
@@ -178,6 +179,12 @@ namespace aprl
     long double energyLedgerBoundarySourceAbsWork_;
     long double energyLedgerRemovedKinetic_;
     long double energyLedgerRemovedTotal_;
+    BorisWork energyLedgerBorisWork_;
+    ParticleEnergyMoment energyLedgerRemovedMoment_;
+    ParticleEnergyMoment energyLedgerReleasedMoment_;
+    ParticleEnergyMoment energyLedgerInitialMoment_;
+    long double energyLedgerReleasedCharge_;
+    unsigned long long energyLedgerPartialWorkSubsteps_;
     long double energyLedgerInitialKinetic_;
     long double energyLedgerInitialField_;
     unsigned long long energyLedgerRemovedMacroparticles_;

@@ -12,7 +12,7 @@ typedef PendingParticleStatisticsSnapshot Snapshot;
 void require(bool value, const char* message) {
   if (!value) throw std::runtime_error(message);
 }
-struct Value { long double w, k, total, x[4]; };
+struct Value { long double w, k, total, kLab, cPBox, cPLab, x[4]; };
 Value value(const RelativisticParticleSI& p, const BoostFrameTransform& f, double h) {
   Value v;
   const double gb = BoostFrameTransform::gammaFromProperVelocity(p.properVelocity);
@@ -23,6 +23,12 @@ Value value(const RelativisticParticleSI& p, const BoostFrameTransform& f, doubl
   v.total = rest * gb;
   v.x[0] = BoostFrameTransform::gammaFromProperVelocity(ul);
   v.x[1] = gb; v.x[2] = p.position[2]; v.x[3] = h * p.frozenBetaZ;
+  long double labNorm2=0.;
+  for (unsigned axis=0; axis<3; ++axis)
+    labNorm2+=static_cast<long double>(ul[axis])*ul[axis];
+  v.kLab=rest*labNorm2/(std::sqrt(1.L+labNorm2)+1.L);
+  v.cPBox=rest*p.properVelocity[2];
+  v.cPLab=rest*ul[2];
   return v;
 }
 // Independent two-pass calculation over the whole remaining cohort.
@@ -36,6 +42,8 @@ Snapshot direct(const PendingParticleQueue& q, const BoostFrameTransform& f,
     const Value v = value(q.orderedInitialParticle(i), f, h);
     result.representedWeight += v.w;
     result.kineticEnergy += v.k; result.totalEnergy += v.total; ++result.count;
+    result.kineticEnergyLab += v.kLab;
+    result.cMomentumZBox += v.cPBox; result.cMomentumZLab += v.cPLab;
     for (unsigned a = 0; a < 4; ++a) displacement[a] += v.w * (v.x[a] - anchor.x[a]);
     result.minimumGammaLab = std::min(result.minimumGammaLab, static_cast<double>(v.x[0]));
     result.maximumGammaLab = std::max(result.maximumGammaLab, static_cast<double>(v.x[0]));
@@ -60,10 +68,20 @@ void compare(const Snapshot& got, const Snapshot& expected) {
   require(got.minimumGammaLab == expected.minimumGammaLab &&
           got.maximumGammaLab == expected.maximumGammaLab, "Pending gamma extrema differ");
   const long double eps = std::numeric_limits<long double>::epsilon();
-  const long double a[] = {got.representedWeight, got.kineticEnergy, got.totalEnergy};
-  const long double b[] = {expected.representedWeight, expected.kineticEnergy, expected.totalEnergy};
-  for (unsigned k = 0; k < 3; ++k)
+  const long double a[] = {got.representedWeight, got.kineticEnergy, got.totalEnergy,
+    got.kineticEnergyLab, got.cMomentumZBox, got.cMomentumZLab};
+  const long double b[] = {expected.representedWeight, expected.kineticEnergy, expected.totalEnergy,
+    expected.kineticEnergyLab, expected.cMomentumZBox, expected.cMomentumZLab};
+  for (unsigned k = 0; k < 4; ++k)
     require(std::abs(a[k] - b[k]) <= 128 * eps * std::abs(b[k]), "Pending energy/weight differs");
+  // Signed momentum can cancel. Its summation error is measured against
+  // total energy, which bounds sum |cPz|, rather than a near-zero final cPz.
+  const long double rest=expected.representedWeight*
+    static_cast<long double>(SI::electronMass)*SI::c*SI::c;
+  require(std::abs(got.cMomentumZBox-expected.cMomentumZBox)<=
+    128*eps*expected.totalEnergy,"Pending box momentum differs");
+  require(std::abs(got.cMomentumZLab-expected.cMomentumZLab)<=
+    128*eps*(expected.kineticEnergyLab+rest),"Pending lab momentum differs");
   for (unsigned i = 0; i < 4; ++i) {
     const long double scale = std::max(std::abs(expected.mean[i]), expected.count ?
       std::sqrt(std::abs(expected.centered[i][i]) / expected.representedWeight) : 0.L);
@@ -92,13 +110,18 @@ void cohort(unsigned mode) {
     RelativisticParticleSI p;
     p.id = p.sourceId = i + 1;
     p.frozen = true;
-    p.weight = mode == 2 ? 1. : 1. + static_cast<double>(i % 7) / 8.;
+    p.weight = mode >= 2 ? 1. : 1. + static_cast<double>(i % 7) / 8.;
     p.mass = SI::electronMass * p.weight; p.charge = -SI::elementaryCharge * p.weight;
     const double gamma = mode == 1 ? 1170. : (mode == 2 ?
       1170. + 1e-8 * static_cast<double>(static_cast<int>(i % 17) - 8) :
       1164. + .012 * static_cast<double>(i % 997));
     FieldVector<double> lab(0.); lab[2] = std::sqrt((gamma - 1.) * (gamma + 1.));
     frame.properVelocityLabToBox(lab, p.properVelocity);
+    if (mode == 3) {
+      // With transverse momentum the established longitudinal-only held
+      // approximation remains forward while actual box cPz has both signs.
+      p.properVelocity[0]=1.; p.properVelocity[2]=i%2 ? -.2 : .2;
+    }
     p.frozenBetaZ = frame.heldLongitudinalBetaZ(p.properVelocity);
     p.position[2] = -.001 - .019 * static_cast<double>((i * 89) % 1555) / 1555.;
     particles.push_back(p);
@@ -110,6 +133,18 @@ void cohort(unsigned mode) {
   for (std::size_t cursor : cursors) {
     const Snapshot got = stats.snapshot(cursor);
     compare(got, direct(queue, frame, h, cursor));
+    const long double rest=got.representedWeight*
+      static_cast<long double>(SI::electronMass)*SI::c*SI::c;
+    const long double labTotal=got.kineticEnergyLab+rest;
+    const long double transformedEnergy=static_cast<long double>(frame.gamma())*
+      (got.totalEnergy+frame.beta()*got.cMomentumZBox);
+    const long double transformedMomentum=static_cast<long double>(frame.gamma())*
+      (got.cMomentumZBox+frame.beta()*got.totalEnergy);
+    const long double transformBound=8*std::numeric_limits<Double>::epsilon()*labTotal;
+    require(std::abs(labTotal-transformedEnergy)<=transformBound,
+      "Cached lab energy fails four-momentum transform");
+    require(std::abs(got.cMomentumZLab-transformedMomentum)<=transformBound,
+      "Cached lab momentum fails four-momentum transform");
     if (cursor == queue.initialCount()) continue;
     // Verify the affine diagnostic moment formula against a second complete
     // cohort scan in long double. This does not assert bitwise binary64 z.
@@ -161,7 +196,7 @@ void cohort(unsigned mode) {
 
 int main() {
   try {
-    cohort(0); cohort(1); cohort(2);
+    cohort(0); cohort(1); cohort(2); cohort(3);
     PendingWindowGeometry g; g.dz = 1.; g.heldDistancePerBeta = 1.; g.maximumStep = 1;
     std::vector<RelativisticParticleSI> none; PendingParticleQueue queue(g); queue.extract(none);
     BoostFrameTransform frame; PendingParticleStatistics empty(queue, frame, 1.);

@@ -16,6 +16,18 @@
 
 namespace aprl
 {
+  /* Affine endpoint four-momentum quadrature at a crossing. This is not an
+   * on-shell particle snapshot; mass/charge already include macro weight. */
+  struct EnergyPlaneCrossing
+  {
+    std::size_t planeIndex;
+    std::int32_t direction;
+    Double timeBox, timeLab, x, y;
+    std::uint64_t particleId;
+    long double charge;
+    long double kineticBox, totalBox, cpzBox;
+    long double kineticLab, totalLab, cpzLab;
+  };
   /* An immutable prefix of an existing detector file at a checkpoint.  A
    * restarted run writes a new segment; reference entries in these prefixes
    * must remain available to radiation/near-field postprocessing. */
@@ -69,6 +81,17 @@ namespace aprl
                              const RelativisticParticleSI& after,
                              Double timeBoxBefore,
                              Double timeBoxAfter);
+
+    bool hasEnergyPlanes() const;
+    void previewEnergyParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,
+                                   Double timeBoxBefore, Double timeBoxAfter,
+                                   std::vector<EnergyPlaneCrossing>& events) const;
+    void commitEnergyParticleCrossings(
+        const std::vector<EnergyPlaneCrossing>& events, Double maximumTimeBox);
+    void captureEnergyParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,
+                                   Double timeBoxBefore, Double timeBoxAfter);
 
     /* One detector-only collective is entered per particle step when a
      * particle plane or ballistic-reference plane exists.  It returns
