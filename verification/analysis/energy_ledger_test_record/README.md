@@ -37,6 +37,9 @@ python3 source/aprl/verification/analysis/energy_ledger_test_record/validate.py 
 现有目录只刷新两份文档及交付哈希时，可导入 `assemble.py` 的
 `render_documents(evidence_root, bundle_root)`；不要重新执行搬迁入口。
 
-依赖：Python、NumPy、Matplotlib；工作区 `physics` 环境已提供。
+依赖：Python、NumPy、Matplotlib、h5py；工作区 `physics` 环境已提供。
 图的数值来自原始模块 summary 和逐步 CSV，绘图选用当前验收字段。
 程序、测试卡和仿真核心在本轮没有修改。
+
+账本图默认用整个已完成记录的`D=max|ΔK_particle|`为固定分母，显示带符号
+百分数；主文明确分母定义并链接百分数CSV。原J数据与旧绝对量图保留。

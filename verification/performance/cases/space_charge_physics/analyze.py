@@ -3,7 +3,7 @@
 import os
 for k in ('OPENBLAS_NUM_THREADS','MKL_NUM_THREADS','NUMEXPR_NUM_THREADS'):os.environ[k]='1'
 os.environ.setdefault('MPLCONFIGDIR','/tmp/aprl-space-charge-pic-mpl')
-import argparse,csv,json
+import argparse,csv,json,sys
 from pathlib import Path
 import h5py,numpy as np
 import matplotlib
@@ -11,7 +11,18 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from model import Sphere,G_BEAM,B_BEAM,c,m_e,e
 from prepare import save
-import report_discrete
+try:
+    import report_discrete
+except ModuleNotFoundError as error:
+    if error.name!='report_discrete':raise
+    sys.path.insert(0,str(Path(__file__).resolve().parent.parent/'discrete_energy_ledger'))
+    import report as report_discrete
+try:
+    from relative_ledger import construct,write_tables,plot as plot_relative
+except ModuleNotFoundError as error:
+    if error.name!='relative_ledger':raise
+    sys.path.insert(0,str(Path(__file__).resolve().parents[3]/'analysis/relative_energy_ledger'))
+    from relative_ledger import construct,write_tables,plot as plot_relative
 
 LD=np.longdouble
 def read_closed(path,group):
@@ -99,10 +110,8 @@ def analyze(directory):
     with (out/'comparison.csv').open('w') as f:
         w=csv.DictWriter(f,fieldnames=rows[0].keys());w.writeheader();w.writerows(rows)
     np.savez(out/'per_particle_gain.npz',**per_id,weights=np.asarray(weights,dtype=float))
-    with (out/'energy_budget.csv').open('w') as f:
-        keys=['field_operator_residual_J','discrete_total_residual_J','particle_grid_coupling_gap_J']
-        w=csv.writer(f);w.writerow(['step']+keys)
-        w.writerows([[int(step)]+[str(quantities[k][i]) for k in keys] for i,step in enumerate(index)])
+    absolute,pct,normalization=construct(ledger_rows,sums,index,quantities)
+    write_tables(out,index,absolute,pct,normalization)
     result={'execution_integrity_pass':True,'physics_accepted':False,
       'status':'EXPLORATORY_PHYSICS_COMPARISON_MEASURED_NOT_CONVERGENCE_ACCEPTANCE',
       'entry_time_offset_s':float(offset),'entry_time_offset_spread_s':float(spread),
@@ -114,6 +123,7 @@ def analyze(directory):
       'new_field_operator_maximum_residual_J':budget['max_abs_cumulative_field_operator_residual_J'],
       'new_total_final_residual_J':budget['final']['discrete_total_residual_J'],
       'particle_grid_exchange_final_J':budget['final']['particle_grid_coupling_gap_J'],
+      'relative_energy_budget':normalization,
       'time_scope':'Each PIC crossing compared to same source ID reference worldline at its reconstructed rest-frame event time. Energy gain is relative to each ID entry event, not a simultaneous bunch energy.',
       'reference_model':params}
     save(out/'RESULT.json',result)
@@ -129,13 +139,7 @@ def analyze(directory):
         ax.set_title(title);ax.set_ylabel(unit);ax.set_xlabel('Mean rest-frame event time / t0');ax.grid(alpha=.2);ax.legend(fontsize=8)
     fig.suptitle(params['kind']+': first PIC comparison; fixed lab-plane events, no physical acceptance assumed',fontsize=11)
     fig.savefig(out/'comparison.png',dpi=180);fig.savefig(out/'comparison.pdf');plt.close(fig)
-    fig,axes=plt.subplots(2,1,figsize=(10,7),sharex=True,layout='constrained')
-    axes[0].plot(index,quantities['field_operator_residual_J'],color='#4b78a4');axes[0].set_ylabel('Field accounting residual (J)')
-    for k,label,style,color in [('discrete_total_residual_J','Total','-','#4b78a4'),('particle_grid_coupling_gap_J','Particle-grid exchange','--','#d38b39')]:axes[1].plot(index,quantities[k],style,label=label,color=color)
-    axes[1].set_ylabel('Total / exchange difference (J)');axes[1].set_xlabel('Maxwell step');axes[1].legend()
-    for ax in axes:ax.grid(alpha=.2)
-    fig.suptitle('Current discrete energy ledger; numerical channels retained separately')
-    fig.savefig(out/'energy_budget.png',dpi=180);fig.savefig(out/'energy_budget.pdf');plt.close(fig)
+    plot_relative(out,index,pct,normalization,params['kind']+': relative discrete energy budget')
     return result
 
 if __name__=='__main__':

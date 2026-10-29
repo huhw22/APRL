@@ -1,6 +1,6 @@
 # 真空场传播与自由漂移能量收支
 
-整理日期：2026-10-30。程序对应源码版本：`c7fcd20`。本文能量均在 **boost 系**，单位为 J。
+整理日期：2026-10-30。程序对应源码版本：`c7fcd20`。账本比较在 **boost 系**，以百分数显示；第一节解析对照误差保留无量纲比值。
 
 本文展示已完成的真空脉冲解析对照，以及含粒子自由漂移的能量收支结果。**真空传播有明确的解析参照；自由漂移结果的结论范围是离散能量收支一致性。**
 
@@ -51,17 +51,21 @@
 
 ![自由漂移：场算子收支与总收支核对](figures/04_particle_free_drift.png)
 
-上图为累计场算子核对差，下图为总核对差及独立粒子—网格交换差；单节点和双节点曲线基本重合。[PDF](figures/04_particle_free_drift.pdf)
+三个面板依次为粒子动能变化与场／边界／源项独立合计、总核对差与粒子—网格交换差、场算子核对差。全部共用固定分母：
+
+$$D=\max_{\text{完整记录}}|\Delta K_{\text{粒子}}|,\qquad \text{图示百分数}=100\,\frac{\text{带符号能量项}}{D}.$$
+
+ΔK 使用同一粒子集合的稳定动能差，包含累计移除事件。分母取完整记录中的峰值能量变化，各曲线不分别缩放，也不逐时刻相除。单、双节点曲线基本重合。[PDF](figures/04_particle_free_drift.pdf)
 
 | 量 | 本次结果 |
 |---|---|
-| 最大累计场算子核对差绝对值 | {{FIELD_MAX}} J |
-| 终态总核对差绝对值 | {{TOTAL_ABS}} J |
-| 终态总核对差／净粒子能量变化绝对值 | {{TOTAL_PERCENT}}% |
+| 最大累计场算子核对差绝对值／D | {{FIELD_PEAK_PERCENT}}% |
+| 终态总核对差绝对值／D | {{TOTAL_PERCENT}}% |
+| 全程最大总核对差绝对值／D | {{TOTAL_PEAK_PERCENT}}% |
 
 该小工况的总剩余主要对应粒子—网格交换核对差。以上结果支持这组自由漂移的**离散能量收支一致性**；束团尺寸、能散等动力学量相对独立物理解的定量精度，不在这项结果的证明范围内。
 
-数据：[单节点逐步结果](evidence/discrete_energy_ledger_20261029/report-single-final/discrete_energy.csv)、[双节点逐步结果](evidence/discrete_energy_ledger_20261029/report-mpi-final/discrete_energy.csv)。
+数据：[百分数逐步表](figures/04_particle_free_drift_relative.csv)、[分母定义与数值](figures/04_particle_normalization.json)。对应的原始J数据保持：[单节点](evidence/discrete_energy_ledger_20261029/report-single-final/discrete_energy.csv)、[双节点](evidence/discrete_energy_ledger_20261029/report-mpi-final/discrete_energy.csv)。
 
 计算卡：[单节点](tests/01_single_node/on/run.yaml)、[双节点](tests/02_two_nodes/on/run.yaml)。日志：[单节点](tests/01_single_node/on/aprl.log)、[双节点](tests/02_two_nodes/on/aprl.log)。
 

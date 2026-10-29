@@ -64,6 +64,7 @@ def main():
     for name in ('model.py','prepare.py','run.py','analyze.py','launcher.py','run.sbatch'):shutil.copy2(here/name,scripts/name)
     shutil.copy2(here.parent/'discrete_energy_ledger/report.py',scripts/'report_discrete.py')
     shutil.copy2(here.parent/'discrete_energy_ledger/review_discrete.py',scripts/'review_discrete.py')
+    shutil.copy2(here.parents[2]/'analysis/relative_energy_ledger/relative_ledger.py',scripts/'relative_ledger.py')
     cases=[]
     for kind in ('uniform','converging','gaussian'):
         directory=root/kind;directory.mkdir();(directory/'reference_input').mkdir()

@@ -33,3 +33,8 @@ sbatch --output=/absolute/new/result/slurm-%j.out \
 所有脚本冻结复制到结果目录。`model.py`、`prepare.py`、`analyze.py`
 各负责理论、生成卡与输入、闭合后对照分析。`launcher.py`原样复用既有
 限时启动和绑定检查函数。首轮无网格/粒子收敛扫描，后续按结果决定。
+
+当前模板的账本图与`energy_budget.csv`默认以`D=max|ΔK_particle|`为分母显示
+带符号百分数，原J数据另存`energy_budget_absolute.csv`，分母说明在
+`normalization.json`。该显示修改不改变账本计算或物理判据；已启动作业的
+冻结脚本保持，使用独立只读后处理补绘。
