@@ -103,15 +103,19 @@ struct MovingWindowFields::Impl {
     }
     void afterMagneticUpdate(EBFieldGrid& f,const EBElectricHaloView& h) override {
       if(phase!=Phase::Magnetic)throw std::logic_error("Moving-window magnetic phase mismatch");
+      if(owner.discreteObserver)owner.discreteObserver(owner.discreteContext,"magnetic_curl",f,&h);
       if(owner.stageObserver)owner.stageObserver(owner.stageContext,"magnetic_curl",f);
       EBConvolutionalPML::afterMagneticUpdate(f,h);
+      if(owner.discreteObserver)owner.discreteObserver(owner.discreteContext,"magnetic_cpml",f,nullptr);
       if(owner.stageObserver)owner.stageObserver(owner.stageContext,"magnetic_cpml",f);
       phase=Phase::Electric;
     }
     void afterElectricUpdate(EBFieldGrid& f) override {
       if(phase!=Phase::Electric)throw std::logic_error("Moving-window electric phase mismatch");
+      if(owner.discreteObserver)owner.discreteObserver(owner.discreteContext,"electric_curl_local",f,nullptr);
       if(owner.stageObserver)owner.stageObserver(owner.stageContext,"electric_curl_local",f);
       EBConvolutionalPML::afterElectricUpdate(f);
+      if(owner.discreteObserver)owner.discreteObserver(owner.discreteContext,"electric_cpml",f,nullptr);
       if(owner.stageObserver)owner.stageObserver(owner.stageContext,"electric_cpml",f);
       if(owner.beforeInletObserver)
         owner.beforeInletObserver(owner.beforeInletContext,f);
@@ -142,6 +146,7 @@ struct MovingWindowFields::Impl {
         owner.energy.diagnosticSeconds+=seconds(diagnosticStart);
       }
       if(owner.stageObserver)owner.stageObserver(owner.stageContext,"inlet_overwrite",f);
+      if(owner.discreteObserver)owner.discreteObserver(owner.discreteContext,"inlet_overwrite",f,nullptr);
       phase=Phase::Complete;
     }
     std::size_t memoryBytes() const override {
@@ -173,6 +178,8 @@ struct MovingWindowFields::Impl {
   void* beforeInletContext = nullptr;
   StageObserver stageObserver = nullptr;
   void* stageContext = nullptr;
+  DiscreteObserver discreteObserver = nullptr;
+  void* discreteContext = nullptr;
 
   Impl(const EBGridGeometry& g,std::size_t nz,std::size_t local,
        MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r)
@@ -385,6 +392,9 @@ void MovingWindowFields::setBeforeInletObserver(
 }
 void MovingWindowFields::setStageObserver(StageObserver observer,void* context) {
   impl_->stageObserver=observer;impl_->stageContext=context;
+}
+void MovingWindowFields::setDiscreteObserver(DiscreteObserver observer,void* context) {
+  impl_->discreteObserver=observer;impl_->discreteContext=context;
 }
 const MovingWindowFieldEnergyLedger& MovingWindowFields::energyLedger() const {
   return impl_->energy;

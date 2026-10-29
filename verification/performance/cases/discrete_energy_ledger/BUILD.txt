@@ -1,0 +1,39 @@
+2026-10-29/30 实际工具链复现要点
+
+source /public/home/wfollowm/APRL_Workspace/cluster.env
+cd "$APRL_WORKSPACE"
+
+使用新的独立 build 目录；不覆盖 build/candidate、已验 binary 或 cluster.env。
+本次目录为 build/discrete-energy-ledger-20261029。
+
+cmake -S source/aprl -B build/新的独立目录 \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_C_COMPILER=/usr/bin/mpicc -DCMAKE_CXX_COMPILER=/usr/bin/mpic++ \
+  -DCMAKE_PREFIX_PATH="$APRL_DEPENDENCY_PREFIX" -DHDF5_ROOT="$APRL_DEPENDENCY_PREFIX" \
+  -DPKG_CONFIG_EXECUTABLE=/public/home/wfollowm/APRL_Workspace/build/energy-transport-audit-r2-20261029/runtime-tools/pkg-config \
+  -DAPRL_ENABLE_OPENMP=ON -DAPRL_ENABLE_MOVING_WINDOW=ON \
+  -DAPRL_REQUIRE_PARALLEL_HDF5=ON
+cmake --build build/新的独立目录 -j 8
+
+在新build下建立runtime-libs指向既有已验依赖目录（只读使用）：
+  /public/home/wfollowm/APRL_Workspace/build/energy-transport-audit-r2-20261029/runtime-libs
+
+独立模块的实际编译链接参数：
+/usr/bin/mpic++ -std=c++11 -O3 -Wall -Wextra -Wpedantic -fopenmp \
+  -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -DAPRL_HAS_OPENMP=1 \
+  -I source/aprl/src -I "$APRL_DEPENDENCY_PREFIX/include" \
+  source/aprl/verification/performance/cases/discrete_energy_ledger/operator_checks.cpp \
+  build/新的独立目录/libdirect_eb_core.a \
+  "$APRL_DEPENDENCY_PREFIX/lib/libhdf5.so" \
+  "$APRL_DEPENDENCY_PREFIX/lib/libyaml-cpp.so.0.8.0" \
+  /usr/lib/x86_64-linux-gnu/libfftw3.so \
+  -Wl,-rpath,"$APRL_DEPENDENCY_PREFIX/lib" \
+  -o build/新的独立目录/operator_checks
+
+prepare.py --workspace WORKSPACE --build NEW_BUILD --root NEW_RESULT
+生成/freeze单节点计划。run.sbatch仅在Slurm计算节点运行测试，不在登录节点跑PIC。
+prepare_mpi.py --single SINGLE_PASS_ROOT --root NEW_MPI_ROOT
+只在同binary单节点通过后准备双节点计划；mpi.sbatch读取该门禁。
+
+复编HEAD会改变compiled revision标签，因此不能要求字节SHA仍等于历史产物。
+本次产物由结果SOURCE_BUILD.json中的完整编译依赖哈希对应，不伪称编译最终文档HEAD。

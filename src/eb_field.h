@@ -243,6 +243,12 @@ namespace aprl
     void advanceMagnetic(const EBElectricHaloView& halo);
     void advanceElectric();
     void advance();
+    // Read-only operator evaluation for independent energy/work accounting.
+    // Evaluates Faraday from the current E and the actual step's E halos.
+    // It does not read a measured field-energy change or write any field.
+    Double diagnosticMagneticIncrement(unsigned int component,
+        std::size_t i,std::size_t j,std::size_t k,
+        const EBElectricHaloView& halo,bool standardYee=false) const;
 
     Double courantNumber() const;
     Double courantLimit() const;

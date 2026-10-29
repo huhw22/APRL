@@ -46,6 +46,7 @@ def canonical(card):
     for name in ('detectors', 'trajectory', 'energy_ledger'):
         result[name]['directory'] = '<OUTPUT>'
     result['energy_ledger']['enabled'] = '<ON_OR_OFF>'
+    result['energy_ledger'].pop('discrete_operator_audit', None)
     result['detectors'].pop('energy_planes', None)
     return result
 

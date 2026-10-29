@@ -1,0 +1,74 @@
+三维离散算子核查口径
+
+所有内积使用原生Yee样本的邻接单元求积权：E每cell四条边各1/4，
+B每cell两张面各1/2。每rank只积自己的cell，因此共享节点自动取得相邻
+cell的贡献，不重复体积。物理孔径与原账本一致，剔除横向CPML。
+
+输入和独立算子
+  step开始只读复制E0、B0（仅活动窗）。
+  Braw为原Faraday更新后、CPML前的值；B1为原横向CPML后的值。
+  E1为原电场/MPI接口更新完成、左端覆盖前的值；缓存左端原生Ex/Ey面
+  以剔除覆盖，不能用覆盖后的端点与原J混配。
+  dBC：从E0和原步实际E halos计算Cowan Faraday增量。
+  dBY：从同一E0计算普通Yee Faraday增量。
+  dEc：从B1独立重算原Ampere curl增量；相邻B面仅在启用时额外交换。
+  J采用原MPI合并后的值，原本不更新的全局最外横向E面屏蔽其J源；
+  被屏蔽的J·E另报unapplied_current_mid，不能当作已与场交换的能量。
+  这些预测不从观测delta_U或最终残差反推。
+
+数值项目（单步、boost系J）
+  Q = -eps <E0,dEc> - <Braw,dBY>/mu
+  C = <Braw,dBC-dBY>/mu
+  TE = eps <(E1-E0)^2>/2
+  TB = -<(Braw-B0)^2>/(2mu)
+  J0 = dt <J_applied,E0>
+  Jm = dt <J_applied,(E0+E1)/2>
+  P = Jm-J0
+
+Q是配对的离散curl边界/接口交换；在轴向一维测试独立核验其等于原生
+端点E0/Braw面通量。这里没有把Q宣称为三维辐射能流或把它分成新的
+六张物理面的Poynting功率。原六面近似Poynting诊断仍保留。
+C是修改Faraday算子的功配对差，不是物理外场功。T/P是显式时间/电流
+层配对项，不是给粒子补偿的能量，也不参与推进。
+
+Wcpml、Winlet、Wremap按各操作前后真实原生能量变化单独测量。
+本实现控制体积位于原xy CPML的物理内区，所支持配置的CPML不会直接
+修改这些原生样本；所测小差为舍入。若有未匹配的直接改动，逐点预测
+和算子差仍会报告，不能依赖一个小总残差忽略局部预测错误。
+
+场算子核对
+  Rf = delta_Un + Q + Jm - (TE+TB+P) - C
+       - Wcpml - Winlet - Wremap
+  同时记录并核验：
+    errB = (Braw-B0)-dBC
+    errE = (E1-E0)-(dEc-dt*J_applied/eps)
+  逐点err使用场/增量自身尺度与float64舍入界检查。
+  Rf应与eps<E0,errE>+<Braw,errB>/mu相符；不从err推算并扣除修正。
+  故意给场加非预期改动时，Rf和/或逐点预测必须报错。
+
+粒子部分保持旧v5的独立Boris电踢功和真实动能变化。
+  G = W_Boris_grid - W_frozen - W_carrier - W_boundary - Jm
+  Rtotal = Rf + G + 原particle_work_residual + 原magnetic_rotation_delta_K
+  也从delta_K、delta_Un、Q与各源/数值项直接重算Rtotal，两种口径相核对。
+  没有把G当作修正扣掉。当前实束小卡G仍非零，约-4.2141e-20J。
+
+原连续公式监测到新核查的桥接
+  Rold-Rtotal = 空间存量/边界定义差 + 原Q与新Q差
+               + TE+TB+P + C + Wcpml
+  空间项同时使用各自口径实际inlet/remap变化，不能只换初末场能。
+  因而旧3.0283e-17J差额可定量分解；这与证明物理解已收敛是两回事。
+
+只读实现边界
+  新diagnosticMagneticIncrement只暴露读取既有stencil的求值，不替换
+  原Faraday/Ampere循环。新观察器在旧操作之后只读取字段。
+  增加两次B邻面Sendrecv，仅启用时调用；无MPI析构集体操作或新停止barrier。
+  原600/60秒MPI-free收尾watchdog和所有停止同步保持。
+
+验收独立性与限制
+  制造三维非均匀场、有J、Cowan项非零、1/4rank和跨节点；
+  轴向脉冲另用闭式两格平移和端点面通量作独立物理/几何对照。
+  故意篡改E后负控必须失败；损坏CSV项目也必须被读者拒绝。
+  同布局off/on原场/粒子/轨迹及v5科学项逐位，验证未改推进。
+  stencil求值复用原smoothedElectric辅助函数，所以此账本是实现与算子
+  的一致性检查，不是独立证明所有Cowan近似、三维辐射、近场分离或
+  lab系世界管能量都正确；physical_conservation_accepted仍false。

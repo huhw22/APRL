@@ -335,7 +335,8 @@ namespace aprl
       if (ledger)
         validateMapKeys(ledger, "energy_ledger", {
           "enabled", "directory", "filename", "sample_interval_steps",
-          "buffer_records", "compression", "warning_relative_tolerance"
+          "buffer_records", "compression", "warning_relative_tolerance",
+          "discrete_operator_audit"
         });
     }
 
@@ -785,7 +786,7 @@ namespace aprl
   {}
 
   EnergyLedgerConfig::EnergyLedgerConfig()
-    : enabled(false), directory("output"),
+    : enabled(false), discreteOperatorAudit(false), directory("output"),
       filename("energy-ledger.h5"), sampleIntervalSteps(1),
       bufferRecords(64), compression(0), warningRelativeTolerance(0.01)
   {}
@@ -1790,6 +1791,10 @@ namespace aprl
           throw configError(energyLedger, "energy_ledger must be a map");
         result.energyLedger.enabled = energyLedger["enabled"] ?
           energyLedger["enabled"].as<bool>() : true;
+        if (energyLedger["discrete_operator_audit"])
+          result.energyLedger.discreteOperatorAudit = energyLedger["discrete_operator_audit"].as<bool>();
+        if (result.energyLedger.discreteOperatorAudit && !result.energyLedger.enabled)
+          throw configError(energyLedger,"discrete_operator_audit requires enabled energy_ledger");
         if (energyLedger["directory"])
           result.energyLedger.directory =
             energyLedger["directory"].as<std::string>();

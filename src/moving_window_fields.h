@@ -88,6 +88,9 @@ public:
   void setBeforeInletObserver(BeforeInletObserver observer, void* context);
   using StageObserver = void (*)(void*, const char*, const EBFieldGrid&);
   void setStageObserver(StageObserver observer, void* context);
+  using DiscreteObserver = void (*)(void*, const char*, const EBFieldGrid&,
+                                   const EBElectricHaloView*);
+  void setDiscreteObserver(DiscreteObserver observer,void* context);
   const MovingWindowFieldEnergyLedger& energyLedger() const;
   // Call after MPI electric completion, before shift. The boundary callback
   // precedes MPI interface updates, so cannot provide the full end-step flux.

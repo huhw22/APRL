@@ -22,6 +22,7 @@
 #include "teardown_trace.h"
 #include "grid_work_audit.h"
 #include "field_stage_audit.h"
+#include "discrete_field_ledger.h"
 
 namespace aprl
 {
@@ -341,6 +342,11 @@ namespace aprl
   {
     const char* gridAuditDirectory=std::getenv("APRL_GRID_WORK_AUDIT");
     const char* stageAuditDirectory=std::getenv("APRL_FIELD_STAGE_AUDIT");
+    if(config_.energyLedger.discreteOperatorAudit &&
+       (!config_.energyLedger.enabled||!config_.mesh.movingWindow.enabled||
+        config_.mesh.currentFilter!=EBCurrentFilter::None||checkpointEnabled_||
+        !config_.checkpoint.restartFrom.empty()||config_.mesh.ballisticOutsideTransverse))
+      throw std::invalid_argument("discrete_operator_audit requires moving window, enabled ledger, no filter/checkpoint/ballistic outside transverse");
     if(stageAuditDirectory && (!*stageAuditDirectory || !gridAuditDirectory))
       throw std::invalid_argument("APRL_FIELD_STAGE_AUDIT requires a directory and APRL_GRID_WORK_AUDIT");
     if(gridAuditDirectory && (!*gridAuditDirectory ||
@@ -352,6 +358,15 @@ namespace aprl
     initialize();
     std::unique_ptr<GridWorkAudit> gridWorkAudit;
     std::unique_ptr<FieldStageAudit> fieldStageAudit;
+    std::unique_ptr<DiscreteFieldLedger> discreteLedger;
+    if(config_.energyLedger.discreteOperatorAudit) {
+      if(incident_)throw std::invalid_argument("discrete_operator_audit does not yet support incident waves");
+      discreteLedger.reset(new DiscreteFieldLedger(config_.energyLedger.directory,
+        localGeometry_,globalGeometry_.nz,localZOffset_,config_.boundary.cpml.cells[0],
+        config_.boundary.cpml.cells[1],communicator_));
+      movingWindow_->fields->setDiscreteObserver(&DiscreteFieldLedger::observe,discreteLedger.get());
+      logRoot(communicator_,"[discrete-energy-ledger] enabled; independent Cowan/Yee curls, native energy and explicit numerical exchanges; existing physical ledger retained");
+    }
     if(gridAuditDirectory) {
       gridWorkAudit.reset(new GridWorkAudit(gridAuditDirectory,rank_,
         config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]));
@@ -401,6 +416,7 @@ namespace aprl
         if (requestedStop) break;
 
         if(gridWorkAudit) gridWorkAudit->begin(*fields_,step_);
+        if(discreteLedger)discreteLedger->begin(*fields_,step_);
         if(fieldStageAudit)fieldStageAudit->begin(*fields_,step_,particles_.size(),pmlCarriers_.size());
 
         if (config_.mesh.movingWindow.enabled)
@@ -447,6 +463,7 @@ namespace aprl
           incident_->correctAfterElectricUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
         if(gridWorkAudit) gridWorkAudit->complete(*fields_);
+        if(discreteLedger)discreteLedger->finishElectric(*fields_);
         if(fieldStageAudit)fieldStageAudit->sample("electric_mpi",*fields_);
         performanceSeconds_[FieldStage] += performanceNow() - stageStart;
         performanceSeconds_[FieldCommunicationStage] +=
@@ -466,6 +483,7 @@ namespace aprl
           {
             const Double movingStart = performanceNow();
             finishMovingWindowStep();
+            if(discreteLedger)discreteLedger->afterRemap(*fields_);
             if(fieldStageAudit) {
               fieldStageAudit->populations(particles_.size(),pmlCarriers_.size());
               fieldStageAudit->sample("remap",*fields_);
@@ -499,6 +517,10 @@ namespace aprl
     if(gridWorkAudit) {
       movingWindow_->fields->setBeforeInletObserver(nullptr,nullptr);
       gridWorkAudit->close();
+    }
+    if(discreteLedger) {
+      movingWindow_->fields->setDiscreteObserver(nullptr,nullptr);
+      discreteLedger->close(!interrupted_&&configuredStopReached_);
     }
     if(fieldStageAudit) {
       movingWindow_->fields->setStageObserver(nullptr,nullptr);

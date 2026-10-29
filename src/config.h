@@ -279,6 +279,7 @@ namespace aprl
   struct EnergyLedgerConfig
   {
     bool enabled;
+    bool discreteOperatorAudit;
     std::string directory;
     std::string filename;
     std::size_t sampleIntervalSteps;

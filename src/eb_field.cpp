@@ -557,6 +557,28 @@ namespace aprl
     }
   }
 
+  Double EBFieldGrid::diagnosticMagneticIncrement(unsigned int a,
+      std::size_t i,std::size_t j,std::size_t k,
+      const EBElectricHaloView& halo,bool standardYee) const
+  {
+    if(a>2)throw std::invalid_argument("Invalid diagnostic magnetic component");
+    const YeeComponent* b[3]={&bx_,&by_,&bz_};
+    if(i>=b[a]->nx()||j>=b[a]->ny()||k>=b[a]->nz())
+      throw std::out_of_range("Diagnostic magnetic node outside grid");
+    const YeeComponent* e[3]={&ex_,&ey_,&ez_};
+    const auto value=[&](unsigned c,unsigned d,std::size_t x,std::size_t y,std::size_t z) {
+      return !standardYee&&geometry_.solver==EBMaxwellSolver::CowanZ ?
+        smoothedElectric(*e[c],c,d,x,y,z,halo):(*e[c])(x,y,z);
+    };
+    const Double tx=geometry_.dt/geometry_.dx,ty=geometry_.dt/geometry_.dy,tz=geometry_.dt/geometry_.dz;
+    if(a==0)return -(ty*(value(2,1,i,j+1,k)-value(2,1,i,j,k))-
+                        tz*(value(1,2,i,j,k+1)-value(1,2,i,j,k)));
+    if(a==1)return -(tz*(value(0,2,i,j,k+1)-value(0,2,i,j,k))-
+                        tx*(value(2,0,i+1,j,k)-value(2,0,i,j,k)));
+    return -(tx*(value(1,0,i+1,j,k)-value(1,0,i,j,k))-
+             ty*(value(0,1,i,j+1,k)-value(0,1,i,j,k)));
+  }
+
   void EBFieldGrid::advanceElectric()
   {
     const Double curlScale = geometry_.dt / (SI::mu0 * SI::epsilon0);
