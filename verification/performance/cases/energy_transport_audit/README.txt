@@ -67,3 +67,14 @@ first removed particle. R1's failed net-sum identity is preserved; the revised
 identity bound uses independently measured historical absolute work, not an
 increased coefficient or a residual-derived correction. New preparations
 must use a fresh campaign directory and the separate r2 candidate binary.
+
+R3 uses globally unique detector names audit-entry/audit-exit; plan.json maps
+logical entry/exit to the actual energy filenames. --plan-only keeps an
+existing candidate unfrozen. --reuse-science OLD_ROOT can retain completed
+old-on/new-on/new-off science cases after same-binary/input/physics/layout,
+transaction/finite/lifecycle and exact output hashes are checked. All original
+files remain read-only, including CSV. New case directories contain only the
+new planned card and new review; reused_from points to original data and the
+real original node remains recorded. Failed/unfinished cases are never reused.
+Timing and MPI stages always launch fresh cases. Reused scientific runs are
+not presented as newly measured timing on the new allocation.

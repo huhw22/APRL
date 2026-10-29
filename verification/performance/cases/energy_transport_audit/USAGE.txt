@@ -6,7 +6,7 @@ retains the legacy prescribed_work_J and balance_residual_J for comparison.
 Use balance_residual_boris_J for the new work audit, and inspect the entire
 record sequence rather than only the final residual.
 
-  build/energy-transport-audit-20261029/energy_ledger_report LEDGER.h5 [INDEX]
+  build/energy-transport-audit-r2-20261029/energy_ledger_report LEDGER.h5 [INDEX]
 
 The split is:
   particle_work_balance_residual = delta_K_box - W_grid - W_prescribed - dK_magnetic
@@ -14,7 +14,13 @@ The split is:
   balance_residual_boris = particle_work_balance_residual
                          + field_exchange_residual + dK_magnetic
 imposed_sources contains ballistic, remap, inlet-overwrite, frozen and carrier
-terms. The grid/prescribed electric works come directly from the actual Boris
+terms. Work channels use compensated long-double sums. boris_absolute_work_J stores
+the cumulative absolute work history, independently of the residual, so large
+positive/negative cancellations do not make the numerical error scale vanish.
+Complete steps are accumulated without time clipping; only real terminal
+events invoke a fractional prefix.
+
+The grid/prescribed electric works come directly from the actual Boris
 kicks, independently of these balance residuals. A terminal fraction inside a
 Boris substep uses a linear prefix and is counted by partial_work_substeps.
 particle_removal_interpolation_delta_J separates the change from the legacy
@@ -33,11 +39,12 @@ length/time units, for example in an SI card:
   detectors:
     directory: /absolute/new/output/detectors
     energy_planes:
-      - {name: entry, z: -0.05, rhythm: 1.0e-15, buffer_samples: 64}
-      - {name: exit, z: 0.06, rhythm: 1.0e-15, buffer_samples: 64}
+      - {name: audit-entry, z: -0.05, rhythm: 1.0e-15, buffer_samples: 64}
+      - {name: audit-exit, z: 0.06, rhythm: 1.0e-15, buffer_samples: 64}
 
-This creates entry-energy.h5 and exit-energy.h5. No raw field_planes or
+This creates audit-entry-energy.h5 and audit-exit-energy.h5. No raw field_planes or
 particle_planes are required. Empty/absent energy_planes disables the feature.
+Names must be distinct from other configured detector names.
 Positions must be chosen for the actual simulation; the example belongs only
 to the bounded acceptance fixture. Existing raw detector files are unchanged.
 

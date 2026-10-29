@@ -3,9 +3,12 @@
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
+import yaml
 import h5py
 import numpy as np
-from review import energy_review, plane_review
+from review import energy_review, plane_review, inspect_reused
+from prepare import sha
 
 
 class EnergyReader(unittest.TestCase):
@@ -203,6 +206,43 @@ class PlaneReader(unittest.TestCase):
                 rows=f['energy_plane/records'][:];rows['field_power_lab_W'][1]=np.nan
                 f['energy_plane/records'][:]=rows
             with self.assertRaisesRegex(RuntimeError,'Nonfinite'): plane_review(path,plan,card)
+
+
+class ReuseGate(unittest.TestCase):
+    def fixture(self, root):
+        old,new=root/'original',root/'new';old.mkdir();new.mkdir()
+        card={'beam':{'input':{'file':'particles.h5'}},'output':{'manifest':'manifest.yaml'},
+              'mesh':{'moving_window':{'reference_directory':'reference'}},
+              'detectors':{'directory':'detectors'},'trajectory':{'directory':'trajectory'},
+              'energy_ledger':{'directory':'ledger','enabled':True}}
+        for directory in (old,new): (directory/'run.yaml').write_text(yaml.safe_dump(card))
+        (old/'closed-output').write_bytes(b'original payload')
+        item={'variant':'new-on','energy_planes':False,'directory':str(new),'reused_from':str(old),
+              'reused_binary_sha256':{'old':'a','new':'b'},'reused_evidence_sha256':{str(old/'run.yaml'):sha(old/'run.yaml')},
+              'reused_output_sha256':{'closed-output':sha(old/'closed-output')},
+              'reused_original_nodes':['node5'],'reused_original_binding':{'pass':True}}
+        return item,{'binary_sha256':{'old':'a','new':'b'}},old,new
+
+    def test_changed_reused_output_fails_before_inspection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            item,plan,old,new=self.fixture(Path(temp));(old/'closed-output').write_bytes(b'changed payload')
+            with self.assertRaisesRegex(RuntimeError,'output changed'): inspect_reused(item,plan)
+
+    def test_changed_new_physics_card_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            item,plan,old,new=self.fixture(Path(temp))
+            card=yaml.safe_load((new/'run.yaml').read_text());card['mesh']['cells']=[8,8,16]
+            (new/'run.yaml').write_text(yaml.safe_dump(card))
+            with self.assertRaisesRegex(RuntimeError,'card differs'): inspect_reused(item,plan)
+
+    def test_reuse_is_readonly_and_retains_original_node(self):
+        with tempfile.TemporaryDirectory() as temp:
+            item,plan,old,new=self.fixture(Path(temp))
+            with patch('review.inspect',return_value={'checks_pass':True}) as inspect:
+                report=inspect_reused(item,plan)
+                inspect.assert_called_once_with(old,item,plan,export_csv=False)
+            self.assertEqual(report['reuse']['original_nodes'],['node5'])
+            self.assertFalse(report['reuse']['new_computation_launched'])
 
 
 if __name__=='__main__':

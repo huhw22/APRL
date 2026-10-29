@@ -12,7 +12,7 @@ import statistics
 import h5py
 import numpy as np
 import yaml
-from prepare import canonical, require, save
+from prepare import canonical, require, save, sha
 
 LD = np.longdouble
 EPS = LD(np.finfo(np.float64).eps)
@@ -291,13 +291,14 @@ def plane_review(path, plan, card):
 
 
 def plane_pair_review(directory, plan, card):
-    reports = {name:plane_review(directory/'detectors'/(name+'-energy.h5'),plan,card) for name in ('entry','exit')}
+    filenames = plan['energy_plane_files']
+    reports = {name:plane_review(directory/'detectors'/filenames[name],plan,card) for name in ('entry','exit')}
     entry, output = reports['entry'], reports['exit']
     # Reopen only these small diagnostic files; do not round compensated totals
     # through JSON/double before taking the small inlet-to-outlet difference.
     terminal = {}
     for name in reports:
-        with h5py.File(directory/'detectors'/(name+'-energy.h5')) as stream:
+        with h5py.File(directory/'detectors'/filenames[name]) as stream:
             terminal[name] = stream['energy_plane/records'][-1]
     differences = {}
     for prefix in ('particle_', 'physical_particle_'):
@@ -325,7 +326,7 @@ def plane_pair_review(directory, plan, card):
         'precision':'Particle plane high+low reconstructed in longdouble before taking energy differences; no sigma-difference estimate of particlewise loss spread.'}
 
 
-def inspect(directory, item, plan):
+def inspect(directory, item, plan, export_csv=True):
     log = (directory/'aprl.log').read_text(errors='replace')
     require('Configured stop reached:' in log and 'phase=mpi-finalize-complete' in log, 'Missing normal physical completion')
     require(not re.search(r'Simulation failure|\[shutdown-watchdog\]|DUE TO TIME LIMIT|Segmentation fault|OpenFabrics device',log), 'Unexpected failure/warning')
@@ -380,7 +381,7 @@ def inspect(directory, item, plan):
     launched = json.loads((directory/'aprl.log.launch.json').read_text())
     result['launcher_seconds_including_preparation_and_close'] = launched['seconds']
     if item['ledger']:
-        result['energy'] = energy_review(directory/'ledger/energy-ledger.h5',item['binary']=='new')
+        result['energy'] = energy_review(directory/'ledger/energy-ledger.h5',item['binary']=='new', export_csv=export_csv)
         require(result['energy']['checks_pass'], 'Energy-record algebra does not match independent reconstruction')
         work = result['energy']['final_components']['prescribed_work_J']
         require(work==0. if item['magnet']=='free-drift' else work!=0., 'External-device work coverage differs')
@@ -420,6 +421,25 @@ def compare(first,second):
     return {'checks_pass':all(v['bitwise_equal'] for v in result.values()),'files':result}
 
 
+
+def data_directory(item):
+    return Path(item.get('reused_from', item['directory']))
+
+
+def inspect_reused(item, plan):
+    require(item['variant'] in ('old-on','new-on','new-off') and not item['energy_planes'], 'Ineligible reuse variant')
+    require(item['reused_binary_sha256']==plan['binary_sha256'], 'Reused binary identity differs')
+    require(all(sha(path)==value for path,value in item['reused_evidence_sha256'].items()), 'Reused provenance changed')
+    original = data_directory(item)
+    require(all(sha(original/relative)==value for relative,value in item['reused_output_sha256'].items()), 'Reused output changed')
+    require(canonical(yaml.safe_load((original/'run.yaml').read_text())) ==
+            canonical(yaml.safe_load((Path(item['directory'])/'run.yaml').read_text())), 'Reused card differs')
+    result = inspect(original, item, plan, export_csv=False)
+    result['reuse'] = {'reused_from':str(original), 'original_nodes':item['reused_original_nodes'],
+                      'original_binding':item['reused_original_binding'], 'new_computation_launched':False}
+    return result
+
+
 def stage_review(root,stage,plan=None):
     plan = plan or json.loads((root/'plan.json').read_text())
     items=plan['cases'][stage]
@@ -432,10 +452,11 @@ def stage_review(root,stage,plan=None):
             for other in group:
                 if other==first:
                     continue
-                comparisons[other['name']]=compare(Path(first['directory']),Path(other['directory']))
+                comparisons[other['name']]=compare(data_directory(first),data_directory(other))
     result={'format':'aprl-energy-transport-review-v1','stage':stage,'binary_sha256':plan['binary_sha256'],
         'checks_pass':all(x['checks_pass'] for x in cases.values()) and all(x['checks_pass'] for x in comparisons.values()),
         'cases':cases,'physical_output_comparisons':comparisons,'energy_conservation_accepted':False,
+        'reused_case_provenance':{item['name']:{'reused_from':item['reused_from'], 'original_nodes':item['reused_original_nodes']} for item in items if item.get('reused_from')},
         'note':'checks_pass covers completion, exact unchanged physical outputs and accounting identities; it does not declare a small physical energy residual.'}
     if stage=='performance':
         metrics={}

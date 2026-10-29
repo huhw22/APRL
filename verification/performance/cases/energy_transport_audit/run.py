@@ -96,6 +96,13 @@ def main():
         launch(launcher(execution)+[plan['binding_probe'],'16','8'], execution, env, 45, 'binding.log')
         save(execution/'BINDING.json', binding(execution/'binding.log', nodes))
         for item in plan['cases'][stage]:
+            if item.get('reused_from'):
+                require(stage=='science', 'Performance/MPI cases must not reuse earlier output')
+                report = review.inspect_reused(item, plan)
+                save(Path(item['directory'])/'CASE_REVIEW.json', report)
+                completed.append(item['name'])
+                print('CASE_REUSED '+item['name']+' from='+item['reused_from']+' original_nodes='+','.join(item['reused_original_nodes']), flush=True)
+                continue
             require(deadline-time.monotonic() > item['timeout_s']+25, 'Insufficient budget to start next bounded case')
             directory = Path(item['directory']); binary = Path(plan['binaries'][item['binary']])
             print('CASE_START '+item['name']+' directory='+str(directory), flush=True)
