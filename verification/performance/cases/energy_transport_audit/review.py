@@ -84,6 +84,20 @@ def energy_review(path, new, export_csv=True):
         grid, device = a('particle_grid_work_J'), a('prescribed_boris_work_J')
         magnetic, push = a('magnetic_rotation_delta_K_J'), a('boris_push_delta_K_J')
         sources = boundary + remap + overwrite + constraint_total
+        absolute_work = a('boris_absolute_work_J')
+        work_parts = abs(grid)+abs(device)+abs(magnetic)+abs(push)+abs(a('boris_roundoff_residual_J'))
+        absolute_tolerance = 128*EPS*np.maximum(absolute_work, LD(np.finfo(float).tiny))
+        identity_report['absolute_work_history_is_nonnegative_monotone_and_bounds_signed_parts'] = {
+            'pass':bool(np.all(absolute_work>=0) and np.all(np.diff(absolute_work)>=0) and np.all(work_parts<=absolute_work+absolute_tolerance)),
+            'final_absolute_work_J':float(absolute_work[-1]), 'maximum_signed_parts_J':float(np.max(work_parts))}
+        removed = a('removed_macroparticles')
+        partial = a('partial_work_substeps')
+        before_removal = np.ones(len(rows),dtype=bool) if not np.any(removed>0) else np.arange(len(rows))<np.flatnonzero(removed>0)[0]
+        identity_report['partial_substeps_only_after_removal'] = {
+            'pass':bool(np.all(partial[before_removal]==0) and np.all(partial>=0) and np.all(np.diff(partial)>=0) and np.all(partial==np.floor(partial))),
+            'nonzero_samples_before_first_removed':int(np.count_nonzero(partial[before_removal])),
+            'final_partial_work_substeps':int(partial[-1]),
+            'note':'No positive count required after removal; a terminal crossing can coincide with a complete substep.'}
         additions = {
             'stable_delta_particle_matches_inventory': (stable_k, event_kinetic-event_kinetic[0]),
             'stable_delta_removal_interpolation': (a('particle_removal_interpolation_delta_J'), a('particle_kinetic_box_removed_event_J')-a('particle_kinetic_removed_J')),
@@ -99,6 +113,10 @@ def energy_review(path, new, export_csv=True):
             bound = tolerance if name.startswith('stable_delta') else 128*EPS*np.maximum(
                 abs(stable_k)+abs(stable_u)+np.sum(abs(faces),axis=1)+abs(boundary)+abs(remap)+abs(overwrite)+
                 constraint_absolute_components+abs(grid)+abs(device)+abs(magnetic)+abs(push), LD(np.finfo(float).tiny))
+            if name == 'boris_kick_work_decomposition':
+                # This sum is measured independently at every Boris substep,
+                # before cancellations. Never infer it from this discrepancy.
+                bound = absolute_tolerance
             err = abs(reported-reconstructed)
             identity_report[name] = {'pass':bool(np.all(err<=bound)), 'max_abs_difference_J':float(np.max(err)),
                 'max_roundoff_bound_J':float(np.max(bound)), 'elements_over_bound':int(np.count_nonzero(err>bound))}
@@ -129,7 +147,7 @@ def energy_review(path, new, export_csv=True):
         'max_abs_difference': float(np.max(relative_error)), 'max_roundoff_bound': float(np.max(ratio_tolerance)),
         'elements_over_bound': int(np.count_nonzero(relative_error>ratio_tolerance))}
     names = [name for name in rows.dtype.names if rows.dtype[name].shape == () and
-             (name.endswith('_J') or name in ('step','time_box_s','closure_valid','removed_macroparticles'))]
+             (name.endswith('_J') or name in ('step','time_box_s','closure_valid','removed_macroparticles','partial_work_substeps','released_charge_C','boost_gamma','boost_beta'))]
     if export_csv:
         with path.with_suffix('.csv').open('w', newline='') as stream:
             writer = csv.writer(stream); writer.writerow(names)
@@ -172,7 +190,7 @@ def energy_review(path, new, export_csv=True):
         'residual_decomposition': decomposition,
         'initial_kinetic_J': float(kinetic[0]), 'initial_field_J': float(field[0]),
         'conservation_acceptance': 'NOT_ASSIGNED: physical residual is reported, not gated by a newly chosen percentage.',
-        'roundoff_identity_bound': '128*float64_eps*sum(abs(source energy terms)), including both initial and current kinetic energy.',
+        'roundoff_identity_bound': 'Inventory identities use128*float64_eps*sum(abs(source energy terms)); Boris decomposition uses128*float64_eps*independently accumulated boris_absolute_work_J across actual substeps, including canceled historical work, never residual-derived.',
         'exchange_normalization': 'Code denominator uses abs(sum of six outward faces), abs(frozen work)+abs(carrier work); facewise denominator replaces abs(sum faces) by sum(abs(faces)).',
         'scope': 'Net signed control-volume energy, boost frame; no FFT/windowing or radiation-only interpretation.'}
 

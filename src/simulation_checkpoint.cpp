@@ -225,6 +225,8 @@ namespace aprl
         state.value(energyLedgerBorisWork_.magneticRotationDeltaK);
         state.value(energyLedgerBorisWork_.totalDeltaK);
         state.value(energyLedgerBorisWork_.roundoffResidual);
+        state.value(energyLedgerBorisWork_.absoluteWork);
+        state.value(energyLedgerBorisWork_.compensation);
         for (ParticleEnergyMoment* moment : {&energyLedgerRemovedMoment_,
              &energyLedgerReleasedMoment_, &energyLedgerInitialMoment_}) {
           state.value(moment->kineticBox); state.value(moment->totalBox);
@@ -280,6 +282,7 @@ namespace aprl
         state.value(r.magneticRotationDeltaK);
         state.value(r.borisPushDeltaK);
         state.value(r.borisRoundoffResidual);
+        state.value(r.borisAbsoluteWork);
         state.value(r.particleWorkBalanceResidual);
         state.value(r.fieldExchangeResidual);
         state.value(r.balanceResidualBoris);

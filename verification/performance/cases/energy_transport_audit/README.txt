@@ -60,3 +60,10 @@ The fixed-lab inlet/outlet sum is a transport comparison, not a closed budget
 unless stored energy, lateral fluxes and sources for that same space-time volume
 are all available. All fields are total self-consistent fields, not isolated
 near fields. Changing a diagnostic is not permission to change the physics.
+
+R2 retains the same physical cards and v4 baseline. It requires the candidate
+field boris_absolute_work_J and tests zero partial_work_substeps before the
+first removed particle. R1's failed net-sum identity is preserved; the revised
+identity bound uses independently measured historical absolute work, not an
+increased coefficient or a residual-derived correction. New preparations
+must use a fresh campaign directory and the separate r2 candidate binary.

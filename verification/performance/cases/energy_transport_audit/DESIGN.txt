@@ -47,3 +47,18 @@ Physics reporting: plot/report the whole time series and the largest imbalance,
 its step and denominator, as well as terminal values; separate kernel work
 identity, grid exchange, boundary supply and event reconstruction errors. No
 closure_valid promotion, no winner-dependent retry and no dropped timing sample.
+
+R2 diagnostic arithmetic contract (2026-10-29)
+The Boris decomposition identity uses128*float64_eps*boris_absolute_work_J.
+This positive history is measured at every actual Boris substep as the sum of
+absolute grid work, prescribed work, magnetic rotation deltaK, total deltaK
+and local arithmetic residual; nested sums preserve it and true terminal
+fractions scale it. It is never inferred from the final mismatch or merely
+from signed cumulative totals. Kahan accumulation reduces historical
+cancellation error. The coefficient remains128; physical residual limits are
+not changed. Nonnegative/monotone history and its bound on signed parts are
+checked independently. Mutating a work component beyond this bound must fail.
+Before the first particle removal, partial_work_substeps must be identically
+zero. After removal it may remain zero if crossings coincide with complete
+substeps. Ordinary complete pushes must not be clipped for endpoint ULP drift.
+R1 frozen scripts, failed records and binary remain historical evidence.

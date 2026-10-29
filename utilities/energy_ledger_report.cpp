@@ -124,7 +124,8 @@ namespace
         << "  particle_grid_work_J=" << record.particleGridWork
         << " prescribed_boris_work_J=" << record.prescribedBorisWork
         << " magnetic_rotation_delta_K_J=" << record.magneticRotationDeltaK
-        << " boris_roundoff_residual_J=" << record.borisRoundoffResidual << "\n"
+        << " boris_roundoff_residual_J=" << record.borisRoundoffResidual
+        << " boris_absolute_work_J=" << record.borisAbsoluteWork << "\n"
         << "  particle_work_balance_residual_J=" << record.particleWorkBalanceResidual
         << " field_exchange_residual_J=" << record.fieldExchangeResidual
         << " balance_residual_boris_J=" << record.balanceResidualBoris

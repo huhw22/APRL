@@ -82,7 +82,7 @@ class EnergyReader(unittest.TestCase):
 
     def candidate(self, path):
         self.fixture(path)
-        fields = ('particle_kinetic_box_removed_event_J','particle_removal_interpolation_delta_J','particle_grid_work_J','prescribed_boris_work_J','magnetic_rotation_delta_K_J',
+        fields = ('boris_absolute_work_J','partial_work_substeps','particle_kinetic_box_removed_event_J','particle_removal_interpolation_delta_J','particle_grid_work_J','prescribed_boris_work_J','magnetic_rotation_delta_K_J',
             'boris_push_delta_K_J','boris_roundoff_residual_J','particle_work_balance_residual_J',
             'field_exchange_residual_J','balance_residual_boris_J','particle_kinetic_lab_active_J',
             'particle_kinetic_lab_removed_J','particle_cPz_box_active_J','particle_cPz_box_removed_J',
@@ -96,6 +96,7 @@ class EnergyReader(unittest.TestCase):
             rows['particle_kinetic_box_removed_event_J']=rows['particle_kinetic_removed_J']
             rows['prescribed_boris_work_J']=2*rows['prescribed_work_J']
             rows['particle_grid_work_J']=-rows['prescribed_boris_work_J']
+            rows['boris_absolute_work_J']=abs(rows['particle_grid_work_J'])+abs(rows['prescribed_boris_work_J'])
             rows['delta_field_energy_J']=rows['field_energy_interior_J']-rows['field_energy_interior_J'][0]
             corrected=rows['balance_residual_J']+rows['prescribed_work_J']-rows['prescribed_boris_work_J']
             rows['field_exchange_residual_J']=corrected;rows['balance_residual_boris_J']=corrected
@@ -115,7 +116,36 @@ class EnergyReader(unittest.TestCase):
             with h5py.File(path,'r+') as f:
                 rows=f['energy_ledger/records'][:];rows['prescribed_boris_work_J']*=2
                 f['energy_ledger/records'][:]=rows
-            self.assertFalse(energy_review(path,True,export_csv=False)['checks_pass'])
+            result=energy_review(path,True,export_csv=False)
+            self.assertFalse(result['checks_pass'])
+            self.assertFalse(result['identities']['boris_kick_work_decomposition']['pass'])
+
+
+    def test_historical_absolute_work_does_not_hide_bad_component(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'ledger.h5';self.candidate(path)
+            with h5py.File(path,'r+') as f:
+                rows=f['energy_ledger/records'][:]
+                rows['boris_absolute_work_J'][1:]=1e6
+                rows['boris_roundoff_residual_J'][-1]=1024*np.finfo(float).eps*1e6
+                f['energy_ledger/records'][:]=rows
+            result=energy_review(path,True,export_csv=False)
+            self.assertFalse(result['identities']['boris_kick_work_decomposition']['pass'])
+
+    def test_partial_work_before_first_removed_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'ledger.h5';self.candidate(path)
+            with h5py.File(path,'r+') as f:
+                rows=f['energy_ledger/records'][:];rows['partial_work_substeps'][1:]=1
+                f['energy_ledger/records'][:]=rows
+            result=energy_review(path,True,export_csv=False)
+            self.assertFalse(result['identities']['partial_substeps_only_after_removal']['pass'])
+
+    def test_zero_terminal_partial_count_is_permitted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path=Path(temp)/'ledger.h5';self.candidate(path)
+            result=energy_review(path,True,export_csv=False)
+            self.assertTrue(result['identities']['partial_substeps_only_after_removal']['pass'])
 
 
 class PlaneReader(unittest.TestCase):

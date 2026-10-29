@@ -3357,7 +3357,7 @@ namespace aprl
         step_ % config_.energyLedger.sampleIntervalSteps != 0)
       return;
 
-    long double local[45] = {};
+    long double local[46] = {};
     Double localMinimumGamma = std::numeric_limits<Double>::infinity();
     Double localMaximumGamma =
       -std::numeric_limits<Double>::infinity();
@@ -3466,8 +3466,9 @@ namespace aprl
     local[42] = energyLedgerReleasedCharge_;
     local[43] = energyLedgerPartialWorkSubsteps_;
     local[44] = energyLedgerRemovedMoment_.kineticBox;
-    long double global[45] = {};
-    MPI_Allreduce(local, global, 45, MPI_LONG_DOUBLE, MPI_SUM,
+    local[45] = energyLedgerBorisWork_.absoluteWork;
+    long double global[46] = {};
+    MPI_Allreduce(local, global, 46, MPI_LONG_DOUBLE, MPI_SUM,
                   communicator_);
     unsigned long long localCounts[4] = {
       static_cast<unsigned long long>(storedParticleCount()),
@@ -3635,6 +3636,7 @@ namespace aprl
     record.magneticRotationDeltaK = static_cast<Double>(global[29]);
     record.borisPushDeltaK = static_cast<Double>(global[30]);
     record.borisRoundoffResidual = static_cast<Double>(global[31]);
+    record.borisAbsoluteWork = static_cast<Double>(global[45]);
     record.particleKineticLabActive = static_cast<Double>(global[32]);
     record.particleCPzBoxActive = static_cast<Double>(global[33]);
     record.particleCPzLabActive = static_cast<Double>(global[34]);
@@ -4977,13 +4979,12 @@ namespace aprl
               {
                 if (config_.energyLedger.enabled) {
                   energyLedgerPrescribedWork_ += prescribedWork;
-                  energyLedgerBorisWork_.add(result.auditTrace.prefix(
-                    timeBoxSI_ + globalGeometry_.dt, &energyLedgerPartialWorkSubsteps_));
+                  energyLedgerBorisWork_.add(result.borisWork);
                 }
                 if (detectors_ && detectors_->hasEnergyPlanes() && hasActiveSegment) {
                   if (result.auditTrace.observedSubsteps)
                     detectors_->commitEnergyParticleCrossings(result.auditTrace.crossings,
-                      timeBoxSI_ + globalGeometry_.dt);
+                      std::numeric_limits<Double>::infinity());
                   else
                     detectors_->captureEnergyParticleStep(activeStart,particle,
                       activeStartTime,timeBoxSI_ + globalGeometry_.dt);
@@ -5093,12 +5094,12 @@ namespace aprl
                   }
               }
             if (config_.energyLedger.enabled)
-              energyLedgerBorisWork_.add(result.auditTrace.prefix(
-                diagnosticTime, &energyLedgerPartialWorkSubsteps_));
+              energyLedgerBorisWork_.add(hasTerminalEvent ? result.auditTrace.prefix(
+                diagnosticTime, &energyLedgerPartialWorkSubsteps_) : result.borisWork);
             if (detectors_ && detectors_->hasEnergyPlanes() && hasActiveSegment) {
               if (result.auditTrace.observedSubsteps)
                 detectors_->commitEnergyParticleCrossings(result.auditTrace.crossings,
-                  diagnosticTime);
+                  hasTerminalEvent ? diagnosticTime : std::numeric_limits<Double>::infinity());
               else
                 detectors_->captureEnergyParticleStep(activeStart,diagnosticEnd,
                   activeStartTime,diagnosticTime);
@@ -5236,8 +5237,8 @@ namespace aprl
           }
           if (config_.energyLedger.enabled) {
             energyLedgerPrescribedWork_ += prescribedWork;
-            energyLedgerBorisWork_.add(auditTrace.prefix(
-              auditStop,&energyLedgerPartialWorkSubsteps_));
+            energyLedgerBorisWork_.add(auditTerminal ? auditTrace.prefix(
+              auditStop,&energyLedgerPartialWorkSubsteps_) : borisWork);
             if (auditTerminal) {
               const auto removed=auditTrace.at(auditStop,activeEnd,frame_);
               energyLedgerRemovedMoment_.add(removed);
@@ -5248,10 +5249,13 @@ namespace aprl
           }
           if (transportAudit && remaining > 0.) {
             if (auditTrace.observedSubsteps)
-              detectors_->commitEnergyParticleCrossings(auditTrace.crossings,auditStop);
-            else
+              detectors_->commitEnergyParticleCrossings(auditTrace.crossings,
+                auditTerminal ? auditStop : std::numeric_limits<Double>::infinity());
+            else {
+              if (auditTerminal) throw std::logic_error("Terminal audit requires substep history");
               detectors_->captureEnergyParticleStep(activeStart,activeEnd,
                 activeStartTime,auditStop);
+            }
           }
           if (detectors_ && remaining > 0.0)
             detectors_->captureParticleStep(

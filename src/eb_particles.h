@@ -36,6 +36,12 @@ namespace aprl
     long double magneticRotationDeltaK;
     long double totalDeltaK;
     long double roundoffResidual;
+    // Sum of absolute leaf work channels, propagated through all accumulation
+    // levels (and true terminal fractions), never abs of the net history.
+    long double absoluteWork;
+    // Kahan state in the order above: grid, prescribed, magnetic, total,
+    // roundoff, absolute. Persist together with the visible sums on restart.
+    long double compensation[6];
 
     BorisWork();
     void clear();

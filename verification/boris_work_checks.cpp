@@ -164,7 +164,43 @@ struct Recorder : ParticleSubstepObserver {
 void sameWork(const BorisWork& a,const BorisWork& b,const char* message) {
   require(a.gridWork==b.gridWork && a.prescribedWork==b.prescribedWork &&
     a.magneticRotationDeltaK==b.magneticRotationDeltaK &&
-    a.totalDeltaK==b.totalDeltaK && a.roundoffResidual==b.roundoffResidual,message);
+    a.totalDeltaK==b.totalDeltaK && a.roundoffResidual==b.roundoffResidual &&
+    a.absoluteWork==b.absoluteWork,message);
+}
+
+// Exact binary-power reference, independent of the accumulation algorithm.
+// Each tiny increment is below the ULP of the large running sum. Uncompensated
+// sequential accumulation loses them before the large history cancels.
+BorisWork accumulationTerm(long double x) {
+  BorisWork w;
+  w.gridWork=x; w.prescribedWork=-x/2;
+  w.magneticRotationDeltaK=x/4; w.totalDeltaK=3*x/4;
+  w.absoluteWork=2.5L*std::abs(x);
+  return w;
+}
+void accumulationChecks() {
+  const long double large=std::ldexp(1.L,-30),tiny=std::ldexp(1.L,-100);
+  const unsigned count=65536;
+  const BorisWork positive=accumulationTerm(large);
+  const BorisWork negative=accumulationTerm(-large);
+  const BorisWork small=accumulationTerm(tiny);
+  BorisWork sum;
+  sum.add(positive);
+  for (unsigned i=0;i<count;++i) sum.add(small);
+  sum.add(negative);
+  BorisWork expected=accumulationTerm(count*tiny);
+  expected.absoluteWork=5*large+2.5L*count*tiny;
+  sameWork(sum,expected,"Long canceling work history lost exact tiny contributions");
+  require(sum.absoluteWork>1e12L*std::abs(sum.totalDeltaK),
+    "Absolute work history was replaced by absolute net work");
+  BorisWork fractional; fractional.add(sum,.25L);
+  expected=accumulationTerm(.25L*count*tiny);
+  expected.absoluteWork=.25L*(5*large+2.5L*count*tiny);
+  sameWork(fractional,expected,"Fractional absolute work did not preserve history");
+  sum.clear();
+  sameWork(sum,BorisWork(),"BorisWork clear left accumulated work");
+  for (unsigned i=0;i<6;++i)
+    require(sum.compensation[i]==0.,"BorisWork clear left compensation state");
 }
 
 void subcycleChecks() {
@@ -223,7 +259,7 @@ void subcycleChecks() {
       BorisWork quarter=collector.records[stop].work;
       quarter.gridWork*=.25L; quarter.prescribedWork*=.25L;
       quarter.magneticRotationDeltaK*=.25L; quarter.totalDeltaK*=.25L;
-      quarter.roundoffResidual*=.25L; manualPrefix.add(quarter);
+      quarter.roundoffResidual*=.25L; quarter.absoluteWork*=.25L; manualPrefix.add(quarter);
       sameWork(prefix,manualPrefix,"Fractional terminal substep accumulation failed");
       if (!includeGrid) require(c.gridWork==0.,"Disabled grid fields produced grid work");
       ++trajectoryComparisons;
@@ -233,7 +269,7 @@ void subcycleChecks() {
 
 int main() {
   try {
-    momentumChecks(); subcycleChecks();
+    momentumChecks(); accumulationChecks(); subcycleChecks();
     std::cout.precision(18);
     std::cout << "PASS boris_work momentum_comparisons=" << momentumComparisons
       << " trajectory_comparisons=" << trajectoryComparisons

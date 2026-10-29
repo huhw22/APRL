@@ -17,15 +17,26 @@ namespace aprl
   {
     gridWork = prescribedWork = magneticRotationDeltaK = 0.0L;
     totalDeltaK = roundoffResidual = 0.0L;
+    absoluteWork = 0.0L;
+    for (unsigned int channel = 0; channel < 6; ++channel)
+      compensation[channel] = 0.0L;
   }
 
   void BorisWork::add(const BorisWork& other, long double fraction)
   {
-    gridWork += fraction * other.gridWork;
-    prescribedWork += fraction * other.prescribedWork;
-    magneticRotationDeltaK += fraction * other.magneticRotationDeltaK;
-    totalDeltaK += fraction * other.totalDeltaK;
-    roundoffResidual += fraction * other.roundoffResidual;
+    long double* destination[6] = {&gridWork, &prescribedWork,
+      &magneticRotationDeltaK, &totalDeltaK, &roundoffResidual, &absoluteWork};
+    const long double increment[6] = {fraction * other.gridWork,
+      fraction * other.prescribedWork, fraction * other.magneticRotationDeltaK,
+      fraction * other.totalDeltaK, fraction * other.roundoffResidual,
+      std::abs(fraction) * other.absoluteWork};
+    for (unsigned int channel = 0; channel < 6; ++channel)
+      {
+        const long double corrected = increment[channel] - compensation[channel];
+        const long double next = *destination[channel] + corrected;
+        compensation[channel] = (next - *destination[channel]) - corrected;
+        *destination[channel] = next;
+      }
   }
 
   namespace
@@ -164,6 +175,7 @@ namespace aprl
     properVelocity = uPlus;
     properVelocity.pmv(electricKick, totalElectric);
 
+    work.clear();
     const long double c = SI::c;
     const long double rest = static_cast<long double>(mass) * c * c;
     const long double gammaBefore = auditGamma(before);
@@ -186,6 +198,9 @@ namespace aprl
       rest / (gammaBefore + gammaAfter));
     work.roundoffResidual = work.totalDeltaK - work.gridWork -
       work.prescribedWork - work.magneticRotationDeltaK;
+    work.absoluteWork = std::abs(work.gridWork) + std::abs(work.prescribedWork) +
+      std::abs(work.magneticRotationDeltaK) + std::abs(work.totalDeltaK) +
+      std::abs(work.roundoffResidual);
   }
 
   void RelativisticBorisPusher::push(

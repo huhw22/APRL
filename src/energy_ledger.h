@@ -55,6 +55,7 @@ namespace aprl
     double magneticRotationDeltaK;
     double borisPushDeltaK;
     double borisRoundoffResidual;
+    double borisAbsoluteWork;
     double particleWorkBalanceResidual;
     double fieldExchangeResidual;
     double balanceResidualBoris;
