@@ -1,4 +1,5 @@
 #include "eb_particles.h"
+#include "particle_momentum_probe.h"
 
 #include <cmath>
 #include <stdexcept>
@@ -259,6 +260,8 @@ namespace aprl
       BorisWork* borisWork,
       ParticleSubstepObserver* observer)
   {
+    const bool probeMomentum = ParticleMomentumProbe::selected(timeBoxSI);
+    const RelativisticParticleSI probeBefore(particle);
     if (substeps == 0 || !(fieldTimeStep > 0.0) ||
         !std::isfinite(fieldTimeStep))
       throw std::invalid_argument(
@@ -330,5 +333,8 @@ namespace aprl
           }
       }
     if (prescribedWorkJ) *prescribedWorkJ = work;
+    if (probeMomentum)
+      ParticleMomentumProbe::record(probeBefore,particle,gridElectric,
+        gridMagnetic,timeBoxSI,fieldTimeStep);
   }
 }

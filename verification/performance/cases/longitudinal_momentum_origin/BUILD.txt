@@ -1,0 +1,26 @@
+使用与discrete_energy_ledger/BUILD.txt相同MPI/并行HDF5/OpenMP工具链，独立build。
+本轮实际build为 build/longitudinal-momentum-origin-20261030，runtime-libs只读
+链接既有energy-transport-audit-r2-20261029/runtime-libs，不修改默认入口。
+
+单步接口探针仅链接原模块，不构建新的推进方法：
+
+source cluster.env
+/usr/bin/mpic++ -std=c++11 -O3 -Wall -Wextra -Wpedantic -fopenmp \
+ -DOMPI_SKIP_MPICXX -DMPICH_SKIP_MPICXX -DAPRL_HAS_OPENMP=1 -DAPRL_HAS_MOVING_WINDOW=1 \
+ -I source/aprl/src -I "$APRL_DEPENDENCY_PREFIX/include" \
+ source/aprl/verification/performance/cases/longitudinal_momentum_origin/first_step_boundary_probe.cpp \
+ build/longitudinal-momentum-origin-20261030/libdirect_eb_core.a \
+ "$APRL_DEPENDENCY_PREFIX/lib/libhdf5.so" "$APRL_DEPENDENCY_PREFIX/lib/libyaml-cpp.so.0.8.0" \
+ /usr/lib/x86_64-linux-gnu/libfftw3.so -Wl,-rpath,"$APRL_DEPENDENCY_PREFIX/lib" \
+ -o build/longitudinal-momentum-origin-20261030/first_step_boundary_probe
+
+计算节点内有界运行（外层Slurm独占128CPU，模块实际1MPI×8）：
+first_step_boundary_probe REFERENCE_DIR OUTPUT_CSV NX CPML_CELLS BETA REFERENCE_NZ ORIGIN_Z
+
+本轮base使用160 10 0.22936572471392327 3328 -0.0020871988659157434；
+移远接口用240 10，其余数值一致。必须与各自metadata精确匹配，不能把不同
+reference的参数交叉使用。输出只分析|x|>=150um无源区，不能把J=0的束团中心
+区域结果当作物理演化。探针仅原场核一步，无粒子推进、无原始文件改写。
+
+同参考域厚CPML对照：prepare_matched_domain.py --parent CLOSED_R3 --root NEW_R4。
+它保持原内区139×139×3327，160/10改192/26，其余保持。
