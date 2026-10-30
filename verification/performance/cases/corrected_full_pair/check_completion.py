@@ -49,7 +49,7 @@ def check(root):
         mw=cfg['mesh']['moving_window'];require(mw['reference_surface_current'] and mw['inlet_charge_match'],'Expected corrections disabled')
         require(cfg['energy_ledger']['discrete_operator_audit'],'Discrete audit disabled')
         log=(root/'aprl.log').read_text();require('Simulation failure' not in log and 'mesh.duration was exhausted' not in log,'Simulation failed/duration exhausted')
-        require('Pending particle event queue enabled:' in log,'Pending admission fallback used')
+        require(re.search(r'Pending admission queue: waiting=\d+ resident=\d+;',log) is not None,'Pending admission fallback used')
         require('Reference transverse surface current:' in log and 'Inlet charge completion:' in log,'Corrections not active')
         final=re.findall(r'\[resource\] phase=final step=(\d+)\b',log)
         require(len(final)==1 and 'phase=solve-complete' in log and 'phase=mpi-finalize-complete' in log,'Normal completion missing')
