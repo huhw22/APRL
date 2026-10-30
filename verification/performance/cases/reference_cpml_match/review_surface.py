@@ -27,8 +27,9 @@ def main(root):
         new=read(d/'analysis/RESULT.json');old=read(Path(plan['cases'][k+'_full']['original'])/'analysis/RESULT.json')
         n,o=new['planes'][-1],old['planes'][-1];t=n['reference_mean_lab_gain_eV']
         cases[k]=dict(original_lab_mean_gain_keV=o['PIC_mean_lab_gain_eV']/1e3,
+            original_same_event_theory_lab_gain_keV=o['reference_mean_lab_gain_eV']/1e3,
             new_lab_mean_gain_keV=n['PIC_mean_lab_gain_eV']/1e3,theory_lab_mean_gain_keV=t/1e3,
-            original_lab_error_keV=(o['PIC_mean_lab_gain_eV']-t)/1e3,new_lab_error_keV=(n['PIC_mean_lab_gain_eV']-t)/1e3,
+            original_lab_error_keV=(o['PIC_mean_lab_gain_eV']-o['reference_mean_lab_gain_eV'])/1e3,new_lab_error_keV=(n['PIC_mean_lab_gain_eV']-t)/1e3,
             new_rest_mean_gain_eV=n['PIC_mean_rest_gain_eV'],theory_rest_mean_gain_eV=n['reference_mean_rest_gain_eV'],
             new_rest_std_gain_eV=n['PIC_std_rest_gain_eV'],theory_rest_std_gain_eV=n['reference_std_rest_gain_eV'],
             new_sigma_x_relative_error=n['PIC_sigma_x_m']/n['reference_sigma_x_m']-1.,
@@ -46,10 +47,10 @@ def main(root):
           'Rest energy spread, force RMS and finite-mesh discrepancies remain measured quantities; mean correction does not prove arbitrary precision.',
           'No production ELEGANT bunch, undulator spectrum or general oblique-wave acceptance.'])
     (root/'FINAL.json').write_text(json.dumps(result,indent=2)+'\n')
-    rows=['| 束团 | 理论 lab 平均ΔK (keV) | 原结果 | 边界匹配后 | 新偏差 (keV) |','|---|---:|---:|---:|---:|']
+    rows=['| 束团 | 原 PIC / 对应理论 (keV) | 新 PIC / 对应理论 (keV) | 新偏差 (keV) |','|---|---:|---:|---:|']
     rest=['| 束团 | rest 平均ΔK：PIC / 理论 (eV) | rest std(ΔK)：PIC / 理论 (eV) | 横向RMS尺寸偏差 |','|---|---:|---:|---:|']
     for k,v in cases.items():
-        rows.append(f"| {k} | {v['theory_lab_mean_gain_keV']:.3f} | {v['original_lab_mean_gain_keV']:.3f} | {v['new_lab_mean_gain_keV']:.3f} | {v['new_lab_error_keV']:+.3f} |")
+        rows.append(f"| {k} | {v['original_lab_mean_gain_keV']:.3f} / {v['original_same_event_theory_lab_gain_keV']:.3f} | {v['new_lab_mean_gain_keV']:.3f} / {v['theory_lab_mean_gain_keV']:.3f} | {v['new_lab_error_keV']:+.3f} |")
         rest.append(f"| {k} | {v['new_rest_mean_gain_eV']:.3f} / {v['theory_rest_mean_gain_eV']:.3f} | {v['new_rest_std_gain_eV']:.3f} / {v['theory_rest_std_gain_eV']:.3f} | {100*v['new_sigma_x_relative_error']:+.4f}% |")
     text='''# 横向参考场与开放边界匹配：短束团物理对照
 
@@ -60,9 +61,10 @@ def main(root):
 
 ## 固定lab探测面与独立空间电荷理论
 
-三组原输入事件、32768带权宏粒子/1e8电子、释放位置/动量、全部6个粒子面与理论到达事件保持。
+三组原输入事件、32768带权宏粒子/1e8电子、释放位置/动量、全部6个粒子面与独立理论世界线保持。
 理论为独立相对论球壳ODE，再按每个粒子的固定lab面到达事件变换；没有把固定lab面当作同时rest截面。
 下表为入口至各组原末面、逐粒子差后按权重统计，不是初始总束流能量相减。
+每个PIC过面事件与同ID理论世界线在该事件的rest时刻比较；新旧PIC到达时间略变，因而对应理论均值也略变，分别列出。
 
 '''+ '\n'.join(rows)+ '\n\n'+ '\n'.join(rest)+'''
 
@@ -76,6 +78,12 @@ uniform500步原lab能量偏差−98.630keV，新方案−2.060keV；rest平均u
 不能把平均偏差改善误写成每个粒子的场已精确一致。具体晚期数据在FINAL.json与各组momentum-analysis/。
 
 ![完整束团共同boost时间对照](figures/pilot_boundary_comparison.png)
+
+完整短工况中，uniform共同boost截面偏差从全释放时−3.04keV到末个完整截面−2.20keV；
+gaussian从+2.12到+5.16keV。converging仍从−3.24发展到−20.79keV，说明还存在较小的动态偏差，
+本轮没有证明它的具体来源。均匀球末面rest能散也仍比理论高约9.60%，不能宣布所有物理问题已解决。
+
+![余下的共同截面动量效应与能散偏差](figures/remaining_discrepancies.png)
 
 ## 边界能量交换
 
