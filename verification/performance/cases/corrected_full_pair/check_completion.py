@@ -6,7 +6,7 @@ import h5py,numpy as np,yaml
 from completion_helpers import digest,finite,require,string,check_identity,check_binding,check_time_axis,check_window_csv
 import report_discrete
 
-def particle_file(path,expected,manifest):
+def particle_file(path,expected,manifest,input_source_ids):
     with h5py.File(path) as h:
         g=h['particle_plane'];check_identity(g,manifest)
         data=g['records'];count=int(g['committed_records'][()])
@@ -14,11 +14,17 @@ def particle_file(path,expected,manifest):
         seen=np.zeros(expected,dtype=bool)
         for start in range(0,count,65536):
             a=data[start:start+65536];finite(a,str(path))
-            ids=a['source_id'];require(np.all((ids>=1)&(ids<=expected)),'Particle IDs out of range')
-            seen[ids.astype(np.int64)-1]=True
+            # particle_id indexes input rows; source_id preserves the arbitrary
+            # SDDS particleID, including sparse IDs left by input cropping.
+            ids=a['particle_id'];require(np.all((ids>=1)&(ids<=expected)),'Particle row IDs out of range')
+            index=ids.astype(np.int64)-1
+            require(np.unique(index).size==len(index) and not np.any(seen[index]),'Duplicate particle row IDs')
+            require(np.array_equal(a['source_id'],input_source_ids[index]),'Source IDs differ from input rows')
+            seen[index]=True
             require(np.all(a['crossing_direction']==1),'Backward particle crossing')
         require(np.all(seen),'Missing/duplicate source IDs')
-    return dict(file=str(path),records=count,unique_input_IDs=expected,complete=True)
+    return dict(file=str(path),records=count,unique_input_IDs=expected,complete=True,
+                identity_rule='Unique particle_id indexes input rows; source_id matches the original arbitrary SDDS IDs')
 
 def energy_file(path,expected,manifest):
     with h5py.File(path) as h:
@@ -73,9 +79,11 @@ def check(root):
             out['field']=dict(file=str(path),complete=True,samples=len(ts),time_start_s=float(ts[0]),time_end_s=float(ts[-1]),all_values_finite=True)
         expected_files={path}
         out['particle_planes']=[]
+        with h5py.File(p['input_file']) as h:input_source_ids=h['particles/records'].fields('source_id')[:]
+        require(len(input_source_ids)==p['records'],'Input ID count differs')
         for plane in cfg['detectors']['particle_planes']:
             path=root/'detectors'/(plane['name']+'.h5');expected_files.add(path)
-            out['particle_planes'].append(particle_file(path,p['records'],manifest))
+            out['particle_planes'].append(particle_file(path,p['records'],manifest,input_source_ids))
         out['energy_planes']=[]
         for plane in cfg['detectors']['energy_planes']:
             path=root/'detectors'/(plane['name']+'-energy.h5');expected_files.add(path)
