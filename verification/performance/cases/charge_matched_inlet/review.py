@@ -30,6 +30,7 @@ def main(root,aux,audit):
     ax[0].set_xlabel('Field step: complete released cohort');ax[0].set_ylabel('Same boost-slice lab mean-energy error (keV)');ax[0].axhline(0,color='k',lw=.6)
     for a,label,c in [(x,'Original supplied layer','#66788d'),(y,'Charge-matched supplied layer','#148572')]:ax[1].semilogy(a['step'],a['gauss_rms_C_per_m3'],label=label,color=c)
     ax[1].set_xlabel('Field step');ax[1].set_ylabel(r'RMS $\epsilon_0\nabla_h\cdot E-\rho$ (C/m$^3$)')
+    ax[1].set_title('New inlet node k=1; central +/-120 um aperture',fontsize=9)
     for a in ax:a.grid(alpha=.2);a.legend(fontsize=8)
     fig.suptitle('Trusted entry events fixed; upstream continuation is an auxiliary model');fig.tight_layout();figure(fig,out/'inlet_completion')
     summary={};rows=['| 束团 | 旧方案平均lab ΔK偏差 | 新方案偏差 | 新横向RMS尺寸偏差 |','|---|---:|---:|---:|'];rest=[];energy=[]
@@ -72,6 +73,7 @@ def main(root,aux,audit):
     result=dict(status='REVIEWED_SMALL_CASE_COMPARISON',production_spectrum_accepted=False,contract=read(root/'TRUSTED_INPUT_CONTRACT.json'),cases=summary,
         pilot=read(pilot/'momentum-analysis/ANALYSIS.json')['final_clean_comparison'],
         independent_new_layer_gauss_rms_max_C_per_m3=float(max(y['gauss_rms_C_per_m3'])),independent_old_layer_gauss_rms_max_C_per_m3=float(max(x['gauss_rms_C_per_m3'])),
+        independent_gauss_probe_scope='begin-step new k=1 charge node, central |x|,|y|<=120 um ROI; steps 1..299, not a whole-aperture norm',
         pilot_native_completion_energy_J=float(np.sum(layer['native_layer_energy_change_J'].astype(np.longdouble))),
         two_node_prefix=read(aux/'two_nodes_200/COMPLETION.json'),guard32=read(aux/'guard32_500/momentum-analysis/ANALYSIS.json')['final_clean_comparison'],
         source_state_audits={k:read(audit/(k+'_SOURCE_CHECK.json')) for k in ('uniform','gaussian')},cost=cost)
@@ -115,7 +117,8 @@ source ID、步数、时刻、子步长、电荷、位置和动量均逐位相�
 详细证据见[入口源状态核验](../'''+audit.name+'''/uniform_SOURCE_CHECK.json)和[高斯核验](../'''+audit.name+'''/gaussian_SOURCE_CHECK.json)。
 
 原64格窗口的converging500步同boost完整cohort lab等效平均能量误差−17.072→−3.371keV/电子。
-独立原CIC诊断显示新左层Gauss误差降到舍入水平，而非只用完成器内部自检。
+独立原CIC诊断显示新左层k=1、x/y各±120um中心区域的Gauss误差降到舍入水平，
+而非只用完成器内部自检；图中的RMS限于该区域，不冒称全孔径独立扫描。
 
 ![入口相容性与能量变化](figures/inlet_completion.png)
 
