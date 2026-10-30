@@ -57,6 +57,11 @@ void Simulation::initializeMovingWindow() {
   auto& w=*movingWindow_;
   w.referenceGeometry=globalGeometry_;w.referenceOrigin=globalOriginBox_;
   for(unsigned a=0;a<3;++a)w.guards[a]=config_.boundary.cpml.cells[a];
+  if(config_.mesh.movingWindow.referenceThroughCpml) {
+    w.guards[0]=w.guards[1]=0;
+    logRoot(communicator_,
+      "Reference transverse boundary: extends through CPML to outer termination; active field geometry and CPML update unchanged.");
+  }
   long double local[4]={},global[4]={};
   for(const auto& p:particles_) {
     const double beta=frame_.heldLongitudinalBetaZ(p.properVelocity);

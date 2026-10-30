@@ -49,6 +49,9 @@ namespace aprl
     std::size_t lowerGuardCells;
     std::size_t upperGuardCells;
     std::size_t blockLayers;
+    // Extend the finite reference solve/fields through transverse CPML to
+    // the existing outer PEC termination, instead of cutting at its entrance.
+    bool referenceThroughCpml;
     std::string referenceDirectory;
 
     MovingWindowConfig();

@@ -44,13 +44,14 @@ struct BoundaryProbe : EBConvolutionalPML {
 int main(int argc,char** argv) {
   int provided;MPI_Init_thread(&argc,&argv,MPI_THREAD_FUNNELED,&provided);
   try {
-    if(argc!=8)throw std::runtime_error("reference-dir output nx cpml beta reference-nz reference-origin required");
+    if(argc!=8 && argc!=9)throw std::runtime_error("reference-dir output nx cpml beta reference-nz reference-origin [reference-guard] required");
     configureComputeThreads(provided,8);
     const std::size_t nx=std::stoul(argv[3]),guard=std::stoul(argv[4]),nz=std::stoul(argv[6]);
     const double beta=std::stod(argv[5]),z0=std::stod(argv[7]),dz=1.2543262415359034e-6;
     const EBGridGeometry global(nx,nx,nz,5.e-6,5.e-6,dz,dz/SI::c,EBMaxwellSolver::CowanZ);
     FieldVector<Double> origin(0.);origin[0]=origin[1]=-.5*nx*5.e-6;origin[2]=z0;
-    const std::size_t guards[3]={guard,guard,0},start=nz/2-8;
+    const std::size_t referenceGuard=argc==9?std::stoul(argv[8]):guard;
+    const std::size_t guards[3]={referenceGuard,referenceGuard,0},start=nz/2-8;
     auto reference=BlockedCowanReference::openPrepared(global,origin,beta,guards,32,argv[1],MPI_COMM_SELF);
     const EBGridGeometry local(nx,nx,18,global.dx,global.dy,global.dz,global.dt,global.solver);
     EBFieldGrid f(local);reference->fill(f,start);

@@ -145,7 +145,7 @@ namespace aprl
           if (moving)
             validateMapKeys(moving, "mesh.moving_window", {
               "enabled", "cells", "lower_guard_cells", "upper_guard_cells",
-              "block_layers", "reference_directory"
+              "block_layers", "reference_directory", "reference_through_cpml"
             });
         }
 
@@ -694,7 +694,7 @@ namespace aprl
 
   MovingWindowConfig::MovingWindowConfig()
     : enabled(false), cells(0), lowerGuardCells(64), upperGuardCells(128),
-      blockLayers(32), referenceDirectory()
+      blockLayers(32), referenceThroughCpml(false), referenceDirectory()
   {}
 
   MeshConfig::MeshConfig()
@@ -1046,6 +1046,9 @@ namespace aprl
         if (movingWindow["block_layers"])
           result.mesh.movingWindow.blockLayers = movingWindowSize(
             movingWindow["block_layers"], "mesh.moving_window block_layers");
+        if (movingWindow["reference_through_cpml"])
+          result.mesh.movingWindow.referenceThroughCpml =
+            movingWindow["reference_through_cpml"].as<bool>();
         if (movingWindow["reference_directory"])
           {
             if (!movingWindow["reference_directory"].IsScalar())
@@ -1063,6 +1066,8 @@ namespace aprl
               " \t\r\n") == std::string::npos)
           throw configError(movingWindow,
             "enabled mesh.moving_window requires a nonempty reference_directory");
+        if (result.mesh.movingWindow.referenceThroughCpml && !result.mesh.movingWindow.enabled)
+          throw configError(movingWindow,"reference_through_cpml requires enabled moving_window");
       }
     const YAML::Node longitudinal = mesh["longitudinal"];
     if (automaticLongitudinal)
