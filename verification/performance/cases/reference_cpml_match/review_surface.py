@@ -35,7 +35,7 @@ def main(root):
             new_sigma_x_relative_error=n['PIC_sigma_x_m']/n['reference_sigma_x_m']-1.,
             new_sigma_z_rest_relative_error=n['PIC_sigma_z_rest_m']/n['reference_sigma_z_rest_m']-1.,
             common_boost_slice_final_clean=read(d/'momentum-analysis/ANALYSIS.json')['final_clean_comparison'],
-            ledger=read(d/'LEDGER_CHECK.json'))
+            ledger=read(d/'LEDGER_CHECK.json'),relative_energy_budget=new['relative_energy_budget'])
         work[k]=source_work(d)
     frozen=read(root/'FROZEN.json');assert all(sha(p)==h for p,h in frozen.items())
     assert read(root/'preflight/COMPLETION.json')['checks_pass']
@@ -52,6 +52,10 @@ def main(root):
     for k,v in cases.items():
         rows.append(f"| {k} | {v['original_lab_mean_gain_keV']:.3f} / {v['original_same_event_theory_lab_gain_keV']:.3f} | {v['new_lab_mean_gain_keV']:.3f} / {v['theory_lab_mean_gain_keV']:.3f} | {v['new_lab_error_keV']:+.3f} |")
         rest.append(f"| {k} | {v['new_rest_mean_gain_eV']:.3f} / {v['theory_rest_mean_gain_eV']:.3f} | {v['new_rest_std_gain_eV']:.3f} / {v['theory_rest_std_gain_eV']:.3f} | {100*v['new_sigma_x_relative_error']:+.4f}% |")
+    relative=['| 束团 | 终态总差额 / D | 最大累计总差额 / D | 相对账本图 |','|---|---:|---:|---|']
+    for k,v in cases.items():
+        a=v['relative_energy_budget']
+        relative.append(f"| {k} | {a['final_total_residual_pct_fixed_scale']:.6f}% | {a['maximum_absolute_total_residual_pct_fixed_scale']:.6f}% | [图]({k}_full/analysis/energy_budget.png) |")
     text='''# 横向参考场与开放边界匹配：短束团物理对照
 
 本轮针对参考场横向截断激发的纵向冲量，采用预设等效表面电流。参考场仍在原CPML内缘终止，
@@ -90,6 +94,10 @@ gaussian从+2.12到+5.16keV。converging仍从−3.24发展到−20.79keV，说�
 等效源的−dt*dV*sum(w*Js*(Ez_old+Ez_new)/2)并入原boundary_source_work_J，另有16份逐rank源做功CSV。
 500步源做功−0.410287pJ，与主账本相差约1.36e−29J。全部完整短工况的独立合计见FINAL.json.source_work。
 严格离散场算子残差、粒子与网格交换剩余项分别保留；账本闭合不能替代上面的动力学理论对照。
+
+相对量沿用固定分母D=max|同一cohort的ΔK_boost|，包括粒子移除后的记账量；不除以初始总束流动能。
+
+'''+ '\n'.join(relative)+'''
 
 ## 适用范围
 
