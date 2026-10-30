@@ -8,6 +8,7 @@
 #include "particle_field_halo.h"
 #include "pending_particle_queue.h"
 #include "pending_particle_statistics.h"
+#include "transverse_reference_current.h"
 namespace aprl {
 namespace verification { class BlockedCowanReference; }
 // No full-domain E/B grid is retained. Particle storage deliberately remains
@@ -29,6 +30,7 @@ struct SimulationMovingWindowState {
   std::size_t guards[3] = {0,0,0};
 #ifdef APRL_HAS_MOVING_WINDOW
   std::unique_ptr<verification::BlockedCowanReference> reference;
+  std::unique_ptr<TransverseReferenceCurrent> referenceCurrent;
 #endif
   std::unique_ptr<MovingWindowFields> fields;
   std::unique_ptr<EBParticleFieldHalo> particleHalo;

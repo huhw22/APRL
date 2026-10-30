@@ -13,7 +13,7 @@ def save(p,v):Path(p).write_text(json.dumps(v,indent=2)+'\n')
 def require(v,msg):
     if not v:raise RuntimeError(msg)
 
-def main(w,root,build):
+def main(w,root,build,method='outer'):
     root.mkdir(parents=True,exist_ok=False);(root/'scripts').mkdir()
     here=Path(__file__).resolve().parent;phys=here.parent/'space_charge_physics'
     for n in ('prepare.py','run.py','run.sbatch'):shutil.copy2(here/n,root/'scripts'/n)
@@ -30,12 +30,14 @@ def main(w,root,build):
     cases={}
     for name,kind,mode,source in [
         ('default_100','uniform','default',short/'probe_off'),
-        ('outer_500','uniform','pilot',short/'base'),
+        (method+'_500','uniform','pilot',short/'base'),
         ('uniform_full','uniform','full',original['uniform']),
         ('converging_full','converging','full',original['converging']),
         ('gaussian_full','gaussian','full',original['gaussian'])]:
         d=root/name;d.mkdir();(d/'momentum').mkdir();cfg=copy.deepcopy(yaml.safe_load((source/'run.yaml').read_text()))
-        if mode!='default':cfg['mesh']['moving_window']['reference_through_cpml']=True
+        if mode!='default':
+            key='reference_through_cpml' if method=='outer' else 'reference_surface_current'
+            cfg['mesh']['moving_window'][key]=True
         cfg['output']['manifest']=str(d/'run-manifest.yaml');cfg['mesh']['moving_window']['reference_directory']=str(d/'reference')
         cfg['detectors']['directory']=str(d/'detectors');cfg['trajectory']['directory']=str(d/'trajectory');cfg['energy_ledger']['directory']=str(d/'ledger')
         (d/'run.yaml').write_text(yaml.safe_dump(cfg,sort_keys=False))
@@ -44,7 +46,7 @@ def main(w,root,build):
         steps=100 if mode=='default' else 500 if mode=='pilot' else json.loads((original[kind]/'case.json').read_text())['geometry']['expected_stop_step']
         cases[name]=dict(directory=str(d),kind=kind,mode=mode,original=str(original[kind]),comparison=str(source),
             steps=steps,timeout_s=1600 if mode=='full' else 900,binary=str(build/'aprl'))
-    plan=dict(workspace=str(w),root=str(root),build=str(build),binary=str(build/'aprl'),binary_sha256=sha(build/'aprl'),
+    plan=dict(method=method,workspace=str(w),root=str(root),build=str(build),binary=str(build/'aprl'),binary_sha256=sha(build/'aprl'),
         binding_probe=str(w/'build/cluster-tools/binding_probe'),nominal_dt_s=1.2543262415359034e-6/299792458.,cases=cases)
     save(root/'plan.json',plan)
     files=[root/'plan.json',build/'aprl',*list((root/'scripts').iterdir())]
@@ -57,4 +59,5 @@ def main(w,root,build):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--workspace',type=Path,required=True);p.add_argument('--root',type=Path,required=True);p.add_argument('--build',type=Path,required=True)
-    a=p.parse_args();main(a.workspace.resolve(),a.root.resolve(),a.build.resolve())
+    p.add_argument('--method',choices=['outer','surface'],default='outer')
+    a=p.parse_args();main(a.workspace.resolve(),a.root.resolve(),a.build.resolve(),a.method)

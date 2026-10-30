@@ -141,6 +141,15 @@ void Simulation::initializeMovingWindow() {
   MPI_Barrier(communicator_);
   if(rank_!=0)w.reference=verification::BlockedCowanReference::openPrepared(w.referenceGeometry,w.referenceOrigin,
       w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF);
+  if(cfg.referenceSurfaceCurrent) {
+    const std::string currentFile=cfg.referenceDirectory+"/transverse-current.bin";
+    if(rank_==0)TransverseReferenceCurrent::prepare(currentFile,*w.reference,w.referenceGeometry,w.guards,w.solverBeta);
+    MPI_Barrier(communicator_);
+    std::ostringstream workName;
+    if(config_.energyLedger.enabled)workName<<cfg.referenceDirectory<<"/transverse-source-work-rank-"<<std::setw(5)<<std::setfill('0')<<rank_<<".csv";
+    w.referenceCurrent.reset(new TransverseReferenceCurrent(currentFile,w.referenceGeometry,w.guards,w.solverBeta,workName.str()));
+    logRoot(communicator_,"Reference transverse surface current: prescribed from reference B at four interfaces; outgoing perturbations keep original CPML; work is included in boundary_source_work_J.");
+  }
   config_.mesh.cells[2]=cells;config_.mesh.extent[2]=cells*globalGeometry_.dz;
   config_.mesh.center[2]=std::fma(.5,config_.mesh.extent[2],windowOrigin);
   initializeGeometry();
@@ -354,8 +363,24 @@ bool Simulation::firstMovingWindowEntry(const FieldVector<Double>& start,const F
 void Simulation::recordMovingWindowExit(Double charge) {
   ++movingWindow_->exits;movingWindow_->exitCharge+=charge;
 }
+void Simulation::applyMovingTransverseReferenceCurrent() {
+#ifdef APRL_HAS_MOVING_WINDOW
+  auto& w=*movingWindow_;
+  w.referenceCurrent->apply(*fields_,w.offset+static_cast<std::ptrdiff_t>(localZOffset_),step_,w.translationBeta,config_.energyLedger.enabled);
+#endif
+}
+void Simulation::finishMovingTransverseReferenceCurrent() {
+#ifdef APRL_HAS_MOVING_WINDOW
+  auto& w=*movingWindow_;const auto work=w.referenceCurrent->finish(*fields_);
+  energyLedgerBoundarySourceWork_+=work.signedJ;
+  energyLedgerBoundarySourceAbsWork_+=work.absoluteJ;
+#endif
+}
 void Simulation::finalizeMovingWindow() {
   auto& w=*movingWindow_;
+#ifdef APRL_HAS_MOVING_WINDOW
+  if(w.referenceCurrent)w.referenceCurrent->close();
+#endif
   w.ledger<<step_<<','<<globalOriginBox_[2]<<','<<(config_.energyLedger.enabled?1:0)<<','
     <<w.insertedFieldEnergy<<','<<w.croppedFieldEnergy<<','
     <<w.exits<<','<<w.exitCharge<<','<<w.croppedCarriers<<','<<w.croppedCharge<<','<<w.shiftSeconds<<','<<w.migrationSeconds<<'\n';

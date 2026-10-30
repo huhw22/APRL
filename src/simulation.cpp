@@ -453,6 +453,8 @@ namespace aprl
           halo_->communicationSeconds() - communicationStart;
 
         pushDepositAndMigrate();
+        if(config_.mesh.movingWindow.referenceSurfaceCurrent)
+          applyMovingTransverseReferenceCurrent();
         if(fieldStageAudit)fieldStageAudit->populations(particles_.size(),pmlCarriers_.size());
         if (config_.mesh.movingWindow.enabled)
           movingWindow_->particleHalo->clear(*fields_);
@@ -462,6 +464,8 @@ namespace aprl
         if (incident_)
           incident_->correctAfterElectricUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
+        if(config_.mesh.movingWindow.referenceSurfaceCurrent)
+          finishMovingTransverseReferenceCurrent();
         if(gridWorkAudit) gridWorkAudit->complete(*fields_);
         if(discreteLedger)discreteLedger->finishElectric(*fields_);
         if(fieldStageAudit)fieldStageAudit->sample("electric_mpi",*fields_);

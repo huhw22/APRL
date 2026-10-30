@@ -70,6 +70,8 @@ namespace aprl
     std::size_t storedParticleCount() const;
     EBElectricHaloView beginMovingWindowStep();
     void finishMovingWindowStep();
+    void applyMovingTransverseReferenceCurrent();
+    void finishMovingTransverseReferenceCurrent();
     void finalizeMovingWindow();
     bool firstMovingWindowEntry(const FieldVector<Double>& start,
         const FieldVector<Double>& end, Double startFraction,
