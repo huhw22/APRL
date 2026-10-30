@@ -65,7 +65,15 @@ private:
       if(!d||!*d)return;
       directory=d;const char* t=std::getenv("APRL_PARTICLE_MOMENTUM_PROBE_DT");
       const char* first=std::getenv("APRL_PARTICLE_MOMENTUM_PROBE_FIRST");
+      const char* strideText=std::getenv("APRL_PARTICLE_MOMENTUM_PROBE_STRIDE");
       firstOnly=first&&std::string(first)=="1";
+      if(strideText) {
+        char* stop=nullptr;
+        const auto parsed=std::strtoull(strideText,&stop,10);
+        if(!*strideText||!stop||*stop||parsed<1||parsed>1000000)
+          throw std::runtime_error("Invalid momentum probe stride");
+        stride=static_cast<std::uint64_t>(parsed);
+      }
       if(!t)throw std::runtime_error("Momentum probe requires nominal field dt");
       char* end=nullptr;dt=std::strtod(t,&end);
       if(!end||*end||!(dt>0.)||!std::isfinite(dt))throw std::runtime_error("Invalid momentum probe dt");
