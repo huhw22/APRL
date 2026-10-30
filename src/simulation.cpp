@@ -23,6 +23,7 @@
 #include "grid_work_audit.h"
 #include "field_stage_audit.h"
 #include "discrete_field_ledger.h"
+#include "inlet_constraint_probe.h"
 
 namespace aprl
 {
@@ -356,6 +357,12 @@ namespace aprl
       throw std::invalid_argument("APRL_GRID_WORK_AUDIT requires a directory, moving window, ledger, unfiltered current and no checkpoint");
     const Double initializationStart = performanceNow();
     initialize();
+    std::unique_ptr<InletConstraintProbe> inletConstraintProbe;
+    if(const char* directory=std::getenv("APRL_INLET_CONSTRAINT_PROBE")) {
+      if(!*directory||!config_.mesh.movingWindow.enabled)
+        throw std::invalid_argument("Inlet constraint probe requires moving window and a directory");
+      if(rank_==0)inletConstraintProbe.reset(new InletConstraintProbe(directory,localGeometry_));
+    }
     std::unique_ptr<GridWorkAudit> gridWorkAudit;
     std::unique_ptr<FieldStageAudit> fieldStageAudit;
     std::unique_ptr<DiscreteFieldLedger> discreteLedger;
@@ -428,6 +435,7 @@ namespace aprl
         stageStart = performanceNow();
         Double communicationStart = halo_->communicationSeconds();
         fields_->clearCurrent();
+        if(inletConstraintProbe)inletConstraintProbe->begin(*fields_,particles_,localOriginBox_,step_);
         particleBoundary_->beginStep();
         if (config_.mesh.movingWindow.enabled)
           {
@@ -466,6 +474,7 @@ namespace aprl
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
         if(config_.mesh.movingWindow.referenceSurfaceCurrent)
           finishMovingTransverseReferenceCurrent();
+        if(inletConstraintProbe)inletConstraintProbe->finish(*fields_,particles_,localOriginBox_);
         if(gridWorkAudit) gridWorkAudit->complete(*fields_);
         if(discreteLedger)discreteLedger->finishElectric(*fields_);
         if(fieldStageAudit)fieldStageAudit->sample("electric_mpi",*fields_);
@@ -518,6 +527,7 @@ namespace aprl
           }
       }
 
+    if(inletConstraintProbe)inletConstraintProbe->close();
     if(gridWorkAudit) {
       movingWindow_->fields->setBeforeInletObserver(nullptr,nullptr);
       gridWorkAudit->close();
