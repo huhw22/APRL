@@ -25,12 +25,34 @@ The full post-close checker runs on that allocation, scanning E/B and particle
 outputs, unique IDs, energy-plane counts and the discrete ledger. Completion
 is not physical or pure-radiation acceptance.
 
+Identity rule: particle_id is the one-based runtime input-row index; source_id
+is copied from the original SDDS particleID and may be sparse after cropping.
+Check each runtime row exactly once, including duplicates across chunks, then
+compare its source_id with that original input row. Never require source_id
+to lie in 1..N. Missing rows, duplicate runtime IDs, wrong source mappings,
+incomplete transactions, nonfinite records and wrong directions still fail.
+
 Campaign:
   results/corrected_full_comparison_20261030/
 Do not edit copied frozen files while jobs are running. Confirm initialization,
 both inlet options, exact source count, pending queue, binding and initial
 progress from logs/manifests without opening running H5, then leave the long
 jobs to finish until the user requests analysis.
+
+Explicitly authorized post-close-checker repairs can be applied while the
+solver is running without changing its binary, card, launch or diagnostics.
+Archive the exact old checker and keep both original frozen manifests. The
+fixed checker accepts only its own one-file replacement documented by
+postcheck-amendments/source-id-rule.json: old/new SHA256, original-manifest
+SHA256, archived original, case path and validator-only role must all match.
+Any other frozen input change still fails. check_id_repair.py exercises both
+the identity failures and this narrow guard; it is not a physics test.
+
+For an already closed run, recheck_closed.sbatch runs the full fixed checker
+on a compute node and writes completion-check.corrected.json via --output.
+It does not overwrite the original failed check, batch EXIT_CODE or Slurm
+history, and never launches PIC. Completion/status indexes may point to the
+new result while retaining the historical post-check failure explanation.
 
 Two-node undulator replacement: prepare_two_nodes.py freezes only the stopped
 4.5 m case into a new directory. run_two_nodes.sbatch allocates 32 MPI x8,
