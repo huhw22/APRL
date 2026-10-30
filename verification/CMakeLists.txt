@@ -27,6 +27,10 @@ option(APRL_BUILD_HELD_CUT_PROBE
 option(APRL_BUILD_BLOCKED_COWAN_REFERENCE
   "Build the verification-only disk-backed modal Cowan reference generator" OFF)
 if(APRL_ENABLE_MOVING_WINDOW)
+  add_executable(aprl_charge_matched_inlet_checks charge_matched_inlet_checks.cpp)
+  target_link_libraries(aprl_charge_matched_inlet_checks PRIVATE direct_eb_core)
+  add_test(NAME required.inlet.charge-completion COMMAND aprl_charge_matched_inlet_checks)
+  set_tests_properties(required.inlet.charge-completion PROPERTIES LABELS "required;moving_window")
   add_executable(aprl_pending_particle_queue_checks pending_particle_queue_checks.cpp)
   add_executable(aprl_pending_particle_statistics_checks pending_particle_statistics_checks.cpp)
   add_executable(aprl_moving_detector_checks moving_detector_checks.cpp)

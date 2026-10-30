@@ -145,7 +145,7 @@ namespace aprl
           if (moving)
             validateMapKeys(moving, "mesh.moving_window", {
               "enabled", "cells", "lower_guard_cells", "upper_guard_cells",
-              "block_layers", "reference_directory", "reference_through_cpml", "reference_surface_current"
+              "block_layers", "reference_directory", "reference_through_cpml", "reference_surface_current", "inlet_charge_match"
             });
         }
 
@@ -694,7 +694,7 @@ namespace aprl
 
   MovingWindowConfig::MovingWindowConfig()
     : enabled(false), cells(0), lowerGuardCells(64), upperGuardCells(128),
-      blockLayers(32), referenceThroughCpml(false), referenceSurfaceCurrent(false), referenceDirectory()
+      blockLayers(32), referenceThroughCpml(false), referenceSurfaceCurrent(false), inletChargeMatch(false), referenceDirectory()
   {}
 
   MeshConfig::MeshConfig()
@@ -1052,6 +1052,8 @@ namespace aprl
         if (movingWindow["reference_surface_current"])
           result.mesh.movingWindow.referenceSurfaceCurrent =
             movingWindow["reference_surface_current"].as<bool>();
+        if(movingWindow["inlet_charge_match"])
+          result.mesh.movingWindow.inletChargeMatch=movingWindow["inlet_charge_match"].as<bool>();
         if (movingWindow["reference_directory"])
           {
             if (!movingWindow["reference_directory"].IsScalar())
@@ -1073,6 +1075,8 @@ namespace aprl
           throw configError(movingWindow,"reference_through_cpml requires enabled moving_window");
         if (result.mesh.movingWindow.referenceSurfaceCurrent && (!result.mesh.movingWindow.enabled || result.mesh.movingWindow.referenceThroughCpml))
           throw configError(movingWindow,"reference_surface_current requires moving_window and the original inner reference boundary");
+        if(result.mesh.movingWindow.inletChargeMatch && !result.mesh.movingWindow.enabled)
+          throw configError(movingWindow,"inlet_charge_match requires moving_window");
       }
     const YAML::Node longitudinal = mesh["longitudinal"];
     if (automaticLongitudinal)
@@ -1153,6 +1157,8 @@ namespace aprl
     result.mesh.fieldSolver = fieldSolver(required(mesh, "field_solver"));
     result.mesh.currentFilter = mesh["current_filter"] ?
       currentFilter(mesh["current_filter"]) : EBCurrentFilter::None;
+    if(result.mesh.movingWindow.inletChargeMatch&&result.mesh.currentFilter!=EBCurrentFilter::None)
+      throw configError(mesh["current_filter"],"inlet_charge_match requires unfiltered current");
     if (result.mesh.currentFilter != EBCurrentFilter::None &&
         result.mesh.fieldSolver != EBMaxwellSolver::CowanZ)
       throw configError(mesh["current_filter"],

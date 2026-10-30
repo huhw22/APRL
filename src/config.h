@@ -53,6 +53,7 @@ namespace aprl
     // the existing outer PEC termination, instead of cutting at its entrance.
     bool referenceThroughCpml;
     bool referenceSurfaceCurrent;
+    bool inletChargeMatch;
     std::string referenceDirectory;
 
     MovingWindowConfig();

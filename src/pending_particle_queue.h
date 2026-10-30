@@ -41,6 +41,10 @@ public:
   // The observer receives (initial_pending_state, admitted_current_state).
   std::size_t admit(std::size_t step, std::vector<Particle>& active,
                     const AdmissionObserver& observer = AdmissionObserver());
+  // Read-only view of precisely the next admission states. Used to construct
+  // a compatible inlet layer without admitting early or scanning the queue.
+  void visitDue(std::size_t step,
+                const std::function<void(const Particle&)>& visitor) const;
 
   std::size_t size() const;
   bool empty() const { return size() == 0; }

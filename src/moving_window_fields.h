@@ -86,6 +86,10 @@ public:
   // inlet Ex/Ey overwrite. No field/current mutation is permitted by this API.
   using BeforeInletObserver = void (*)(void*, const EBFieldGrid&);
   void setBeforeInletObserver(BeforeInletObserver observer, void* context);
+  // Optional completion of the newly inserted global-left layer, before the
+  // inserted/remap energies are measured. It must leave retained nodes intact.
+  using NewLayerCompletion = void (*)(void*, EBFieldGrid&, std::size_t, std::ptrdiff_t);
+  void setNewLayerCompletion(NewLayerCompletion completion,void* context);
   using StageObserver = void (*)(void*, const char*, const EBFieldGrid&);
   void setStageObserver(StageObserver observer, void* context);
   using DiscreteObserver = void (*)(void*, const char*, const EBFieldGrid&,

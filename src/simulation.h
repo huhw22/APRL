@@ -64,6 +64,7 @@ namespace aprl
     void initialize();
     void initializeMovingWindow();
     void installMovingWindowBoundary();
+    static void completeMovingInletLayer(void*,EBFieldGrid&,std::size_t,std::ptrdiff_t);
     void initializeMovingWindowFields();
     void admitMovingWindowParticles();
     std::size_t pendingParticleCount() const;

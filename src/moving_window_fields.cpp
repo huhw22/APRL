@@ -180,6 +180,8 @@ struct MovingWindowFields::Impl {
   void* stageContext = nullptr;
   DiscreteObserver discreteObserver = nullptr;
   void* discreteContext = nullptr;
+  NewLayerCompletion layerCompletion = nullptr;
+  void* layerContext = nullptr;
 
   Impl(const EBGridGeometry& g,std::size_t nz,std::size_t local,
        MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r)
@@ -349,6 +351,7 @@ struct MovingWindowFields::Impl {
         report.historyMovedBytes+=bytes;
       }
     }
+    if(rank==0&&layerCompletion)layerCompletion(layerContext,f,n,k);
     if(energy.enabled) {
       const auto diagnosticStart=Clock::now();
       const long double insertedLocal=planeEnergy(f,0);
@@ -389,6 +392,9 @@ void MovingWindowFields::setBeforeInletObserver(
     BeforeInletObserver observer,void* context) {
   impl_->beforeInletObserver=observer;
   impl_->beforeInletContext=context;
+}
+void MovingWindowFields::setNewLayerCompletion(NewLayerCompletion completion,void* context) {
+  impl_->layerCompletion=completion;impl_->layerContext=context;
 }
 void MovingWindowFields::setStageObserver(StageObserver observer,void* context) {
   impl_->stageObserver=observer;impl_->stageContext=context;

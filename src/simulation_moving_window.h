@@ -9,6 +9,7 @@
 #include "pending_particle_queue.h"
 #include "pending_particle_statistics.h"
 #include "transverse_reference_current.h"
+#include "charge_matched_inlet.h"
 namespace aprl {
 namespace verification { class BlockedCowanReference; }
 // No full-domain E/B grid is retained. Particle storage deliberately remains
@@ -36,6 +37,8 @@ struct SimulationMovingWindowState {
   std::unique_ptr<EBParticleFieldHalo> particleHalo;
   std::unique_ptr<PendingParticleQueue> pending;
   std::unique_ptr<PendingParticleStatistics> pendingStatistics;
+  std::unique_ptr<ChargeMatchedInlet> inletCompletion;
+  std::ofstream inletCompletionLedger;
   std::uint64_t admittedParticles = 0;
   std::ofstream ledger;
   unsigned long long exits = 0, croppedCarriers = 0;

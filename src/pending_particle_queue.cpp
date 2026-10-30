@@ -206,6 +206,18 @@ std::size_t PendingParticleQueue::admit(std::size_t step, std::vector<Particle>&
 }
 
 std::size_t PendingParticleQueue::size() const { return pending_.size() - cursor_; }
+void PendingParticleQueue::visitDue(std::size_t step,
+    const std::function<void(const Particle&)>& visitor) const {
+  if(!extracted_ || step<lastStep_ || step>geometry_.maximumStep || step>nextDue_)
+    throw std::logic_error("Pending inlet view skipped an event or exceeds its horizon");
+  const auto end=offsets_[step-initialStep_+1];
+  for(std::size_t n=cursor_;n<end;++n) {
+    const auto& initial=pending_[order_[n]];Particle particle=initial;
+    particle.position[2]=repeatHeldAddition(initial.position[2],
+      geometry_.heldDistancePerBeta*initial.frozenBetaZ,step-initialStep_);
+    visitor(particle);
+  }
+}
 std::size_t PendingParticleQueue::nextDueStep() const { return nextDue_; }
 const std::vector<PendingParticleQueue::Particle>& PendingParticleQueue::initialParticles() const {
   if (!extracted_ || cursor_) throw std::logic_error("Initial pending statistics must precede admission");

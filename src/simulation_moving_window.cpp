@@ -291,7 +291,29 @@ void Simulation::installMovingWindowBoundary() {
   movingWindow_->fields.reset(new MovingWindowFields(localGeometry_,globalGeometry_.nz,localZOffset_,communicator_,config_.boundary.cpml,ref));
   movingWindow_->fields->installBoundary(*fields_);
   movingWindow_->fields->enableEnergyLedger(config_.energyLedger.enabled);
+  if(config_.mesh.movingWindow.inletChargeMatch) {
+    movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]));
+    movingWindow_->fields->setNewLayerCompletion(&Simulation::completeMovingInletLayer,this);
+    if(rank_==0&&config_.energyLedger.enabled) {
+      movingWindow_->inletCompletionLedger.open(config_.mesh.movingWindow.referenceDirectory+"/inlet-charge-match.csv");
+      if(!movingWindow_->inletCompletionLedger)throw std::runtime_error("Cannot create inlet charge-match ledger");
+      movingWindow_->inletCompletionLedger<<std::setprecision(21)<<"step,source_particles,max_gauss_before_C_per_m3,max_gauss_after_C_per_m3,max_delta_Ez_V_per_m,native_layer_energy_change_J\n";
+    }
+    logRoot(communicator_,"Inlet charge completion: approximate background retained; new normal-E layer matches actual CIC charge and adjacent evolved fields; all exchange included in remap energy.");
+  }
   movingWindow_->particleHalo.reset(new EBParticleFieldHalo(localGeometry_,communicator_));
+}
+void Simulation::completeMovingInletLayer(void* context,EBFieldGrid& f,std::size_t step,std::ptrdiff_t offset) {
+  auto& sim=*static_cast<Simulation*>(context);auto& w=*sim.movingWindow_;
+  auto origin=w.referenceOrigin;origin[2]=std::fma(static_cast<double>(offset),f.geometry().dz,w.referenceOrigin[2]);
+  w.inletCompletion->begin(origin);
+  for(const auto& p:sim.particles_)w.inletCompletion->particle(p);
+  if(w.pending)w.pending->visitDue(step,[&](const RelativisticParticleSI& p){w.inletCompletion->particle(p);});
+  const auto report=w.inletCompletion->complete(f,sim.config_.energyLedger.enabled);
+  if(w.inletCompletionLedger.is_open()) {
+    w.inletCompletionLedger<<step<<','<<report.particles<<','<<report.maxBefore<<','<<report.maxAfter<<','<<report.maxDeltaEz<<','<<report.nativeWorkJ<<'\n';
+    if(!w.inletCompletionLedger)throw std::runtime_error("Cannot write inlet charge-match ledger");
+  }
 }
 void Simulation::initializeMovingWindowFields() {
 #ifdef APRL_HAS_MOVING_WINDOW
@@ -378,6 +400,7 @@ void Simulation::finishMovingTransverseReferenceCurrent() {
 }
 void Simulation::finalizeMovingWindow() {
   auto& w=*movingWindow_;
+  if(w.inletCompletionLedger.is_open()) {w.inletCompletionLedger.flush();if(!w.inletCompletionLedger)throw std::runtime_error("Cannot flush inlet charge-match ledger");w.inletCompletionLedger.close();}
 #ifdef APRL_HAS_MOVING_WINDOW
   if(w.referenceCurrent)w.referenceCurrent->close();
 #endif
