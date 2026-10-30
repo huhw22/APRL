@@ -140,14 +140,15 @@ def render_documents(root,target):
       TOTAL_PERCENT=f"{abs(normalization['final_total_residual_pct_fixed_scale']):.5f}")
     for label,key in [('SINGLE','single_node'),('MPI','two_node')]:
         values[label+'_OFF']=f"{perf[key]['off_seconds_per_step']:.5f}";values[label+'_ON']=f"{perf[key]['on_seconds_per_step']:.5f}";values[label+'_COST']=f"{perf[key]['increment_percent']:.2f}"
-    for source,name in [('report_template.md','README.md'),('software_validation_template.md','PROGRAM_VALIDATION.md')]:
+    for source,name in [('report_template.md','README.md'),('software_validation_template.md','PROGRAM_VALIDATION.md'),
+      ('theory_derivation.md','THEORY_DERIVATION.md')]:
         template=(HERE/source).read_text()
         for key,value in values.items():template=template.replace('{{'+key+'}}',value)
         assert '{{' not in template and '旧差额' not in template
         (target/name).write_text(template)
     save(target/'metadata/SUCCESS_METRICS.json',{'source':str(root/'FINAL.json'),'source_sha256':sha(root/'FINAL.json'),'values':values,'test_program_commit':'c7fcd20','new_simulations':0})
     save(target/'metadata/RENDER_SHA256.json',{
-      str(q.relative_to(target)):sha(q) for q in [target/'README.md',target/'PROGRAM_VALIDATION.md',*(target/'figures').rglob('*')] if q.is_file()})
+      str(q.relative_to(target)):sha(q) for q in [target/'README.md',target/'PROGRAM_VALIDATION.md',target/'THEORY_DERIVATION.md',*(target/'figures').rglob('*')] if q.is_file()})
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('--workspace',type=Path,required=True);p.add_argument('--target',type=Path,required=True);p.add_argument('--confirmed-idle',action='store_true',required=True)

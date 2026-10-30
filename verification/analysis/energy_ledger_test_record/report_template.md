@@ -6,11 +6,19 @@
 
 **第3节作为当前版本的阶段性结论保留，供后续仿真对照与优化使用。**其中误差仍然存在，不能把阶段性采用理解为全部物理量已达到统一精度；后续修正应另列版本和结果，保留本次基准。
 
+每项对照的关键公式与推导步骤写在对应结果之前；完整计算链、近似条件和原始文献集中在[物理公式与推导](THEORY_DERIVATION.md)。
+
 ## 1. 真空脉冲传播：与已知解对照
 
 先在网格上放入已知 E/B 脉冲，不含粒子和电流，然后用现有场推进方法演化。脉冲沿 +z 以光速传播，窗口每步向 −z 移动一格，因此脉冲相对窗口每步应平移两格。
 
 这一对照具有明确的参照：在每一步比较数值场与已知平移后的场形，同时将纵向离散面交换与原生端点 E/B 通量公式比较。场能变化还与新账本中的各通道核对。
+
+理论从无源Maxwell方程 $\partial_tE_x=-c^2\partial_zB_y$、$\partial_tB_y=-\partial_zE_x$ 出发，消去B后有 $\partial_t^2E_x=c^2\partial_z^2E_x$。故沿+z的任意行波为
+
+$$E_x=f(z-ct),\qquad B_y=f(z-ct)/c.$$
+
+在 $\xi=z-v_wt$ 中，场形为 $f[\xi-(c-v_w)t]$；本工况 $v_w=-c$、$c\Delta t=\Delta z$，因此每步相对窗口前进两格。E与B分别在其原生交错位置／时间层求值。[详细推导](THEORY_DERIVATION.md#vacuum)。
 
 | 设置 | 本次值 |
 |---|---|
@@ -49,6 +57,14 @@
 
 本工况核对粒子能量变化、自洽场能变化、电流与场的交换以及供场／移窗带来的能量变化。时间离散和 Cowan 算子贡献单独记录为数值通道，避免将它们解释为真实辐射或外场做功。
 
+物理基础是把Ampère–Maxwell方程点乘E、Faraday方程点乘B/μ₀，相加后得到
+
+$$\partial_tu+\nabla\cdot\boldsymbol S=-\boldsymbol J\cdot\boldsymbol E,\qquad
+u=\frac{\epsilon_0E^2}2+\frac{B^2}{2\mu_0},\quad
+\boldsymbol S=\boldsymbol E\times\boldsymbol B/\mu_0.$$
+
+粒子得到的电场功与场能损失符号相反。对移动体积再用Reynolds公式，向外的场能交换变为 $\oint(\boldsymbol S-u\boldsymbol v_w)\cdot\boldsymbol n\,dA$；还须计入粒子进出、实际供场与裁剪。在离散显式更新中，场增量平方项和Cowan算子项分别保留，不能将连续定理直接当成没有数值通道的离散恒等式。[连续收支到当前离散账本的推导](THEORY_DERIVATION.md#energy-budget)。
+
 ### 收支核对结果
 
 ![自由漂移：场算子收支与总收支核对](figures/04_particle_free_drift.png)
@@ -81,6 +97,43 @@ $$D=\max_{\text{完整记录}}|\Delta K_{\text{粒子}}|,\qquad \text{图示百�
 
 物理基准使用32768个带权宏粒子、无外磁场的球形束团，与独立相对论球壳世界线解对照。主能量量为逐粒子自身入口至指定出口的动能差 $\Delta K_i=K_{i,\mathrm{out}}-K_{i,\mathrm{in}}$，正值表示增能；偏差统一为 **PIC−理论**。`rest` 指束团初始平均静止惯性系，**不是程序的boost系**。
 
+### 球形理论怎样得到参照值
+
+球对称时，以带符号包围电荷 $Q_{\rm enc}$ 写Gauss定律和电荷连续性：
+
+$$E_r'=\frac{Q_{\rm enc}}{4\pi\epsilon_0r^2},\quad
+\partial_{t'}Q_{\rm enc}=-4\pi r^2j_r'
+\ \Longrightarrow\ \epsilon_0\partial_{t'}E_r'=-j_r'.$$
+
+因此Ampère–Maxwell方程中的电流与位移电流抵消，所选球对称无外加自由波解有B′=0。这是[费曼第18章§18–2](https://www.feynmanlectures.caltech.edu/II_18.html#Ch18-S2)给出的情形，属于完整Maxwell场关系，不是忽略有限光速的静电替代。[场关系推导与适用条件](THEORY_DERIVATION.md#sphere-maxwell)。
+
+令 $F_0(r_0)$ 为初始半径内的电子数比例，$e>0$、$Q=Ne$、$k_e=1/(4\pi\epsilon_0)$。交叉前包围电荷不变，电子径向力向外，实际相对论参照方程为
+
+$$\frac{dp_r'}{dt'}=\frac{k_eNe^2F_0(r_0)}{r^2},\qquad
+\frac{dr}{dt'}=\frac{p_r'}{m_e\sqrt{1+(p_r'/m_ec)^2}}.$$
+
+将力乘以径向速度并积分，得到壳层动能变化
+
+$$\Delta\kappa'=k_eNe^2F_0(r_0)\left(\frac1{r_0}-\frac1r\right).$$
+
+冷均匀球取 $F_0=(r_0/R_0)^3$。内部非相对论时令 $r=ar_0$，得到 $\ddot a=\omega^2/a^2$，其中 $\omega^2=k_eNe^2/(m_eR_0^3)$。乘以 $\dot a$ 积分后，冷球有 $\dot a^2/2=\omega^2(1-1/a)$，从而 $\sigma_x=aR_0/\sqrt5$。再对 $\Delta\kappa'\propto r_0^2$ 按均匀球体积加权，可得同时刻的均值、标准差及其比值 $\sqrt{4/21}$。[均匀球的积分与能量矩推导](THEORY_DERIVATION.md#uniform)。这些闭式式子用于解释尺度；实际表值保留完整相对论球壳方程。
+
+向内聚焦球改为 $\dot a(0)=h_0<0$，第一积分变成 $\dot a^2/2=h_0^2/2+\omega^2(1-1/a)$。均匀球自能为 $U_0=3k_eQ^2/(5R_0)$，因此收缩时 $\Delta K'=U_0(1-1/a)<0$、场能升高，之后转折回弹。[聚焦和转折半径推导](THEORY_DERIVATION.md#focusing)。
+
+冷球形高斯则从球内密度积分得到
+
+$$F_0(r_0)=\operatorname{erf}\!\left(\frac{r_0}{\sqrt2\sigma}\right)
+-\sqrt{\frac2\pi}\frac{r_0}{\sigma}e^{-r_0^2/(2\sigma^2)}.$$
+
+不同壳层带入不同F₀，逐层积分；它们不共享一个膨胀尺度，不能要求后续密度仍为高斯。由粒子数守恒计算密度和RMS，并检查 $\partial r/\partial r_0>0$ 的无交叉条件。[高斯壳层、密度与自能推导](THEORY_DERIVATION.md#gaussian)。
+
+最后对每条世界线求固定lab面的交点。若束团中心通过入口对应rest时刻 $T_0$，则面 $z_j$ 要求
+
+$$z_i'(t'_{ij})+\beta c(t'_{ij}-T_0)=z_j/\Gamma,\qquad
+\Delta K_{ij}^{\rm lab}=\Gamma m_ec^2(\Delta\gamma_{ij}'+\beta\Delta u_{z,ij}').$$
+
+这里 $u'=p'/(m_ec)$，Γ约1174，不是程序boost的929。按相同ID、权重及入口事件计算均值和std；固定lab面上不同粒子的rest时刻不同，所以同时刻球解的能散比值不能直接套用。[事件变换、统计公式与两种理论口径](THEORY_DERIVATION.md#lab-planes)。
+
 ### 三类束团的空间电荷动力学
 
 原电荷三类完整测试均能保留膨胀或聚焦后回弹的主要行为。下表的能量理论值采样在PIC各粒子实际过面事件对应的rest时刻；横向尺寸为末面 $\sigma_x$ 的相对偏差。
@@ -98,6 +151,14 @@ $$D=\max_{\text{完整记录}}|\Delta K_{\text{粒子}}|,\qquad \text{图示百�
 ### 固定球形几何下，误差怎样随电荷降低
 
 保持冷均匀球初始半径100 µm、网格与传播终点不变，取 $Q_0=10^8e$，比较总电荷降低三个数量级的四档。入口为lab坐标0 m，末面为1.32619938 m。**本表理论使用自己的同一固定lab面过面事件**，与上一表的实际事件时刻口径分开。
+
+理论尺度可从 $\omega^2\propto Q$ 展开：冷球 $a=1+\omega^2t'^2/2+\cdots$，一阶径向冲量正比Q，但对称球的一阶平均纵向项抵消。把固定面过面时间的变化也保留到二阶，得到弱电荷首项
+
+$$\langle\Delta K_{\rm lab}\rangle\simeq
+\frac25\Gamma m_e\omega^4R_0^2(T_1^2-T_0^2)\propto Q^2,\qquad
+T_1-T_0=\frac{z_1}{\Gamma\beta c}.$$
+
+若数值平均冲量余差保留O(Q)项，其绝对能量偏差便可能近似随Q下降，而相对净均值偏差反而增大。[逐项展开及此前辅助估算前因子的细微修正](THEORY_DERIVATION.md#weak-charge)。下表主理论值仍为完整相对论解，不用该弱场式替换强电荷结果。
 
 | Q/Q₀ | 理论平均ΔK，eV/电子 | PIC平均ΔK，eV/电子 | PIC−理论，eV/电子 | 偏差／理论平均ΔK |
 |---:|---:|---:|---:|---:|

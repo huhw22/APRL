@@ -20,12 +20,13 @@ def validate(bundle):
         if item['kind']!='directory':assert a.st_size==item['size'] and a.st_mtime_ns==item['mtime_ns'],item['relative']
         if item['kind']=='link':assert os.readlink(p)==item['link_target'] and p.exists()==item['target_existed']
         if 'sha256' in item:assert sha(p)==item['sha256'];hashed+=1
-    links=[];images_by_document={}
+    links=[];external_links=[];images_by_document={}
     expected_images={
       'README.md':['figures/01_vacuum_pulse.png','figures/04_particle_free_drift.png',
         'physical_benchmarks/charge_matched_inlet_20261030/figures/sphere_physics.png',
         'physical_benchmarks/space_charge_scaling_20261030/review/charge_scaling.png'],
-      'PROGRAM_VALIDATION.md':['figures/02_manufactured_fields.png','figures/03_perturbation_detection.png','figures/05_audit_cost.png']}
+      'PROGRAM_VALIDATION.md':['figures/02_manufactured_fields.png','figures/03_perturbation_detection.png','figures/05_audit_cost.png'],
+      'THEORY_DERIVATION.md':[]}
     for name,expected in expected_images.items():
         markdown=(bundle/name).read_text();images=[]
         assert '{{' not in markdown and '旧差额' not in markdown
@@ -33,7 +34,9 @@ def validate(bundle):
             assert all(term not in markdown for term in ('required','软件回归','汇总读取器','负控','逐位','启用成本','逐点预测'))
             assert '离散能量收支一致性' in markdown
         for m in re.finditer(r'(!?)\[[^\]]*\]\(([^)]+)\)',markdown):
-            relative=unquote(m[2].split('#',1)[0]);assert relative and not relative.startswith(('http:','https:'))
+            if m[2].startswith(('http:','https:')):
+                assert not m[1] and m[2].startswith('https://');external_links.append(m[2]);continue
+            relative=unquote(m[2].split('#',1)[0]);assert relative
             p=bundle/relative
             # This validation report is written only after every other check passes.
             if relative!='metadata/VALIDATION.json':assert p.exists(),relative
@@ -51,9 +54,10 @@ def validate(bundle):
     program=json.loads((bundle/'programs/INDEX.json').read_text());assert all(sha(bundle/'programs'/name)==data['sha256'] for name,data in program.items())
     result={'checks_pass':True,'evidence_entries_preserved':len(inventory),'evidence_key_files_sha256_verified':hashed,
       'markdown_links_checked':len(links),'embedded_figures_by_document':images_by_document,'script_snapshots_checked':len(snapshots),
+      'external_reference_urls':sorted(set(external_links)),
       'rendered_artifacts_sha256_verified':len(render),
       'compatibility_path_resolves_to_same_inode':True,'no_new_simulations':True,'scientific_files_rewritten':False,
-      'report_scope':'Main document: analytic vacuum propagation, scoped particle energy accounting, and provisional sphere dynamics and charge-scaling error results. Program regression, diagnostics and performance in a separate record.'}
+      'report_scope':'Main document: analytic vacuum propagation, scoped particle energy accounting, and provisional sphere dynamics and charge-scaling error results, with an explicit physical derivation appendix. Program regression, diagnostics and performance in a separate record.'}
     (meta/'VALIDATION.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n')
     assert all((bundle/p).exists() for p in links)
     return result
