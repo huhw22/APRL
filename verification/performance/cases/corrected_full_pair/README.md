@@ -31,3 +31,10 @@ Do not edit copied frozen files while jobs are running. Confirm initialization,
 both inlet options, exact source count, pending queue, binding and initial
 progress from logs/manifests without opening running H5, then leave the long
 jobs to finish until the user requests analysis.
+
+Two-node undulator replacement: prepare_two_nodes.py freezes only the stopped
+4.5 m case into a new directory. run_two_nodes.sbatch allocates 32 MPI x8,
+16 ranks per node, with 256 distinct physical cores. The global 4099-cell
+window and all physical/diagnostic settings stay identical; the minimum local
+z slab becomes 128 cells. Completion checks use the frozen rank count, while
+the existing single-node free-drift copied scripts remain untouched.

@@ -42,7 +42,7 @@ def check(root):
         st=Path(p['input_file']).stat();require((st.st_size,st.st_mtime_ns)==(p['input_size_bytes'],p['input_mtime_ns']),'Input stat changed')
         identity=json.loads((root/'identity-check.json').read_text());require(identity['passed'],'Startup identity failed')
         manifest=yaml.safe_load((root/'run-manifest.yaml').read_text())
-        require(manifest['source_revision']==p['compiled_revision'] and manifest['mpi_size']==16,'Binary/layout differs')
+        require(manifest['source_revision']==p['compiled_revision'] and manifest['mpi_size']==p['ranks'],'Binary/layout differs')
         require(yaml.safe_load(manifest['configuration_yaml'])==cfg,'Manifest card differs')
         require(manifest['resolved_mesh']['cells']==[160,160,geo['active_cells_z']],'Active mesh changed')
         out['binding']=check_binding(root/'binding.log',p)
@@ -59,7 +59,7 @@ def check(root):
         reference=Path(mw['reference_directory']);prep=json.loads((reference/'preparation.json').read_text())
         require(prep['complete'] and prep['particles']==p['records'],'Reference preparation incomplete')
         require((reference/'transverse-current.bin').stat().st_size>0,'Surface-current reference missing')
-        out['moving_window']=check_window_csv(reference,16,step,cfg['energy_ledger']['sample_interval_steps'],geo)
+        out['moving_window']=check_window_csv(reference,p['ranks'],step,cfg['energy_ledger']['sample_interval_steps'],geo)
         field=cfg['detectors']['field_planes'][0];path=root/'detectors'/(field['name']+'.h5')
         with h5py.File(path) as h:
             g=h['field_plane'];check_identity(g,manifest);data=g['fields'];ts=g['time_s'][:]
@@ -82,7 +82,7 @@ def check(root):
             out['energy_planes'].append(energy_file(path,p['records'],manifest))
         require(set((root/'detectors').glob('*.h5'))==expected_files,'Unexpected/missing detector file')
         ledger=root/'ledger';rows,sums,ranks,steps=report_discrete.load(ledger,ledger/'energy-ledger.h5')
-        require(ranks==16 and steps==step,'Strict ledger dimensions differ')
+        require(ranks==p['ranks'] and steps==step,'Strict ledger dimensions differ')
         _,_,summary=report_discrete.calculate(rows,sums,steps);out['discrete_ledger']=summary
         finite(rows,'physical ledger')
         require(np.all(rows['active_macroparticles']+rows['removed_macroparticles']==p['records']),'Ledger particle inventory differs')
