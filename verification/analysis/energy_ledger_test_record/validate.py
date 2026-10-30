@@ -22,7 +22,9 @@ def validate(bundle):
         if 'sha256' in item:assert sha(p)==item['sha256'];hashed+=1
     links=[];images_by_document={}
     expected_images={
-      'README.md':['figures/01_vacuum_pulse.png','figures/04_particle_free_drift.png'],
+      'README.md':['figures/01_vacuum_pulse.png','figures/04_particle_free_drift.png',
+        'physical_benchmarks/charge_matched_inlet_20261030/figures/sphere_physics.png',
+        'physical_benchmarks/space_charge_scaling_20261030/review/charge_scaling.png'],
       'PROGRAM_VALIDATION.md':['figures/02_manufactured_fields.png','figures/03_perturbation_detection.png','figures/05_audit_cost.png']}
     for name,expected in expected_images.items():
         markdown=(bundle/name).read_text();images=[]
@@ -36,7 +38,7 @@ def validate(bundle):
             # This validation report is written only after every other check passes.
             if relative!='metadata/VALIDATION.json':assert p.exists(),relative
             links.append(relative)
-            if m[1]:assert relative.startswith('figures/') and p.suffix=='.png';images.append(relative)
+            if m[1]:assert relative in expected and p.suffix=='.png';images.append(relative)
         assert images==expected,name
         images_by_document[name]=images
     snapshots=json.loads((meta/'SNAPSHOT_SHA256.json').read_text());assert all(sha(bundle/p)==v for p,v in snapshots.items())
@@ -51,7 +53,7 @@ def validate(bundle):
       'markdown_links_checked':len(links),'embedded_figures_by_document':images_by_document,'script_snapshots_checked':len(snapshots),
       'rendered_artifacts_sha256_verified':len(render),
       'compatibility_path_resolves_to_same_inode':True,'no_new_simulations':True,'scientific_files_rewritten':False,
-      'report_scope':'Main document: analytic vacuum propagation and scoped particle energy accounting. Program regression, diagnostics and performance in a separate record.'}
+      'report_scope':'Main document: analytic vacuum propagation, scoped particle energy accounting, and provisional sphere dynamics and charge-scaling error results. Program regression, diagnostics and performance in a separate record.'}
     (meta/'VALIDATION.json').write_text(json.dumps(result,indent=2,ensure_ascii=False)+'\n')
     assert all((bundle/p).exists() for p in links)
     return result
