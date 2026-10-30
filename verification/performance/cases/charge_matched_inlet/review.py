@@ -12,7 +12,7 @@ def read(p):return json.loads(p.read_text())
 def save(p,v):p.write_text(json.dumps(v,indent=2)+'\n')
 def csv(p):return np.genfromtxt(p,names=True,delimiter=',')
 def figure(fig,p):fig.savefig(p.with_suffix('.png'),dpi=180,bbox_inches='tight');fig.savefig(p.with_suffix('.pdf'),bbox_inches='tight');plt.close(fig)
-def main(root,aux):
+def main(root,aux,audit):
     plan=read(root/'plan.json');b=root.parent;prior=b/'reference_surface_current_20261030';out=root/'figures';out.mkdir(exist_ok=True)
     pilot=root/'pilot_500';assert read(pilot/'COMPLETION.json')['checks_pass']
     assert read(aux/'guard32_500/COMPLETION.json')['checks_pass'] and read(aux/'guard32_500/ENTRY_PHASE_SPACE_BITWISE.json')['pass_all']
@@ -35,13 +35,19 @@ def main(root,aux):
     summary={};rows=['| 束团 | 旧方案平均lab ΔK偏差 | 新方案偏差 | 新横向RMS尺寸偏差 |','|---|---:|---:|---:|'];rest=[];energy=[]
     fig,axes=plt.subplots(3,3,figsize=(13,10));colors={'old':'#66788d','new':'#148572'}
     for row,k in enumerate(('uniform','converging','gaussian')):
-        d=root/(k+'_full');assert read(d/'COMPLETION.json')['checks_pass'];entry=read(d/'ENTRY_PHASE_SPACE_BITWISE.json');assert entry['pass_all']
+        d=root/(k+'_full')
+        if (d/'COMPLETION.json').exists():
+            assert read(d/'COMPLETION.json')['checks_pass'];entry=read(d/'ENTRY_PHASE_SPACE_BITWISE.json');assert entry['pass_all'];ledger=read(d/'LEDGER_CHECK.json')
+        else:
+            closure=read(d/'REVIEWED_CLOSED_OUTPUT.json');assert closure['actual_source_states_bitwise'] and closure['pic_exit_code']==0
+            entry=read(d/'REVIEWED_ENTRY_DIAGNOSTIC.json');ledger=read(d/'REVIEWED_LEDGER_CHECK.json')
+            assert read(audit/(k+'_SOURCE_CHECK.json'))['pass_all']
         r=read(d/'analysis/RESULT.json');o=read(prior/(k+'_full')/'analysis/RESULT.json');n,p=r['planes'][-1],o['planes'][-1]
         s=dict(old_lab_error_keV=(p['PIC_mean_lab_gain_eV']-p['reference_mean_lab_gain_eV'])/1000,new_lab_error_keV=(n['PIC_mean_lab_gain_eV']-n['reference_mean_lab_gain_eV'])/1000,
             new_lab_gain_keV=n['PIC_mean_lab_gain_eV']/1000,theory_at_new_event_lab_gain_keV=n['reference_mean_lab_gain_eV']/1000,
             new_rest_mean_gain_eV=n['PIC_mean_rest_gain_eV'],theory_rest_mean_gain_eV=n['reference_mean_rest_gain_eV'],new_rest_std_gain_eV=n['PIC_std_rest_gain_eV'],theory_rest_std_gain_eV=n['reference_std_rest_gain_eV'],
             sigma_x_relative_error=n['PIC_sigma_x_m']/n['reference_sigma_x_m']-1,sigma_z_rest_relative_error=n['PIC_sigma_z_rest_m']/n['reference_sigma_z_rest_m']-1,
-            input_phase_space_bitwise=entry,relative_energy_budget=r['relative_energy_budget'],ledger=read(d/'LEDGER_CHECK.json'),
+            entry_plane_diagnostic=entry,actual_source_states_bitwise=True,relative_energy_budget=r['relative_energy_budget'],ledger=ledger,
             common_slice=read(d/'momentum-analysis/ANALYSIS.json')['final_clean_comparison'])
         summary[k]=s;rows.append(f"| {k} | {s['old_lab_error_keV']:+.3f} keV | {s['new_lab_error_keV']:+.3f} keV | {100*s['sigma_x_relative_error']:+.4f}% |")
         rest.append(f"| {k} | {s['new_rest_mean_gain_eV']:.3f} / {s['theory_rest_mean_gain_eV']:.3f} | {s['new_rest_std_gain_eV']:.3f} / {s['theory_rest_std_gain_eV']:.3f} |")
@@ -54,12 +60,27 @@ def main(root,aux):
             if row==2:a.set_xlabel('Fixed lab detector z (m)')
     axes[0,0].legend(fontsize=7);fig.suptitle('Independent spherical dynamics after the immutable input plane');fig.tight_layout();figure(fig,out/'sphere_physics')
     layer=csv(pilot/'reference/inlet-charge-match.csv');assert np.isfinite(layer['native_layer_energy_change_J']).all()
-    result=dict(status='COMPLETED_SMALL_CASE_COMPARISON',production_spectrum_accepted=False,contract=read(root/'TRUSTED_INPUT_CONTRACT.json'),cases=summary,
+    preparation=read(pilot/'reference/preparation.json')
+    def timing(path):
+        import re
+        line=next(x for x in path.read_text().splitlines() if 'phase=progress step=500 ' in x)
+        return {n:float(re.search(r'\b'+n+r'=([0-9.eE+\-]+)',line).group(1)) for n in ('elapsed_s','current_rss_total_mib')}
+    old_timing=timing(b/'surface_residual_origin_20261030_r2/base/aprl.log');new_timing=timing(pilot/'aprl.log')
+    cost=dict(background_preparation_seconds=preparation['preparationSeconds'],same_500_step_old=old_timing,same_500_step_new=new_timing,
+        observed_progress_seconds_relative_change=new_timing['elapsed_s']/old_timing['elapsed_s']-1,
+        scope='One unpaired 500-step sample with diagnostic probes; not stable throughput or full production overhead. Preparation includes the existing scalar background solve and IO, not a full PIC relaxation.')
+    result=dict(status='REVIEWED_SMALL_CASE_COMPARISON',production_spectrum_accepted=False,contract=read(root/'TRUSTED_INPUT_CONTRACT.json'),cases=summary,
         pilot=read(pilot/'momentum-analysis/ANALYSIS.json')['final_clean_comparison'],
         independent_new_layer_gauss_rms_max_C_per_m3=float(max(y['gauss_rms_C_per_m3'])),independent_old_layer_gauss_rms_max_C_per_m3=float(max(x['gauss_rms_C_per_m3'])),
         pilot_native_completion_energy_J=float(np.sum(layer['native_layer_energy_change_J'].astype(np.longdouble))),
-        two_node_prefix=read(aux/'two_nodes_200/COMPLETION.json'),guard32=read(aux/'guard32_500/momentum-analysis/ANALYSIS.json')['final_clean_comparison'])
+        two_node_prefix=read(aux/'two_nodes_200/COMPLETION.json'),guard32=read(aux/'guard32_500/momentum-analysis/ANALYSIS.json')['final_clean_comparison'],
+        source_state_audits={k:read(audit/(k+'_SOURCE_CHECK.json')) for k in ('uniform','gaussian')},cost=cost)
     save(root/'FINAL.json',result)
+    import csv as csv_module
+    with (root/'comparison.csv').open('w') as f:
+        names=['case','old_lab_error_keV','new_lab_error_keV','new_rest_mean_gain_eV','theory_rest_mean_gain_eV','new_rest_std_gain_eV','theory_rest_std_gain_eV','sigma_x_relative_error']
+        writer=csv_module.DictWriter(f,fieldnames=names);writer.writeheader()
+        for k,s in summary.items():writer.writerow(dict(case=k,**{n:s[n] for n in names[1:]}))
     text='''# 以可信输入面为约束的快速入窗初场
 
 ## 物理约束
@@ -80,13 +101,18 @@ def main(root,aux):
 Cowan/Boris/沉积与内部已推进场。近似背景继续给切向场；不要求它复现held的精确物理历史。
 
 pending只查看本步应入窗的事件，不提前admit、不扫描整个等待束团。额外内存为横向rho平面，
-工作限于新层和入口附近粒子，无新增全空间迭代/PIC等待稳定或0.5m预跑。
+工作限于新层、活动窗粒子扫描及本步待入窗事件，无新增全空间迭代/PIC等待稳定或0.5m预跑。
 完成器在shift内部测量inserted/remap之前执行，新增能量已计入原边界remap，不能重复加进source work。
 
 ## 可信输入保持与500步对照
 
-三完整束团、500步pilot和32格对照的entry面，逐source_id排序后全部32768条记录所有字段与旧卡逐位相同，
-包括到达时间、位置、动量和权重。没有通过调整可信输入来改善输出。
+输入H5和释放算法保持。converging完整束团、500步pilot和32格对照的entry面全部32768条记录逐位相同。
+uniform和gaussian的入口面诊断，分别有48和136个横向动量分量相差最多4.34e-19（1 ULP），其它字段逐位相同。
+入口端点转换略低于平面时，过面采样器会在第一个受力段插值极小的比例；其舍入依赖入场后的力。
+为区分它与真实输入变化，另用150/270步开关回放，直接记录全部32768粒子第一次受力前的状态：
+source ID、步数、时刻、子步长、电荷、位置和动量均逐位相同。诊断回放的所有科学H5前缀也与原完整记录逐位相同。
+因此没有通过调整可信输入来改善输出；不能据此把那两个入口面诊断记录说成逐位相同。
+详细证据见[入口源状态核验](../'''+audit.name+'''/uniform_SOURCE_CHECK.json)和[高斯核验](../'''+audit.name+'''/gaussian_SOURCE_CHECK.json)。
 
 原64格窗口的converging500步同boost完整cohort lab等效平均能量误差−17.072→−3.371keV/电子。
 独立原CIC诊断显示新左层Gauss误差降到舍入水平，而非只用完成器内部自检。
@@ -106,6 +132,11 @@ pending只查看本步应入窗的事件，不提前admit、不扫描整个等�
 
 ![空间电荷动力学对照](figures/sphere_physics.png)
 
+改进并非每项都单调：冷均匀球末面的平均lab能量偏差由+0.790变为−1.048keV，绝对值略增；
+它的共同boost末个完整cohort时刻偏差约−4.039keV。聚焦和高斯的均值明显改善，
+但不能把“新层Gauss约束满足”当作所有动力学误差消失。32格准备区500步聚焦偏差约−5.069keV，
+大于64格的−3.371keV；本轮保留原64格，不据此自动缩窗。
+
 ## 相对能量账本
 
 保持原D=max|同cohort Delta K_boost|为全程固定分母，包括保留/移除粒子，不除以初始总束流动能。
@@ -119,6 +150,7 @@ pending只查看本步应入窗的事件，不提前admit、不扫描整个等�
 
 这是相空间固定、上游只作数值补全的首版薄层实现。没有验证所有上游补全、真实大束团/有磁能谱，
 剩余能散和均值差必须按FINAL.json逐项看，不能因Gauss误差小而宣称所有物理正确。
+冷均匀球rest能散仍约高9.6%，本轮没有消除它。该方案满足的是廉价准稳态入口的初步对照，不是唯一真实上游场的重建。
 不擅改内核或大guard，不切生产default/cluster.env，不自动提交全量生产或推远程。
 双节点/关闭逐位、单位检查、性能观察与源码身份另见[PROGRAM_VALIDATION.md](PROGRAM_VALIDATION.md)。
 '''
@@ -127,7 +159,10 @@ pending只查看本步应入窗的事件，不提前admit、不扫描整个等�
 
 19068：78required通过（含新层Gauss制造场、保留场/输入源不变、pending visitDue纯读且与真正admit一致），关闭100步18H5科学records与旧binary逐位。
 19069：原64格converging500步，独立只读Gauss/真实pusher E/B冲量、原双账本；entry全部字段逐位保持。
-19070/19071/19073：原uniform/converging/gaussian完整短束团，保留全部6面；同原物理输入/终点。
+19071：converging完整短束团，保留全部6面；同原物理输入/终点。
+19070/19073：uniform/gaussian的PIC正常退出、输出闭合且各6面32768粒子齐；随后包装脚本的入口面逐位断言失败，原Slurm FAILED与FAILED.json保留。
+另读闭合H5逐文件核验complete/committed/finite及账本，写REVIEWED_CLOSED_OUTPUT/REVIEWED_ENTRY_DIAGNOSTIC/REVIEWED_LEDGER_CHECK；没有篡改原COMPLETION或放宽断言。
+19075/19076：150/270步开关回放，新增首次受力前只读记录，原科学H5前缀逐位；全部32768输入源状态逐位不变，入口面采样差单列。19075另过78required。
 19072：两节点总16MPI×8，200步18H5科学records与单节点前缀逐位；每节点8rank，128实际物理核而非256实际线程。
 19074：左32格、活动Nz减32/右端保持，500步，用于数值准备区敏感性，非自动生产选择。
 
@@ -135,7 +170,10 @@ pending只查看本步应入窗的事件，不提前admit、不扫描整个等�
 辅助prepare首次把未冻结的__pycache__目录当文件计算哈希失败，发生在提交前，过滤目录后完成清单；未改变物理卡或任何已冻结结果。
 编译首次unit使用未定义FieldVector等号，已在编译阶段改逐分量检查，没有用失败产物启动。
 SOURCE_BUILD/SOURCE_FINAL给出实际C++/header与compiled-parent-dirty映射，不冒称编译于后来的提交。
+首个source-audit准备目录仅生成未提交；在提交前另建r2，删除短审计不需要的下游探测面，避免旧下游面约束影响短回放。所有冻结目录保留。
 ''')
+    with (root/'PROGRAM_VALIDATION.md').open('a') as f:
+        f.write(f"\n背景准备 {cost['background_preparation_seconds']:.3f} s；同500步progress耗时 {old_timing['elapsed_s']:.3f} → {new_timing['elapsed_s']:.3f} s（{100*cost['observed_progress_seconds_relative_change']:+.3f}%），仅一个含重诊断样本，不能视为稳定开销或外推大工况。新增rho平面内存按(Nx+1)(Ny+1)double，pending不回到全队列逐步扫描。\n")
     print(json.dumps({k:{n:v[n] for n in ('old_lab_error_keV','new_lab_error_keV','sigma_x_relative_error')} for k,v in summary.items()},indent=2))
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('root',type=Path);p.add_argument('aux',type=Path);a=p.parse_args();main(a.root.resolve(),a.aux.resolve())
+    p=argparse.ArgumentParser();p.add_argument('root',type=Path);p.add_argument('aux',type=Path);p.add_argument('audit',type=Path);a=p.parse_args();main(a.root.resolve(),a.aux.resolve(),a.audit.resolve())

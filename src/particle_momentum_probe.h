@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <unistd.h>
 #ifdef APRL_HAS_OPENMP
 #include <omp.h>
@@ -29,6 +30,7 @@ public:
   static bool selected(Double time) {
     const Settings& s=settings();
     if(s.directory.empty())return false;
+    if(s.firstOnly)return true;
     const auto step=static_cast<std::uint64_t>(std::floor(time/s.dt+1.e-7));
     return step%s.stride==0;
   }
@@ -36,6 +38,10 @@ public:
       const RelativisticParticleSI& after,const FieldVector<Double>& electric,
       const FieldVector<Double>& magnetic,Double time,Double dt) {
     const Settings& s=settings();
+    if(s.firstOnly) {
+      static thread_local std::unordered_set<std::uint64_t> seen;
+      if(!seen.insert(before.sourceId).second)return;
+    }
     Record r{};r.step=static_cast<std::uint64_t>(std::floor(time/s.dt+1.e-7));
     r.sourceId=before.sourceId;r.time=time;r.dt=dt;r.charge=before.charge;
     for(unsigned a=0;a<3;++a) {
@@ -53,11 +59,13 @@ public:
   }
 private:
   struct Settings {
-    std::string directory;Double dt=0.;std::uint64_t stride=20;
+    std::string directory;Double dt=0.;std::uint64_t stride=20;bool firstOnly=false;
     Settings() {
       const char* d=std::getenv("APRL_PARTICLE_MOMENTUM_PROBE");
       if(!d||!*d)return;
       directory=d;const char* t=std::getenv("APRL_PARTICLE_MOMENTUM_PROBE_DT");
+      const char* first=std::getenv("APRL_PARTICLE_MOMENTUM_PROBE_FIRST");
+      firstOnly=first&&std::string(first)=="1";
       if(!t)throw std::runtime_error("Momentum probe requires nominal field dt");
       char* end=nullptr;dt=std::strtod(t,&end);
       if(!end||*end||!(dt>0.)||!std::isfinite(dt))throw std::runtime_error("Invalid momentum probe dt");

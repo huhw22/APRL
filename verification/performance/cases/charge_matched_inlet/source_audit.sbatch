@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+#SBATCH --job-name=aprl-input-source-audit
+#SBATCH --partition=ssmb
+#SBATCH --nodes=1
+#SBATCH --ntasks=16
+#SBATCH --ntasks-per-node=16
+#SBATCH --cpus-per-task=8
+#SBATCH --exclusive
+#SBATCH --mem=0
+#SBATCH --time=00:23:00
+#SBATCH --no-requeue
+set -Eeuo pipefail
+root=$(realpath "${1:?Root}"); kind=${2:?Kind}
+source /public/home/wfollowm/APRL_Workspace/cluster.env
+export OMP_NUM_THREADS=8 OMP_DYNAMIC=FALSE OMP_PLACES=cores OMP_PROC_BIND=close
+export OMPI_MCA_btl=self,vader,tcp HDF5_USE_FILE_LOCKING=FALSE APRL_PROFILE_INTERVAL=0
+export OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1
+ulimit -s unlimited
+scontrol show job "$SLURM_JOB_ID" > "$root/${kind}_allocation.txt"
+timeout --signal=TERM --kill-after=20 1300 "$PYTHON_BIN" "$root/scripts/run_source_audit.py" "$root" "$kind" > "$root/${kind}_driver.log" 2>&1
