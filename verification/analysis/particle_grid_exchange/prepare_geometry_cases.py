@@ -6,7 +6,7 @@ p=argparse.ArgumentParser();p.add_argument('--workspace',type=Path,required=True
 ws=a.workspace.resolve();root=a.root.resolve();root.mkdir();(root/'scripts').mkdir()
 build=json.loads((a.build_review or ws/'results/particle_work_geometry_20261031/build-r1/COMPLETE.json').read_text());assert build['checks_passed']
 src=ws/'source/aprl';here=src/'verification/analysis/particle_grid_exchange';sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
-for name in ['run_geometry_cases.py','geometry_cases.sbatch','prepare_geometry_cases.py']:shutil.copy2(here/name,root/'scripts'/name)
+for name in ['run_geometry_cases.py','geometry_cases.sbatch','prepare_geometry_cases.py','linear_response_probe.py']:shutil.copy2(here/name,root/'scripts'/name)
 shutil.copy2(src/'verification/performance/cases/energy_transport_audit/review.py',root/'scripts/transport_review.py')
 shutil.copy2(src/'verification/performance/cases/energy_transport_audit/prepare.py',root/'scripts/prepare.py')
 for name,rel in [('report_discrete.py','verification/performance/cases/discrete_energy_ledger/report.py'),('review_discrete.py','verification/performance/cases/discrete_energy_ledger/review_discrete.py')]:shutil.copy2(src/rel,root/'scripts'/name)

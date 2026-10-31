@@ -76,5 +76,18 @@ for layout in ['native','mpi-small']:
      bound=512*np.finfo(float).eps*np.maximum(abs(x[n])+abs(y[n]),1e-100)
      assert np.all(abs(x[n]-y[n])<=bound),n
    comparisons[first.name+'__'+last.name]=item
-check();save(root/'COMPLETE.json',{'integrity_passed':True,'analysis_job':os.environ['SLURM_JOB_ID'],'physical_state_bitwise_pass':True,'comparisons':comparisons,'cases':all_results,'physics_method_changes':False,'scope':'Diagnostic correctness and unchanged physical outputs; not a coupling correction'})
+negative=root/'inconsistent-rank-setting';negative.mkdir()
+negative_card=yaml.safe_load((root/'native-undulator-off/run.yaml').read_text())
+negative_card['output']['manifest']=str(negative/'run-manifest.yaml')
+negative_card['mesh']['moving_window']['reference_directory']=str(negative/'reference')
+for key,folder in [('detectors','detectors'),('trajectory','trajectory'),('energy_ledger','ledger')]:negative_card[key]['directory']=str(negative/folder)
+(negative/'run.yaml').write_text(yaml.safe_dump(negative_card,sort_keys=False))
+wrapper=negative/'rank_env.py';wrapper.write_text('import os,sys\nrank=int(os.environ["SLURM_PROCID"])\nif rank==0:os.environ["APRL_PARTICLE_WORK_GEOMETRY"]=sys.argv[3]\nelse:os.environ.pop("APRL_PARTICLE_WORK_GEOMETRY",None)\nos.execv(sys.argv[1],[sys.argv[1],sys.argv[2]])\n')
+candidate=next(c['binary'] for c in plan['cases'] if c['mode']=='on');start=time.monotonic()
+with (negative/'aprl.log').open('x') as f:
+    result=subprocess.run(['timeout','--signal=TERM','--kill-after=5','30','srun','--mpi=pmix_v3','--exact','--ntasks=2','--cpus-per-task=1','--cpu-bind=cores','--kill-on-bad-exit=1',sys.executable,str(wrapper),candidate,str(negative/'run.yaml'),str(negative/'geometry')],stdout=f,stderr=subprocess.STDOUT,timeout=40)
+assert result.returncode not in [0,124,137] and 'identical valid settings on all ranks' in (negative/'aprl.log').read_text()
+save(negative/'RESULT.json',{'negative_control_passed':True,'seconds':time.monotonic()-start,'returncode':result.returncode,'guard':'Inconsistent per-rank diagnostic activation rejected before initialization without waiting for MPI neighbor traffic'})
+with (root/'linear-response.log').open('x') as f:subprocess.run([sys.executable,str(root/'scripts/linear_response_probe.py'),str(root/'linear-response')],check=True,stdout=f,stderr=subprocess.STDOUT,timeout=90)
+check();save(root/'COMPLETE.json',{'integrity_passed':True,'analysis_job':os.environ['SLURM_JOB_ID'],'physical_state_bitwise_pass':True,'comparisons':comparisons,'cases':all_results,'physics_method_changes':False,'scope':'Diagnostic correctness and unchanged physical outputs; separate classical linear-response toy is not a full PIC correction'})
 print('ALL COMPLETE',flush=True)
