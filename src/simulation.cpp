@@ -350,8 +350,10 @@ namespace aprl
        config_.particleRetirement.enabled ||
        config_.mesh.currentFilter!=EBCurrentFilter::None || checkpointEnabled_ ||
        !config_.checkpoint.restartFrom.empty());
-    const int geometryFlags[2]={geometryAuditDirectory?1:0,invalidGeometry?1:0};int globalGeometryFlags[2]={};
-    MPI_Allreduce(geometryFlags,globalGeometryFlags,2,MPI_INT,MPI_SUM,communicator_);
+    const int geometryFlags[3]={geometryAuditDirectory?1:0,invalidGeometry?1:0,config_.mesh.conservativeSourceCoupling?1:0};int globalGeometryFlags[3]={};
+    MPI_Allreduce(geometryFlags,globalGeometryFlags,3,MPI_INT,MPI_SUM,communicator_);
+    if(globalGeometryFlags[2]!=0&&globalGeometryFlags[2]!=size_)
+      throw std::invalid_argument("particle_coupling must agree on every MPI rank");
     if(globalGeometryFlags[1] || (globalGeometryFlags[0]!=0 && globalGeometryFlags[0]!=size_))
       throw std::invalid_argument("Geometry audit requires identical valid settings on all ranks, moving window, enabled ledger, feedback, and no filter/checkpoint/retirement/ballistic outside");
     if(config_.energyLedger.discreteOperatorAudit &&
@@ -366,8 +368,21 @@ namespace aprl
         config_.mesh.currentFilter!=EBCurrentFilter::None || checkpointEnabled_ ||
         !config_.checkpoint.restartFrom.empty()))
       throw std::invalid_argument("APRL_GRID_WORK_AUDIT requires a directory, moving window, ledger, unfiltered current and no checkpoint");
+    if(config_.mesh.conservativeSourceCoupling &&
+       (!config_.mesh.movingWindow.enabled || !config_.mesh.selfFieldFeedback ||
+        config_.mesh.fieldSolver!=EBMaxwellSolver::CowanZ ||
+        config_.mesh.currentFilter!=EBCurrentFilter::None ||
+        config_.mesh.ballisticOutsideTransverse || config_.particleRetirement.enabled ||
+        checkpointEnabled_ || !config_.checkpoint.restartFrom.empty() ||
+        geometryAuditDirectory || gridAuditDirectory || stageAuditDirectory))
+      throw std::invalid_argument("conservative-source requires moving Cowan, feedback, unfiltered current and no retirement/checkpoint/ballistic/legacy work probes");
     const Double initializationStart = performanceNow();
     initialize();
+    if(config_.mesh.conservativeSourceCoupling) {
+      if(incident_)throw std::invalid_argument("conservative-source does not support incident waves");
+      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory));
+      logRoot(communicator_,"[source-coupling] conservative-source; original release/migration/detectors; transactional trials and converged substep replay; original Cowan curls and committed CPML history once per step");
+    }
     if(geometryAuditDirectory) {
       if(incident_)throw std::invalid_argument("Particle geometry audit does not support incident fields");
       particleWorkGeometry_.reset(new ParticleWorkGeometryWriter(geometryAuditDirectory,rank_));
@@ -478,7 +493,8 @@ namespace aprl
           halo_->communicationSeconds() - communicationStart;
 
         if(particleWorkGeometry_)particleWorkGeometry_->exchangeFields(*fields_,communicator_);
-        pushDepositAndMigrate();
+        if(sourceCoupling_)solveConservativeSourceStep();
+        else pushDepositAndMigrate();
         if(particleWorkGeometry_)particleWorkGeometry_->finishStep(step_+1);
         if(config_.mesh.movingWindow.referenceSurfaceCurrent)
           applyMovingTransverseReferenceCurrent();
@@ -487,7 +503,8 @@ namespace aprl
           movingWindow_->particleHalo->clear(*fields_);
         stageStart = performanceNow();
         communicationStart = halo_->communicationSeconds();
-        halo_->advanceElectric(*fields_, config_.mesh.currentFilter);
+        if(sourceCoupling_)commitConservativeElectric();
+        else halo_->advanceElectric(*fields_, config_.mesh.currentFilter);
         if (incident_)
           incident_->correctAfterElectricUpdate(
             *fields_, sources_, localOriginBox_, timeBoxSI_, frame_);
@@ -547,6 +564,7 @@ namespace aprl
       }
 
     if(particleWorkGeometry_)particleWorkGeometry_->close();
+    if(sourceCoupling_)sourceCoupling_->close(step_);
     if(inletConstraintProbe)inletConstraintProbe->close();
     if(gridWorkAudit) {
       movingWindow_->fields->setBeforeInletObserver(nullptr,nullptr);
@@ -3927,7 +3945,7 @@ namespace aprl
       TrajectoryEvent event,
       ParticleBoundaryFace face)
   {
-    if (!trajectoryWriter_.isOpen() || particle.frozen) return;
+    if (!config_.trajectory.enabled || !trajectoryWriter_.isOpen() || particle.frozen) return;
     TrajectoryRecord record;
     record.particleId = particle.id;
     record.sourceId = particle.sourceId;
@@ -4908,14 +4926,10 @@ namespace aprl
                         particle.position, particle.properVelocity,
                         remaining);
                     else
-                      RelativisticBorisPusher::
-                        pushFromGridAndPrescribedLabSubcycled(
-                          particle, *fields_, localOriginBox_, sources_,
-                          frame_, activeStartTime, remaining,
-                          particleSubsteps_,
+                      pushParticle(
+                          particle, activeStartTime, remaining,
                           config_.energyLedger.enabled ?
                             &prescribedWork : 0,
-                          config_.mesh.selfFieldFeedback,
                           config_.energyLedger.enabled ? &result.borisWork : NULL,
                           auditEnabled ? &result.auditTrace : NULL);
                   }
@@ -4929,11 +4943,8 @@ namespace aprl
             particle.position, particle.properVelocity,
             globalGeometry_.dt);
         else
-          RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(
-            particle, *fields_, localOriginBox_, sources_, frame_,
-            timeBoxSI_, globalGeometry_.dt, particleSubsteps_,
-            config_.energyLedger.enabled ? &prescribedWork : 0,
-            config_.mesh.selfFieldFeedback,
+          pushParticle(
+            particle, timeBoxSI_, globalGeometry_.dt, config_.energyLedger.enabled ? &prescribedWork : 0,
             config_.energyLedger.enabled ? &result.borisWork : NULL,
             auditEnabled ? &result.auditTrace : NULL);
         if(particleWorkGeometry_)result.auditTrace.geometry.finish();
@@ -5307,12 +5318,8 @@ namespace aprl
                 RelativisticBorisPusher::pushPosition(
                   activeEnd.position, activeEnd.properVelocity, remaining);
               else
-                RelativisticBorisPusher::
-                  pushFromGridAndPrescribedLabSubcycled(
-                    activeEnd, *fields_, localOriginBox_, sources_, frame_,
-                    activeStartTime, remaining, particleSubsteps_,
-                    config_.energyLedger.enabled ? &prescribedWork : 0,
-                    config_.mesh.selfFieldFeedback,
+                pushParticle(
+                    activeEnd, activeStartTime, remaining, config_.energyLedger.enabled ? &prescribedWork : 0,
                     config_.energyLedger.enabled ? &borisWork : NULL,
                     auditEnabled ? &auditTrace : NULL);
             }

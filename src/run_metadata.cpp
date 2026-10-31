@@ -252,6 +252,8 @@ namespace aprl
                    << "  self_field_feedback: "
                    << (config.mesh.selfFieldFeedback ?
                        "true" : "false") << "\n";
+            if(config.mesh.conservativeSourceCoupling)
+              stream << "  particle_coupling: conservative-source\n";
             if (longitudinalLayout)
               {
                 const LongitudinalLayout& layout =

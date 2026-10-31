@@ -66,6 +66,12 @@ void Simulation::queueMovingConstraintWork(const FieldVector<Double>& start,
     displaced = displaced || sample.chargeDisplacement[axis] != 0.;
   }
   if (!displaced) return;
+  if(sourceCoupling_) {
+    FieldVector<Double> a(0.),b(0.);
+    for(unsigned axis=0;axis<3;++axis){const Double d=end[axis]-start[axis];a[axis]=start[axis]+first*d;b[axis]=start[axis]+last*d;}
+    sourceCoupling_->recordConstraint(a,b,charge,carrier);
+    return;
+  }
   FieldVector<Double> electric(0.), magnetic(0.);
   // Called inside pushDepositAndMigrate, while the old-E interpolation halo
   // is installed. B is ignored: magnetic forces do no path work.
@@ -81,6 +87,12 @@ void Simulation::finalizeMovingConstraintWork() {
   if (!movingWindow_ || !config_.energyLedger.enabled) return;
   auto& w = *movingWindow_;
   ConstraintTimer timer(w.constraintDiagnosticSeconds);
+  if(sourceCoupling_) {
+    const auto v=sourceCoupling_->finalizeConstraints();
+    w.frozenConstraintWork+=v[0];w.frozenConstraintAbsWork+=v[1];w.frozenConstraintSegments+=static_cast<std::uint64_t>(v[2]);
+    w.carrierConstraintWork+=v[3];w.carrierConstraintAbsWork+=v[4];w.carrierConstraintSegments+=static_cast<std::uint64_t>(v[5]);
+    return;
+  }
   // All ranks participate, including ranks with no samples. Reuse the small
   // neighbour-plane buffers; a local-only sample would clamp Ez at MPI faces.
   w.particleHalo->exchangeAndInstall(*fields_);

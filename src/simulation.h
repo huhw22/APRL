@@ -25,6 +25,7 @@
 #include "run_metadata.h"
 #include "trajectory_writer.h"
 #include "simulation_moving_window.h"
+#include "source_coupling.h"
 
 namespace aprl
 {
@@ -124,6 +125,13 @@ namespace aprl
 
     void redistributeParticles();
     void pushDepositAndMigrate();
+    void solveConservativeSourceStep();
+    void commitConservativeElectric();
+    void pushParticle(RelativisticParticleSI& p,Double time,Double dt,
+        Double* prescribed,BorisWork* work,ParticleSubstepObserver* observer) {
+      if(sourceCoupling_)sourceCoupling_->push(p,sources_,frame_,time,dt,particleSubsteps_,prescribed,work,observer);
+      else RelativisticBorisPusher::pushFromGridAndPrescribedLabSubcycled(p,*fields_,localOriginBox_,sources_,frame_,time,dt,particleSubsteps_,prescribed,config_.mesh.selfFieldFeedback,work,observer);
+    }
     void reportParticleBoundaryLosses() const;
     bool synchronizedStopRequested();
     bool configuredStopReached();
@@ -168,6 +176,7 @@ namespace aprl
     std::unique_ptr<ParticleOpenBoundary> particleBoundary_;
     std::unique_ptr<LabDetectorManager> detectors_;
     std::unique_ptr<ParticleWorkGeometryWriter> particleWorkGeometry_;
+    std::unique_ptr<ConservativeSourceCoupling> sourceCoupling_;
 
     TrajectoryWriter trajectoryWriter_;
     EnergyLedgerWriter energyLedgerWriter_;

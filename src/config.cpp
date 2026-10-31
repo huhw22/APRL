@@ -132,7 +132,7 @@ namespace aprl
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
             "resolution", "ballistic_outside_transverse",
-            "self_field_feedback", "moving_window"
+            "self_field_feedback", "moving_window", "particle_coupling"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
           if (longitudinal)
@@ -704,6 +704,7 @@ namespace aprl
       fieldSolver(EBMaxwellSolver::CowanZ),
       currentFilter(EBCurrentFilter::None),
       selfFieldFeedback(true),
+      conservativeSourceCoupling(false),
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -1028,6 +1029,12 @@ namespace aprl
       result.mesh.selfFieldFeedback =
         mesh["self_field_feedback"].as<bool>();
     const YAML::Node movingWindow = mesh["moving_window"];
+    if(mesh["particle_coupling"]) {
+      const auto method=mesh["particle_coupling"].as<std::string>();
+      if(method!="boris"&&method!="conservative-source")
+        throw configError(mesh["particle_coupling"],"particle_coupling must be boris or conservative-source");
+      result.mesh.conservativeSourceCoupling=method=="conservative-source";
+    }
     if (movingWindow)
       {
         if (movingWindow["enabled"])

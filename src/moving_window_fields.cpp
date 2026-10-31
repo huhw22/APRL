@@ -58,6 +58,35 @@ struct MovingWindowFields::Impl {
     std::array<long double,6> overwritePowerDelta{};
     bool energyStepFinished=false;
     std::uint64_t queries=0;
+    bool electricPreview=false,previewPresent=false;
+    struct PreviewDelta {unsigned axis;std::size_t index;Double value;};
+    std::vector<PreviewDelta> previewDelta;
+    std::vector<std::vector<Double>> previewHistory;
+
+    void previewElectric(EBFieldGrid& f) {
+      if(previewPresent)throw std::logic_error("Unconsumed electric boundary preview");
+      previewDelta.clear();
+      for(unsigned a=0;a<3;++a){const auto& v=component(f,a);
+        for(std::size_t k=0;k<v.nz();++k)for(std::size_t j=0;j<v.ny();++j)for(std::size_t i=0;i<v.nx();++i)
+          if(i<=owner.parameters.cells[0]+2||i+owner.parameters.cells[0]+3>=v.nx()||j<=owner.parameters.cells[1]+2||j+owner.parameters.cells[1]+3>=v.ny()||(owner.rank==0&&a<2&&k==0))
+            previewDelta.push_back({a,(k*v.ny()+j)*v.nx()+i,v(i,j,k)});
+      }
+      const auto count=checkpointHistoryCount();previewHistory.resize(count/2);
+      for(std::size_t h=count/2;h<count;++h)previewHistory[h-count/2]=checkpointHistory(h);
+      const auto oldQueries=queries;
+      try {
+        EBConvolutionalPML::afterElectricUpdate(f);
+        if(owner.rank==0)for(unsigned a=0;a<2;++a){auto& c=component(f,a);for(std::size_t j=0;j<c.ny();++j)for(std::size_t i=0;i<c.nx();++i)c(i,j,0)=reference(a,i,j,offset,step+1);}
+        for(auto& q:previewDelta)q.value=component(f,q.axis).data()[q.index]-q.value;
+      }catch(...){for(std::size_t h=count/2;h<count;++h)checkpointHistory(h).swap(previewHistory[h-count/2]);queries=oldQueries;throw;}
+      for(std::size_t h=count/2;h<count;++h)checkpointHistory(h).swap(previewHistory[h-count/2]);
+      queries=oldQueries;previewPresent=true;
+    }
+    void undoPreview(EBFieldGrid& f) {
+      if(!previewPresent)throw std::logic_error("Missing electric boundary preview");
+      for(const auto& q:previewDelta)component(f,q.axis).data()[q.index]-=q.value;
+      previewPresent=false;
+    }
 
     explicit Boundary(MovingWindowFields::Impl& p):EBConvolutionalPML(p.geometry,p.globalNz,
         p.localOffset,p.parameters,false,false),owner(p) {
@@ -112,6 +141,7 @@ struct MovingWindowFields::Impl {
     }
     void afterElectricUpdate(EBFieldGrid& f) override {
       if(phase!=Phase::Electric)throw std::logic_error("Moving-window electric phase mismatch");
+      if(electricPreview){previewElectric(f);return;}
       if(owner.discreteObserver)owner.discreteObserver(owner.discreteContext,"electric_curl_local",f,nullptr);
       if(owner.stageObserver)owner.stageObserver(owner.stageContext,"electric_curl_local",f);
       EBConvolutionalPML::afterElectricUpdate(f);
@@ -382,6 +412,15 @@ void MovingWindowFields::installBoundary(EBFieldGrid& f) {
   if(impl_->boundary)throw std::logic_error("Moving-window boundary already installed");
   std::unique_ptr<Impl::Boundary> p(new Impl::Boundary(*impl_));
   impl_->boundary=p.get();f.setBoundary(std::move(p));impl_->validate(f);
+}
+void MovingWindowFields::previewElectricBoundary(bool enabled) {
+  if(!impl_->boundary)throw std::logic_error("Missing moving boundary");
+  impl_->boundary->electricPreview=enabled;
+}
+void MovingWindowFields::undoPreviewElectricBoundary(EBFieldGrid& f) {impl_->validate(f);impl_->boundary->undoPreview(f);}
+void MovingWindowFields::commitPreparedElectricBoundary(EBFieldGrid& f) {
+  impl_->validate(f);if(impl_->boundary->electricPreview||impl_->boundary->previewPresent)throw std::logic_error("Electric preview not restored before commit");
+  impl_->boundary->afterElectricUpdate(f);
 }
 void MovingWindowFields::enableEnergyLedger(bool enabled) {
   if(impl_->boundary&&impl_->boundary->established)

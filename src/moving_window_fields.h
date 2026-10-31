@@ -79,6 +79,12 @@ public:
   MovingWindowFields& operator=(const MovingWindowFields&) = delete;
 
   void installBoundary(EBFieldGrid& fields);
+  // Source coupling: preview the zero-current electric boundary on reversible
+  // CPML histories; then undo its field increment and commit once, without a
+  // second Maxwell curl. Normal stepping never enters these methods.
+  void previewElectricBoundary(bool enabled);
+  void undoPreviewElectricBoundary(EBFieldGrid& fields);
+  void commitPreparedElectricBoundary(EBFieldGrid& fields);
   // Configure before the first beginStep. Disabled by default: no diagnostic
   // field traversal, extra MPI exchange, or timer is performed when disabled.
   void enableEnergyLedger(bool enabled = true);

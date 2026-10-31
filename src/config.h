@@ -74,6 +74,7 @@ namespace aprl
     /* Diagnostic control: keep evolving/depositing fields, but omit their
      * force on particles. Prescribed device fields remain active. */
     bool selfFieldFeedback;
+    bool conservativeSourceCoupling;
     /* Experimental finite-window boundary injection: particles outside the
      * transverse physical region remain ballistic until they enter it. */
     bool ballisticOutsideTransverse;
