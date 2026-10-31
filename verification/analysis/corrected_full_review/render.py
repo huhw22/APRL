@@ -56,30 +56,31 @@ def plot_spectra(cases,figs):
     fig.suptitle('Free drift at 0.5 m | full-plane raw lab E/B | identical physical aperture\nSolid: rectangular; dashed: energy-normalized Hann; DC included in totals',fontsize=11)
     fig.savefig(figs/'spectra_comparison.png',dpi=180);fig.savefig(figs/'spectra_comparison.pdf');plt.close(fig)
 
-def plot_particles(root,figs,p,energy):
+def plot_particles(root,figs,p,energy,title='19098 | all 41,732,775 particles | 0.55 m from entry to exit',exit_color=None,cohort_label='full bunch'):
+    output_color=exit_color or COLORS[-1]
     first,last=p['planes'];a=np.load(root/'science/particle_distribution.npz');edges=a['edges_loss_eV']/1000
     fig,axes=plt.subplots(2,2,figsize=(12,8),layout='constrained')
-    ax=axes[0,0];ax.stairs(a['count']/last['records']*100,edges,fill=True,color=COLORS[-1],alpha=.75)
+    ax=axes[0,0];ax.stairs(a['count']/last['records']*100,edges,fill=True,color=output_color,alpha=.75)
     ax.axvline(last['mean_loss_eV']/1000,color='#222222',ls='--',lw=.9)
     ax.set(xlabel='Per-particle lab energy loss [keV]',ylabel='Particles per displayed bin [%]',
       title=f'Matched IDs: mean {last["mean_loss_eV"]/1000:.4f} keV; std {last["std_loss_eV"]/1000:.3f} keV')
     ax.text(.03,.95,'Central 99.8% displayed; positive = loss',transform=ax.transAxes,va='top',fontsize=8)
     ax=axes[0,1];values=[first['projected_std_keV'],last['projected_std_keV']]
-    ax.bar(['Entry −0.05 m','Exit 0.5 m'],values,color=[COLORS[0],COLORS[-1]],width=.55)
+    ax.bar([f'Entry {first["plane_z_m"]:g} m',f'Exit {last["plane_z_m"]:g} m'],values,color=[COLORS[0],output_color],width=.55)
     for i,v in enumerate(values):ax.annotate(f'{v:.3f}',(i,v),ha='center',xytext=(0,4),textcoords='offset points',fontsize=9)
     ax.set(ylabel='Projected energy std [keV]',title='Total beam energy spread');ax.set_ylim(0,max(values)*1.15)
     ax=axes[1,0];labels=list(first['bunching']);x=np.arange(len(labels))
     ax.bar(x-.18,[first['bunching'][k]*100 for k in labels],width=.36,color=COLORS[0],label='Entry')
-    ax.bar(x+.18,[last['bunching'][k]*100 for k in labels],width=.36,color=COLORS[-1],label='Exit')
+    ax.bar(x+.18,[last['bunching'][k]*100 for k in labels],width=.36,color=output_color,label='Exit')
     ax.set(xticks=x,xticklabels=[k.replace('_',' ') for k in labels],ylabel='Bunching factor [%]',title='Two fixed wavelengths; arrival-time Fourier sums');ax.legend(frameon=False)
     ax=axes[1,1];factor=1e9
     vals=[energy['lab_change_from_boost_kinetic_J']*factor,energy['lab_change_from_boost_momentum_J']*factor,
       float(energy['exit_minus_entry_decimal_J']['particle_kinetic_lab_J'])*factor]
-    ax.bar(['Γ ΔK_boost','Γβ Δ(cPz_boost)','Lab total'],vals,color=[COLORS[0],COLORS[1],COLORS[-1]],width=.6)
+    ax.bar(['Γ ΔK_boost','Γβ Δ(cPz_boost)','Lab total'],vals,color=[COLORS[0],COLORS[1],output_color],width=.6)
     for i,v in enumerate(vals):ax.annotate(f'{v:+.4f}',(i,v),ha='center',va='top',xytext=(0,-4),textcoords='offset points',fontsize=9)
-    ax.axhline(0,color='#555555',lw=.7);ax.set(ylabel='Energy change of full bunch [nJ]',title='Lab energy change: kinetic and momentum terms');ax.set_ylim(min(vals)*1.25,0)
+    ax.axhline(0,color='#555555',lw=.7);ax.set(ylabel=f'Energy change of {cohort_label} [nJ]',title='Lab energy change: kinetic and momentum terms');ax.set_ylim(min(vals)*1.25,0)
     for ax in axes.flat:ax.grid(axis='y',alpha=.15)
-    fig.suptitle('19098 | all 41,732,775 particles | 0.55 m from entry to exit',fontsize=12)
+    fig.suptitle(title,fontsize=12)
     fig.savefig(figs/'particles_and_energy.png',dpi=180);fig.savefig(figs/'particles_and_energy.pdf');plt.close(fig)
 
 def main():
