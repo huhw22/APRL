@@ -16,7 +16,7 @@ using Clock=std::chrono::steady_clock;
 Double now(){return std::chrono::duration<Double>(Clock::now().time_since_epoch()).count();}
 struct Boundary:EBBoundaryOperator {
  EBConvolutionalPML cpml;DiscreteFieldLedger* ledger;unsigned magnetic=0,electric=0;
- Boundary(const EBGridGeometry& g,const EBCPMLParameters& p,DiscreteFieldLedger* l):cpml(g,g.nz,0,p,true,true),ledger(l){}
+ Boundary(const EBGridGeometry& g,const EBCPMLParameters& p,DiscreteFieldLedger* l):cpml(g,g.nz,0,p,false,false),ledger(l){}
  void afterMagneticUpdate(EBFieldGrid& f,const EBElectricHaloView& h) override {
   ++magnetic;if(ledger)DiscreteFieldLedger::observe(ledger,"magnetic_curl",f,&h);
   cpml.afterMagneticUpdate(f,h);if(ledger)DiscreteFieldLedger::observe(ledger,"magnetic_cpml",f,nullptr);
@@ -38,12 +38,22 @@ long double meshWork(const EBFieldGrid& f,const Electric& old,bool absolute=fals
 }
 // Undo the preceding trial's source, then install the newly deposited source.
 // Zero-current nodes are never rewritten. Curl and CPML are not reevaluated.
-long double currentSource(EBFieldGrid& f,Double sign,const Electric* old,long double* absolute) {
+struct CurrentBox {std::size_t lower[3],upper[3];};
+void clearBox(EBFieldGrid& f,const CurrentBox& box) {
+ for(auto* v:{&f.jx(),&f.jy(),&f.jz()}) {
+  const auto hiX=std::min(box.upper[0],v->nx()),hiY=std::min(box.upper[1],v->ny()),hiZ=std::min(box.upper[2],v->nz());
+#pragma omp parallel for collapse(2) schedule(static)
+  for(std::size_t k=box.lower[2];k<hiZ;++k)for(std::size_t j=box.lower[1];j<hiY;++j){auto* row=v->data()+(k*v->ny()+j)*v->nx();std::fill(row+box.lower[0],row+hiX,0.);}
+ }
+}
+long double currentSource(EBFieldGrid& f,Double sign,const Electric* old,long double* absolute,const CurrentBox& box) {
  YeeComponent* es[3]={&f.ex(),&f.ey(),&f.ez()};const YeeComponent* js[3]={&f.jx(),&f.jy(),&f.jz()};const auto& g=f.geometry();long double sum=0,absSum=0;
  for(unsigned a=0;a<3;++a) {
-  auto* e=es[a]->data();const auto* j=js[a]->data();const Double* o=old?(*old)[a].data():nullptr;const auto count=es[a]->size();
-#pragma omp parallel for reduction(+:sum,absSum) schedule(static)
-  for(std::ptrdiff_t i=0;i<(std::ptrdiff_t)count;++i)if(j[i]!=0.) {
+  auto* e=es[a]->data();const auto* j=js[a]->data();const Double* o=old?(*old)[a].data():nullptr;
+  const auto hiX=std::min(box.upper[0],es[a]->nx()),hiY=std::min(box.upper[1],es[a]->ny()),hiZ=std::min(box.upper[2],es[a]->nz());
+#pragma omp parallel for collapse(2) reduction(+:sum,absSum) schedule(static)
+  for(std::size_t k=box.lower[2];k<hiZ;++k)for(std::size_t y=box.lower[1];y<hiY;++y)for(std::size_t x=box.lower[0];x<hiX;++x) {
+   const auto i=(k*es[a]->ny()+y)*es[a]->nx()+x;if(j[i]==0.)continue;
    e[i]+=sign*(g.dt/SI::epsilon0)*j[i];
    if(o){const long double work=(long double)j[i]*(o[i]+(long double)e[i])/2;sum+=work;absSum+=std::abs(work);}
   }
@@ -67,7 +77,7 @@ void initializeFields(EBFieldGrid& f,const Vec& origin,Double physicalN,bool uni
   for(std::size_t k=0;k<v.nz();++k)for(std::size_t j=0;j<v.ny();++j)for(std::size_t i=0;i<v.nx();++i) {
    Vec x(0.);x[0]=origin[0]+(i+offsets[a][0])*g.dx;x[1]=origin[1]+(j+offsets[a][1])*g.dy;x[2]=origin[2]+(k+offsets[a][2])*g.dz;
    if(vacuum) {
-    const Double z=x[2]-(a<3?0.:-g.dt*SI::c/2);const Double pulse=1e5*std::exp(-std::pow(z/(8*g.dz),2)-std::pow(x[0]/(20*g.dx),2)-std::pow(x[1]/(20*g.dy),2));
+    const Double z=x[2]-(a<3?0.:-g.dt*SI::c/2);const Double pulse=1e5*std::exp(-std::pow(z/(8*g.dz),2));
     v(i,j,k)=a==1?pulse:(a==3?-pulse/SI::c:0.);continue;
    }
    Vec e=continuumE(x,a<3?0.:-g.dt/2,gammaD,betaD,physicalN,uniform,radius);
@@ -105,8 +115,10 @@ int main(int argc,char** argv) {
   if(kind!="sphere"&&kind!="drift"&&kind!="undulator"&&kind!="vacuum")throw std::runtime_error("Unknown physical case");
   configureComputeThreads(provided,threads);omp_set_num_threads(threads);const bool coupled=mode=="coupled",uniform=kind=="sphere",vacuum=kind=="vacuum";
   if(vacuum)count=0;
-  const Double dz=1.2543262415359034e-6,dt=dz/SI::c/divide,physicalN=vacuum?0.:(uniform?1e8:21300.),radius=uniform?60e-6:30e-6;
-  EBGridGeometry g(nx,nx,256,5e-6,5e-6,dz,dt,EBMaxwellSolver::CowanZ);EBFieldGrid f(g);Vec origin(0.);origin[0]=-g.nx*g.dx/2;origin[1]=-g.ny*g.dy/2;origin[2]=-g.nz*g.dz/2;
+  if(divide!=1.&&divide!=2.)throw std::runtime_error("Only the declared matched refinement is supported");
+  const Double dz=1.2543262415359034e-6/divide,dt=dz/SI::c,physicalN=vacuum?0.:(uniform?1e8:21300.),radius=uniform?60e-6:30e-6;
+  EBGridGeometry g(nx,nx,std::size_t(256*divide),5e-6,5e-6,dz,dt,EBMaxwellSolver::CowanZ);EBFieldGrid f(g);Vec origin(0.);origin[0]=-Double(g.nx)*g.dx/2;origin[1]=-Double(g.ny)*g.dy/2;origin[2]=-Double(g.nz)*g.dz/2;
+  if(!(origin[0]<0&&origin[1]<0&&origin[2]<0))throw std::runtime_error("Invalid centered physical origin");
   BoostFrameTransform frame;frame.setOriginsFromGamma(929.1305492858543,SI::c,0.,.0117,0.);
   Vec proper(0.);if(!uniform&&!vacuum){Vec lab(0.);lab[2]=std::sqrt(1174.171072271572*1174.171072271572-1);frame.properVelocityLabToBox(lab,proper);}
   const Double gammaD=BoostFrameTransform::gammaFromProperVelocity(proper),betaD=proper[2]/gammaD;
@@ -114,33 +126,61 @@ int main(int argc,char** argv) {
   SIFieldSourceSet sources;if(kind=="undulator"){auto magnet=SIMagneticElement::planarUndulatorFromK(1.092714657005,.0234,-.234,170,std::acos(-1.)/2);magnet.gaussianFringe=true;magnet.fringeRelativeCutoff=1e-9;magnet.prepare();sources.addPrescribedLabMagnet(magnet);}
   std::unique_ptr<DiscreteFieldLedger> ledger;if(audit)ledger.reset(new DiscreteFieldLedger(out,g,g.nz,0,8,8,MPI_COMM_WORLD));
   EBCPMLParameters cp;cp.cells[0]=cp.cells[1]=8;cp.cells[2]=0;auto* boundary=new Boundary(g,cp,ledger.get());f.setBoundary(std::unique_ptr<EBBoundaryOperator>(boundary));
-  EBZSlabHaloExchange halo(MPI_COMM_WORLD);halo.installPhysicalBoundaryMask(f);initializeFields(f,origin,vacuum?0:physicalN,uniform,radius,gammaD,betaD,vacuum);
+  // The custom wrapper already owns the correctly masked original CPML.
+  // installPhysicalBoundaryMask installs PEC and would replace this wrapper.
+  EBZSlabHaloExchange halo(MPI_COMM_WORLD);initializeFields(f,origin,vacuum?0:physicalN,uniform,radius,gammaD,betaD,vacuum);
+  Double initialElectricPeak=0.;for(const auto* c:{&f.ex(),&f.ey(),&f.ez()})for(std::size_t i=0;i<c->size();++i){if(!std::isfinite(c->data()[i]))throw std::runtime_error("Invalid initial field");initialElectricPeak=std::max(initialElectricPeak,std::abs(c->data()[i]));}
+  if(!(initialElectricPeak>0.))throw std::runtime_error("Degenerate zero-field physical control");
   ChargeConservingCurrentDepositor deposit(f,origin);Electric old;
+  std::vector<Vec> usedE(coupled?count:0);std::vector<MagneticSample> usedB(coupled?count:0);
   std::ofstream csv(out+"/history.csv");csv<<std::setprecision(21)<<"step,time_s,delta_particle_box_J,particle_grid_work_J,prescribed_work_J,mesh_mid_J,coupling_gap_J,pusher_residual_J,field_operator_residual_J,rms_radius_m,mean_uz,mean_lab_loss_eV,std_lab_loss_eV,outer_iterations,state_residual,work_residual,physical_step_s\n";
   long double cumulativeGrid=0,cumulativePrescribed=0,cumulativeMesh=0,cumulativeField=0,maximumContinuity=0;Double physicalSeconds=0;unsigned maxIterations=0,totalIterations=0,maxRoots=0;long double finalDelta=0,finalGap=0,finalPusher=0;Double finalMeanLoss=0,finalStdLoss=0;
-  const auto depositAll=[&](){f.clearCurrent();for(unsigned i=0;i<count;++i){const auto& x=trial[i].position;const auto& p=particles[i].position;for(unsigned a=0;a<3;++a){const Double s=a==2?g.dz:g.dx,n=a==2?g.nz:g.nx;const Double lo=a==2?2.:10.,hi=n-lo;if((x[a]-origin[a])/s<=lo||(x[a]-origin[a])/s>=hi)throw std::runtime_error("Particle entered excluded boundary collar");}deposit.depositSegment(p,x,trial[i].charge);}};
+  const auto depositAll=[&](){for(unsigned i=0;i<count;++i){const auto& x=trial[i].position;const auto& p=particles[i].position;for(unsigned a=0;a<3;++a){const Double s=a==2?g.dz:g.dx,n=a==2?g.nz:g.nx;const Double lo=a==2?2.:10.,hi=n-lo;if((x[a]-origin[a])/s<=lo||(x[a]-origin[a])/s>=hi)throw std::runtime_error("Particle entered excluded boundary collar");}deposit.depositSegment(p,x,trial[i].charge);}};
   for(unsigned step=0;step<steps;++step) {
-   const Double started=now();if(ledger)ledger->begin(f,step);if(coupled||audit)old=copyElectric(f);
+   const Double started=now();if(ledger)ledger->begin(f,step);if(coupled){old[0]=f.ex();old[1]=f.ey();old[2]=f.ez();}
    f.clearCurrent();halo.advanceMagnetic(f);long double grid=0,prescribed=0,absGrid=0,mid=0,absMid=0;unsigned iterations=1;Double stateResidual=0,workResidual=0;
    if(coupled&&count) {
     halo.advanceElectric(f); // The only electric curl/CPML update this step.
-    for(unsigned i=0;i<count;++i){trial[i]=particles[i];trial[i].position.pmv(g.dt*SI::c/BoostFrameTransform::gammaFromProperVelocity(particles[i].properVelocity),particles[i].properVelocity);}
+    Double xmin=1e100,ymin=1e100,zmin=1e100,xmax=-1e100,ymax=-1e100,zmax=-1e100;
+#pragma omp parallel for reduction(min:xmin,ymin,zmin) reduction(max:xmax,ymax,zmax) schedule(static)
+    for(unsigned i=0;i<count;++i){trial[i]=particles[i];trial[i].position.pmv(g.dt*SI::c/BoostFrameTransform::gammaFromProperVelocity(particles[i].properVelocity),particles[i].properVelocity);const auto& p=particles[i].position;xmin=std::min(xmin,p[0]);ymin=std::min(ymin,p[1]);zmin=std::min(zmin,p[2]);xmax=std::max(xmax,p[0]);ymax=std::max(ymax,p[1]);zmax=std::max(zmax,p[2]);}
+    CurrentBox box;const Double lower[3]={xmin,ymin,zmin},upper[3]={xmax,ymax,zmax},spacing[3]={g.dx,g.dy,g.dz};
+    for(unsigned axis=0;axis<3;++axis){const Double extent=axis==2?g.nz:g.nx;box.lower[axis]=std::size_t(std::max(0.,std::floor((lower[axis]-origin[axis]-SI::c*g.dt)/spacing[axis])-2));box.upper[axis]=std::size_t(std::min(extent+1,std::ceil((upper[axis]-origin[axis]+SI::c*g.dt)/spacing[axis])+3));}
     bool converged=false;
     for(iterations=1;iterations<=8;++iterations) {
      grid=prescribed=absGrid=0;stateResidual=0;unsigned roots=0;
 #pragma omp parallel for reduction(+:grid,prescribed,absGrid) reduction(max:stateResidual,roots) schedule(static)
      for(std::ptrdiff_t index=0;index<(std::ptrdiff_t)count;++index) {
       const unsigned i=index;const auto previous=trial[i];auto q=particles[i];Vec middle(particles[i].position);middle+=previous.position;middle*=.5;
-      Vec unused(0.),b(0.);f.sampleFieldsPosition(middle,origin,unused,b);
+      const auto magnetic=magneticSample(f,origin,middle,iterations>1);
       const Vec e=orbitElectric(f,&old,origin,particles[i].position,previous.position);
-      const auto work=push(q,e,b,sources,frame,step*g.dt,g.dt,5);grid+=work.grid;prescribed+=work.prescribed;absGrid+=work.absoluteGrid;roots=std::max(roots,work.rootIterations);
+      if(iterations>1){usedE[i]=e;usedB[i]=magnetic;}
+      const auto work=push(q,e,magnetic.value,sources,frame,step*g.dt,g.dt,5,audit&&iterations>1,iterations>1);grid+=work.grid;prescribed+=work.prescribed;absGrid+=work.absoluteGrid;roots=std::max(roots,work.rootIterations);
       for(unsigned a=0;a<3;++a){stateResidual=std::max(stateResidual,std::abs(q.properVelocity[a]-previous.properVelocity[a])/(1+std::abs(q.properVelocity[a])));stateResidual=std::max(stateResidual,std::abs(q.position[a]-previous.position[a])/g.dz);}
       trial[i]=q;
      }
-     maxRoots=std::max(maxRoots,roots);if(iterations>1)currentSource(f,+1,nullptr,nullptr);
-     depositAll();mid=currentSource(f,-1,&old,&absMid);
+     maxRoots=std::max(maxRoots,roots);if(iterations>1){currentSource(f,+1,nullptr,nullptr,box);clearBox(f,box);}
+     depositAll();mid=currentSource(f,-1,iterations>1?&old:nullptr,iterations>1?&absMid:nullptr,box);
+     // With particles we always form at least one current-coupled correction.
+     // The initial trial cannot be accepted; do not compute unused diagnostic
+     // or residual work for it. Later iterates still satisfy both tolerances.
+     if(iterations==1){stateResidual=workResidual=std::numeric_limits<Double>::infinity();continue;}
+     // Actual residual of the coupled self-field force equation, rather than
+     // the difference from the preceding iterate. For each substep |v|<=c,
+     // q*dt/(m*c)*(|delta E|+c*|delta B|) bounds the sum of its momentum
+     // equation defects. Analytic external midpoint evaluations already use
+     // the actual substep input state and are not lagged across iterations.
+     stateResidual=0;
+#pragma omp parallel for reduction(max:stateResidual) schedule(static)
+     for(std::ptrdiff_t index=0;index<(std::ptrdiff_t)count;++index) {
+      const unsigned i=index;Vec middle(particles[i].position);middle+=trial[i].position;middle*=.5;
+      Vec e=orbitElectric(f,&old,origin,particles[i].position,trial[i].position);e-=usedE[i];
+      const Double db=magneticDifferenceBound(f,origin,middle,usedB[i]);
+      const Double defect=std::abs(particles[i].charge/particles[i].mass)*g.dt/SI::c*(std::sqrt(e.norm2())+SI::c*db);
+      stateResidual=std::max(stateResidual,defect);
+     }
      workResidual=(Double)(std::abs(grid-mid)/std::max(absGrid+absMid,1e-100L));
-     if(stateResidual<1e-9&&workResidual<1e-8){converged=true;break;}
+     if(stateResidual<1e-13&&workResidual<1e-8){converged=true;break;}
     }
     if(!converged)throw std::runtime_error("Source/particle fixed point failed declared tolerances");
    }else {
@@ -153,10 +193,10 @@ int main(int argc,char** argv) {
      }
      depositAll();
     }
-    halo.advanceElectric(f);if(audit)mid=meshWork(f,old);
+    halo.advanceElectric(f);
    }
-   if(ledger){ledger->finishElectric(f);ledger->afterRemap(f);const auto& r=ledger->lastRecord();cumulativeField+=r.residual;if(std::abs(mid-r.jMid)>1e-11L*std::max(std::abs(mid),1e-30L))throw std::runtime_error("Independent mesh-work disagrees with original ledger");}
-   physicalSeconds+=now()-started;maxIterations=std::max(maxIterations,iterations);totalIterations+=iterations;
+   if(ledger){ledger->finishElectric(f);ledger->afterRemap(f);const auto& r=ledger->lastRecord();cumulativeField+=r.residual;if(coupled){if(std::abs(mid-r.jMid)>1e-11L*std::max(std::abs(mid),1e-30L))throw std::runtime_error("Independent mesh-work disagrees with original ledger");}else mid=r.jMid;}
+   const Double physicalStepSeconds=now()-started;physicalSeconds+=physicalStepSeconds;maxIterations=std::max(maxIterations,iterations);totalIterations+=iterations;
    if(audit&&count&&(step==0||step+1==steps||step==steps/2)) {
     YeeComponent rho0(g.nx+1,g.ny+1,g.nz+1),rho1(g.nx+1,g.ny+1,g.nz+1);rho0.fill(0.);rho1.fill(0.);
     for(unsigned i=0;i<count;++i){deposit.depositCharge(particles[i].position,particles[i].charge,rho0);deposit.depositCharge(trial[i].position,trial[i].charge,rho1);}
@@ -171,7 +211,7 @@ int main(int argc,char** argv) {
    }
    finalMeanLoss=count?(Double)(labLoss/count):0.;finalStdLoss=count?(Double)std::sqrt(std::max(0.L,labLoss2/count-labLoss*labLoss/count/count)):0.;
    finalDelta=delta;finalGap=cumulativeGrid-cumulativeMesh;finalPusher=delta-cumulativeGrid-cumulativePrescribed;
-   csv<<step+1<<','<<(step+1)*g.dt<<','<<delta<<','<<cumulativeGrid<<','<<cumulativePrescribed<<','<<cumulativeMesh<<','<<finalGap<<','<<finalPusher<<','<<cumulativeField<<','<<(count?std::sqrt(r2/count):0)<<','<<(count?uz/count:0)<<','<<finalMeanLoss<<','<<finalStdLoss<<','<<iterations<<','<<stateResidual<<','<<workResidual<<','<<now()-started<<'\n';
+   csv<<step+1<<','<<(step+1)*g.dt<<','<<delta<<','<<cumulativeGrid<<','<<cumulativePrescribed<<','<<cumulativeMesh<<','<<finalGap<<','<<finalPusher<<','<<cumulativeField<<','<<(count?std::sqrt(r2/count):0)<<','<<(count?uz/count:0)<<','<<finalMeanLoss<<','<<finalStdLoss<<','<<iterations<<','<<stateResidual<<','<<workResidual<<','<<physicalStepSeconds<<'\n';
   }
   csv.close();if(ledger)ledger->close(true);if(boundary->magnetic!=steps||boundary->electric!=steps)throw std::runtime_error("Repeated wave/CPML update");
   if(audit&&count){std::ofstream file(out+"/particles-final.csv");file<<std::setprecision(17)<<"id,x,y,z,ux,uy,uz\n";for(const auto& q:particles)file<<q.id<<','<<q.position[0]<<','<<q.position[1]<<','<<q.position[2]<<','<<q.properVelocity[0]<<','<<q.properVelocity[1]<<','<<q.properVelocity[2]<<'\n';}

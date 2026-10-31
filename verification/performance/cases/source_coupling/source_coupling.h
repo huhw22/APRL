@@ -22,6 +22,29 @@ inline long double chargeWork(Double q,const Vec& e,const Vec& x,const Vec& y) {
  long double s=0;for(unsigned a=0;a<3;++a)s+=(long double)q*e[a]*((long double)y[a]-x[a]);return s;
 }
 inline Electric copyElectric(const EBFieldGrid& f) {return {{f.ex(),f.ey(),f.ez()}};}
+struct MagneticSample {Vec value=Vec(0.),maximum=Vec(0.),point=Vec(0.);int cell[2][3];};
+inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,const Vec& position,bool bounds=true) {
+ MagneticSample result;result.point=position;const auto& g=f.geometry();const Double ds[3]={g.dx,g.dy,g.dz};Double fraction[2][3];
+ for(unsigned half=0;half<2;++half)for(unsigned d=0;d<3;++d){const Double x=(position[d]-origin[d])/ds[d]-.5*half;result.cell[half][d]=(int)std::floor(x);fraction[half][d]=x-result.cell[half][d];}
+ const YeeComponent* fields[3]={&f.bx(),&f.by(),&f.bz()};
+ for(unsigned axis=0;axis<3;++axis) {
+  const unsigned hx=axis==0?0:1,hy=axis==1?0:1,hz=axis==2?0:1;
+  for(unsigned k=0;k<2;++k)for(unsigned j=0;j<2;++j)for(unsigned i=0;i<2;++i) {
+   const Double x=i?fraction[hx][0]:1-fraction[hx][0],y=j?fraction[hy][1]:1-fraction[hy][1],z=k?fraction[hz][2]:1-fraction[hz][2];
+   const Double b=(*fields[axis])(result.cell[hx][0]+i,result.cell[hy][1]+j,result.cell[hz][2]+k);
+   result.value[axis]+=x*y*z*b;if(bounds)result.maximum[axis]=std::max(result.maximum[axis],std::abs(b));
+  }
+ }
+ return result;
+}
+// A rigorous trilinear Lipschitz bound while both points use the same cell.
+// Otherwise evaluate the actual new sample. B nodes do not change in this loop.
+inline Double magneticDifferenceBound(const EBFieldGrid& f,const Vec& origin,const Vec& point,const MagneticSample& old) {
+ const auto& g=f.geometry();const Double ds[3]={g.dx,g.dy,g.dz};bool same=true;
+ for(unsigned half=0;half<2;++half)for(unsigned d=0;d<3;++d)if((int)std::floor((point[d]-origin[d])/ds[d]-.5*half)!=old.cell[half][d])same=false;
+ if(!same){const auto fresh=magneticSample(f,origin,point);Vec difference=fresh.value;difference-=old.value;return std::sqrt(difference.norm2())+64*std::numeric_limits<Double>::epsilon()*(std::sqrt(old.maximum.norm2())+std::sqrt(fresh.maximum.norm2()));}
+ Double sum=0;for(unsigned d=0;d<3;++d)sum+=std::abs(point[d]-old.point[d])/ds[d];return (2*sum+64*std::numeric_limits<Double>::epsilon())*std::sqrt(old.maximum.norm2());
+}
 
 // Exact analytic orbit average of the first-order depositor-adjoint electric
 // interpolant. Inside each cell the transverse product is quadratic along a
@@ -66,8 +89,8 @@ inline Vec orbitElectric(const EBFieldGrid& f,const Electric* old,
 // Lapenta--Markidis mean velocity, with the local scalar equation solved to
 // roundoff. It is the momentum equation in RelSIM Appendix A, not its approximate
 // global response. The magnetic force and position share the energy velocity.
-inline unsigned momentum(Vec& u,const Vec& e,const Vec& magnetic,Double q,Double m,Double h) {
- const Vec before(u);const Double g0=BoostFrameTransform::gammaFromProperVelocity(before);
+inline unsigned momentum(Vec& u,const Vec& e,const Vec& magnetic,Double q,Double m,Double h,Double knownGamma=0.) {
+ const Vec before(u);const Double g0=knownGamma>0.?knownGamma:BoostFrameTransform::gammaFromProperVelocity(before);
  Vec kick(e);kick*=q*h/(2*m*SI::c);Vec b(magnetic);b*=q*h/(2*m);
  Vec a(before);a+=kick;const Vec axb=cross(a,b);
  const Double b2=scalar(b,b),ka=scalar(kick,a),kb=scalar(kick,b),ab=scalar(a,b),kcross=scalar(kick,axb);
@@ -92,8 +115,8 @@ struct PushWork {
  long double grid=0.,prescribed=0.,absoluteGrid=0.;unsigned rootIterations=0;
 };
 inline PushWork push(RelativisticParticleSI& particle,const Vec& gridE,const Vec& gridB,
- const SIFieldSourceSet& sources,const BoostFrameTransform& frame,Double time,Double dt,unsigned substeps) {
- PushWork work;const Double h=dt/substeps;
+ const SIFieldSourceSet& sources,const BoostFrameTransform& frame,Double time,Double dt,unsigned substeps,bool prescribedWork=true,bool gridWork=true) {
+ PushWork work;const Double h=dt/substeps;const Vec firstPosition(particle.position);Double absoluteGrid=0.;
  for(unsigned s=0;s<substeps;++s) {
   const Vec beforeU(particle.properVelocity),beforeX(particle.position);
   const Double g0=BoostFrameTransform::gammaFromProperVelocity(beforeU);
@@ -104,13 +127,16 @@ inline PushWork push(RelativisticParticleSI& particle,const Vec& gridE,const Vec
   // current/particle fixed point and its residual is checked independently.
   sources.addPrescribedBox(knownMidpoint,time+(s+.5)*h,frame,externalE,externalB);
   Vec totalE(gridE);totalE+=externalE;Vec totalB(gridB);totalB+=externalB;
-  work.rootIterations=std::max(work.rootIterations,momentum(particle.properVelocity,totalE,totalB,particle.charge,particle.mass,h));
+  work.rootIterations=std::max(work.rootIterations,momentum(particle.properVelocity,totalE,totalB,particle.charge,particle.mass,h,g0));
   const Double g1=BoostFrameTransform::gammaFromProperVelocity(particle.properVelocity);
   Vec sum(beforeU);sum+=particle.properVelocity;particle.position.pmv(h*SI::c/(g0+g1),sum);
-  const auto grid=chargeWork(particle.charge,gridE,beforeX,particle.position);
-  work.grid+=grid;work.absoluteGrid+=std::abs(grid);
-  work.prescribed+=chargeWork(particle.charge,externalE,beforeX,particle.position);
+  // An absolute leaf-work bound is needed for stopping, not its extended
+  // precision decomposition. The actual net held-field work telescopes.
+  if(gridWork){Double subwork=0.;for(unsigned a=0;a<3;++a)subwork+=particle.charge*gridE[a]*(particle.position[a]-beforeX[a]);absoluteGrid+=std::abs(subwork);}
+  if(prescribedWork)work.prescribed+=chargeWork(particle.charge,externalE,beforeX,particle.position);
  }
+ if(gridWork)work.grid=chargeWork(particle.charge,gridE,firstPosition,particle.position);
+ work.absoluteGrid=absoluteGrid;
  return work;
 }
 }

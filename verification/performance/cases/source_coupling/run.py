@@ -2,6 +2,7 @@
 """Frozen, serial small-case campaign. No production binary or input changes."""
 import hashlib,json,os,subprocess,sys,time
 from pathlib import Path
+import numpy as np
 root=Path(sys.argv[1]).resolve();assert os.environ.get('SLURM_JOB_ID')
 plan=json.loads((root/'plan.json').read_text());frozen=json.loads((root/'FROZEN.json').read_text())
 def check():
@@ -20,13 +21,26 @@ run([*launcher,sys.executable,str(root/'scripts/binding.py'),str(root/'binding.j
 binding=json.loads((root/'binding.json').read_text());assert binding['distinct_physical_cores']>=8
 results={}
 for case in plan['cases']:
- name=case['name'];directory=root/name;directory.mkdir();started=time.monotonic()
- run([*launcher,str(build/'prototype'),str(directory),case['kind'],case['mode'],str(case['particles']),str(case['steps']),str(int(case['audit'])),'8',str(case['dt_divisor']),str(case['nx'])],name+'/aprl.log',case['limit_seconds'])
+ name=case['name'];directory=root/name;started=time.monotonic()
+ reused=case.get('reuse_closed_baseline',case.get('reuse_closed_reference'))
+ if reused:
+  previous=Path(reused);saved=json.loads((previous/'RESULT.json').read_text())
+  assert saved['complete'] and saved['mode']==case['mode'] and saved['steps']==case['steps'] and saved['particles']==case['particles'] and saved['kind']==case['kind']
+  directory.symlink_to(previous,target_is_directory=True)
+ else:
+  directory.mkdir()
+  run([*launcher,str(build/'prototype'),str(directory),case['kind'],case['mode'],str(case['particles']),str(case['steps']),str(int(case['audit'])),'8',str(case['dt_divisor']),str(case['nx'])],name+'/aprl.log',case['limit_seconds'])
  result=json.loads((directory/'RESULT.json').read_text());assert result['complete']
  if case['audit']:
   assert result['relative_continuity_residual_max']<5e-12
   assert (directory/'discrete-field-rank-00000.complete').read_text().split()==['1',str(case['steps'])]
+  ledger=np.genfromtxt(directory/'discrete-field-rank-00000.csv',delimiter=',',names=True)
+  for field in ['electric','magnetic']:
+   error=ledger['max_'+field+'_prediction_error_'+('V_per_m' if field=='electric' else 'T')]
+   scale=ledger[field+'_prediction_scale_'+('V_per_m' if field=='electric' else 'T')]
+   assert np.all(error<=1024*np.finfo(float).eps*np.maximum(scale,1e-300)),field
  assert result['magnetic_CPML_calls']==case['steps']==result['electric_CPML_calls']
+ if reused:result['reused_closed_case']=reused
  results[name]=result;print('COMPLETE',name,'wall_s',time.monotonic()-started,'step_s',result['seconds_per_step'],'outer',result['maximum_outer_iterations'],flush=True)
  if name=='vacuum-coupled':assert results['vacuum-baseline']['field_hash']==result['field_hash']
  save(root/'PARTIAL_CLOSED_CASES.json',results)

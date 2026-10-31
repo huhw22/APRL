@@ -9,6 +9,7 @@
 #SBATCH --time=00:25:00
 #SBATCH --no-requeue
 set -Eeuo pipefail
+ulimit -c 0
 root=$(realpath "${1:?frozen campaign}")
 source /public/home/wfollowm/APRL_Workspace/cluster.env
 export OMP_NUM_THREADS=8 OMP_DYNAMIC=FALSE OMP_PLACES=cores OMP_PROC_BIND=close
