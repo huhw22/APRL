@@ -4,8 +4,16 @@
 #include <stdexcept>
 #include <sstream>
 namespace aprl {
+bool Simulation::conservativeLongitudinalHandoff(const ParticleBoundaryHit& hit,
+    const FieldVector<Double>& end) const {
+ if(!sourceCoupling_||!movingWindow_||static_cast<unsigned>(hit.face)<4)return false;
+ // Preserve transverse CPML damping and its original first-entry policy.
+ // A pure longitudinal handoff completes the already performed field step.
+ for(unsigned a=0;a<2;++a)if(end[a]<particleCPML_->physicalLower(a)||end[a]>particleCPML_->physicalUpper(a))return false;
+ return true;
+}
 void Simulation::solveConservativeSourceStep() {
- auto& coupling=*sourceCoupling_;coupling.begin(*fields_,localOriginBox_,particles_);
+ auto& coupling=*sourceCoupling_;coupling.begin(*fields_,localOriginBox_,particles_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]);
  // Only the zero-current electric curl is evaluated. The reversible boundary
  // preview keeps its phase and CPML histories for the one later real commit.
  movingWindow_->particleHalo->clear(*fields_);

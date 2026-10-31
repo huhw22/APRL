@@ -4754,6 +4754,8 @@ namespace aprl
         }
 
       depositor.depositSegment(segmentStart, segmentEnd, particle.charge);
+      if(sourceCoupling_&&config_.energyLedger.enabled&&!particle.frozen)
+        sourceCoupling_->recordActiveSegment(segmentStart,segmentEnd,particle.charge);
       if (movingWindow_ && config_.energyLedger.enabled && particle.frozen)
         queueMovingConstraintWork(segmentStart, segmentEnd,
           particle.charge, false);
@@ -5161,10 +5163,12 @@ namespace aprl
             selectTerminal(diagnosticBoundaryHits.entersRetirement,
                            diagnosticBoundaryHits.retirementHit,
                            TrajectoryEvent::RetirementEntry);
+            const bool fullLongitudinalHandoff = hasTerminalEvent &&
+              conservativeLongitudinalHandoff(diagnosticHit,particle.position);
             if (config_.energyLedger.enabled)
               energyLedgerPrescribedWork_ +=
                 static_cast<long double>(prescribedWork) *
-                static_cast<long double>(hasTerminalEvent ?
+                static_cast<long double>(hasTerminalEvent && !fullLongitudinalHandoff ?
                   terminalFraction : 1.0);
 
             RelativisticParticleSI diagnosticEnd(particle);
@@ -5178,8 +5182,14 @@ namespace aprl
                   globalGeometry_.dt;
                 if (config_.energyLedger.enabled)
                   {
-                    const ParticleEnergyMoment removed = result.auditTrace.at(
-                      diagnosticTime, particle, frame_);
+                    if(fullLongitudinalHandoff)
+                      sourceCoupling_->recordLongitudinalHandoff(particle.id,
+                        diagnosticHit.position,
+                        diagnosticBoundaryHits.entersCpml &&
+                        std::abs(diagnosticBoundaryHits.cpmlHit.fraction-terminalFraction)<=crossingTolerance);
+                    const ParticleEnergyMoment removed = fullLongitudinalHandoff ?
+                      ParticleEnergyMoment::sample(particle,frame_) : result.auditTrace.at(
+                        diagnosticTime, particle, frame_);
                     energyLedgerRemovedMoment_.add(removed);
                     const RelativisticParticleSI& beginning = particles_[index];
                     const Double gammaBeginning =
@@ -5199,7 +5209,7 @@ namespace aprl
                       static_cast<long double>(particle.properVelocity.norm2()) /
                       static_cast<long double>(gammaEnd + 1.0);
                     const long double fraction = static_cast<long double>(
-                      diagnosticHit.fraction);
+                      fullLongitudinalHandoff ? 1.0 : diagnosticHit.fraction);
                     energyLedgerRemovedKinetic_ += kineticBeginning + fraction *
                       (kineticEnd - kineticBeginning);
                     energyLedgerRemovedTotal_ += rest *
@@ -5209,7 +5219,7 @@ namespace aprl
                   }
               }
             if (config_.energyLedger.enabled)
-              energyLedgerBorisWork_.add(hasTerminalEvent ? result.auditTrace.prefix(
+              energyLedgerBorisWork_.add(hasTerminalEvent && !fullLongitudinalHandoff ? result.auditTrace.prefix(
                 diagnosticTime, &energyLedgerPartialWorkSubsteps_) : result.borisWork);
             if (detectors_ && detectors_->hasEnergyPlanes() && hasActiveSegment) {
               if (result.auditTrace.observedSubsteps)
@@ -5227,7 +5237,8 @@ namespace aprl
             if (hasTerminalEvent && config_.trajectory.enabled)
               {
                 appendTrajectoryEvent(
-                  diagnosticEnd, diagnosticTime,
+                  fullLongitudinalHandoff ? particle : diagnosticEnd,
+                  fullLongitudinalHandoff ? timeBoxSI_+globalGeometry_.dt : diagnosticTime,
                   terminalEvent, diagnosticHit.face);
               }
             // Without an activation kink, the diagnostic start and time
@@ -5325,6 +5336,8 @@ namespace aprl
             }
           Double auditStop = timeBoxSI_ + globalGeometry_.dt;
           bool auditTerminal = false;
+          bool fullLongitudinalHandoff = false, handoffCarrier = false;
+          ParticleBoundaryHit auditHit;
           if (auditEnabled && !config_.mesh.ballisticOutsideTransverse) {
             ParticleBoundaryHit cpml, outer, retirement;
             const bool entersCpml = config_.mesh.movingWindow.enabled ?
@@ -5337,21 +5350,23 @@ namespace aprl
               activeEnd.position,transfer.activationKinkFraction,
               config_.particleRetirement.entranceZ,retirement);
             Double fraction = 1.;
-            const auto selectAudit = [&](bool hit, const ParticleBoundaryHit& crossing) {
+            const auto selectAudit = [&](bool hit, const ParticleBoundaryHit& crossing, bool carrier) {
               if (hit && crossing.fraction <= fraction + crossingTolerance) {
-                auditTerminal=true; fraction=crossing.fraction;
+                auditTerminal=true; fraction=crossing.fraction;auditHit=crossing;handoffCarrier=carrier;
               }
             };
-            selectAudit(exitsOuter,outer); selectAudit(entersCpml,cpml);
-            selectAudit(entersRetirement,retirement);
+            selectAudit(exitsOuter,outer,false); selectAudit(entersCpml,cpml,true);
+            selectAudit(entersRetirement,retirement,false);
             if (auditTerminal) auditStop=activeStartTime+fraction*remaining;
+            fullLongitudinalHandoff=auditTerminal&&conservativeLongitudinalHandoff(auditHit,activeEnd.position);
           }
           if (config_.energyLedger.enabled) {
             energyLedgerPrescribedWork_ += prescribedWork;
-            energyLedgerBorisWork_.add(auditTerminal ? auditTrace.prefix(
+            energyLedgerBorisWork_.add(auditTerminal && !fullLongitudinalHandoff ? auditTrace.prefix(
               auditStop,&energyLedgerPartialWorkSubsteps_) : borisWork);
             if (auditTerminal) {
-              const auto removed=auditTrace.at(auditStop,activeEnd,frame_);
+              if(fullLongitudinalHandoff)sourceCoupling_->recordLongitudinalHandoff(activeEnd.id,auditHit.position,handoffCarrier);
+              const auto removed=fullLongitudinalHandoff ? ParticleEnergyMoment::sample(activeEnd,frame_) : auditTrace.at(auditStop,activeEnd,frame_);
               energyLedgerRemovedMoment_.add(removed);
               energyLedgerRemovedKinetic_+=removed.kineticBox;
               energyLedgerRemovedTotal_+=removed.totalBox;

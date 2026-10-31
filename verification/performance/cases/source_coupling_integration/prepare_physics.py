@@ -4,7 +4,7 @@ import argparse,copy,json,shutil,subprocess,sys
 from pathlib import Path
 import yaml
 from prepare import sha,save
-p=argparse.ArgumentParser();p.add_argument('root',type=Path);p.add_argument('build_record',type=Path);p.add_argument('preflight',type=Path);a=p.parse_args();root=a.root.resolve();root.mkdir(parents=True);here=Path(__file__).resolve().parent;scripts=root/'scripts';scripts.mkdir()
+p=argparse.ArgumentParser();p.add_argument('root',type=Path);p.add_argument('build_record',type=Path);p.add_argument('preflight',type=Path);p.add_argument('--only',nargs='+',choices=['uniform','converging','gaussian','q0p1','q0p01','q0p001']);a=p.parse_args();root=a.root.resolve();root.mkdir(parents=True);here=Path(__file__).resolve().parent;scripts=root/'scripts';scripts.mkdir()
 brec=a.build_record.resolve();built=json.loads((brec/'COMPLETE.json').read_text());assert built['passed'];ws=Path(json.loads((brec/'plan.json').read_text())['workspace']);binary=Path(built['binary']);assert sha(binary)==built['binary_sha256'];preflight=a.preflight.resolve();assert json.loads((preflight/'COMPLETE.json').read_text())['program_preflight_pass']
 for n in ['prepare.py','run_physics.py','physics.sbatch','analyze_closed.py','binding.py']:shutil.copy2(here/n,scripts/n)
 for n in ['launcher.py','model.py']:shutil.copy2(here.parent/'space_charge_physics'/n,scripts/n)
@@ -12,6 +12,7 @@ for src,dst in [(here.parent/'space_charge_physics/analyze.py','analyze_particle
 subprocess.run([sys.executable,'-B','-c','import report_discrete, launcher, analyze_closed, analyze_particles'],cwd=scripts,check=True)
 bench=ws/'results/energy_ledger_test_record_20261030/physical_benchmarks';old=bench/'charge_matched_inlet_20261030';scaling=bench/'space_charge_scaling_20261030';cases={}
 for name,reference in [(x,old/(x+'_full')) for x in ['uniform','converging','gaussian']]+[(x,scaling/x) for x in ['q0p1','q0p01','q0p001']]:
+ if a.only and name not in a.only:continue
  d=root/name;d.mkdir();(d/'momentum').mkdir();cfg=yaml.safe_load((reference/'run.yaml').read_text());beam=copy.deepcopy(cfg['beam'])
  def rewrite(x):
   if isinstance(x,dict):return {k:rewrite(v) for k,v in x.items()}
@@ -21,6 +22,8 @@ for name,reference in [(x,old/(x+'_full')) for x in ['uniform','converging','gau
  audit=bench/'charge_matched_source_audit_20261030_r2'/(name+'_on')/'FIRST_SOURCE_STATES.npy'
  cases[name]={'directory':str(d),'original':str(reference),'steps':json.loads((d/'case.json').read_text())['geometry']['expected_stop_step'],'timeout_s':2700,'first_source_reference':str(audit) if audit.exists() else None}
 plan={'workspace':str(ws),'build':str(binary.parent),'binary':str(binary),'binary_sha256':sha(binary),'binding_probe':str(ws/'build/cluster-tools/binding_probe'),'preflight':str(preflight),'cases':cases,'jobs':{'uniform_and_scaling':['uniform','q0p1','q0p01','q0p001'],'converging':['converging'],'gaussian':['gaussian']},'nominal_dt_s':1.2543262415359034e-6/299792458.,'scope':'Original full uniform/converging/Gaussian and low-charge physical cards, only coupling method and output locations changed; no theory retuning'}
+plan['jobs']={group:[name for name in names if name in cases] for group,names in plan['jobs'].items() if any(name in cases for name in names)}
+plan['selected_cases']=list(cases)
 save(root/'plan.json',plan);files=[root/'plan.json',binary,*scripts.iterdir()]
 for q in cases.values():
  d=Path(q['directory']);files.extend([d/'run.yaml',d/'case.json',d/'reference_input/expected_events.npz',Path(yaml.safe_load((d/'run.yaml').read_text())['beam']['input']['file'])])

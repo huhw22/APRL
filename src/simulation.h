@@ -127,6 +127,8 @@ namespace aprl
     void pushDepositAndMigrate();
     void solveConservativeSourceStep();
     void commitConservativeElectric();
+    bool conservativeLongitudinalHandoff(const ParticleBoundaryHit&,
+        const FieldVector<Double>& fullEnd) const;
     void pushParticle(RelativisticParticleSI& p,Double time,Double dt,
         Double* prescribed,BorisWork* work,ParticleSubstepObserver* observer) {
       if(sourceCoupling_)sourceCoupling_->push(p,sources_,frame_,time,dt,particleSubsteps_,prescribed,work,observer);

@@ -90,7 +90,9 @@ void Simulation::finalizeMovingConstraintWork() {
   if(sourceCoupling_) {
     const auto v=sourceCoupling_->finalizeConstraints();
     w.frozenConstraintWork+=v[0];w.frozenConstraintAbsWork+=v[1];w.frozenConstraintSegments+=static_cast<std::uint64_t>(v[2]);
-    w.carrierConstraintWork+=v[3];w.carrierConstraintAbsWork+=v[4];w.carrierConstraintSegments+=static_cast<std::uint64_t>(v[5]);
+    w.carrierConstraintWork+=v[3]+v[7];w.carrierConstraintAbsWork+=v[4]+std::abs(v[7]);w.carrierConstraintSegments+=static_cast<std::uint64_t>(v[5]);
+    energyLedgerBoundarySourceWork_+=v[6];
+    energyLedgerBoundarySourceAbsWork_+=std::abs(v[6]);
     return;
   }
   // All ranks participate, including ranks with no samples. Reuse the small

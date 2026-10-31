@@ -38,15 +38,26 @@ public:
   }
  }
  bool contains(long long k,std::size_t nz)const{return(k==-1&&lower_)||(k==static_cast<long long>(nz)&&upper_);}
+ bool hasLower()const{return lower_;}
+ bool hasUpper()const{return upper_;}
  Double value(const YeeComponent& v,unsigned a,long long i,long long j,long long k)const {
   if(i<0||j<0||i>=static_cast<long long>(v.nx())||j>=static_cast<long long>(v.ny()))throw std::out_of_range("Coupling transverse native sample outside grid");
   if(k>=0&&k<static_cast<long long>(v.nz()))return v(i,j,k);
   if(!contains(k,v.nz()))throw std::out_of_range("Coupling sample outside one native MPI collar");
   return (k<0?down_[a]:up_[a])[j*v.nx()+i];
  }
+ // At a real global face, use the same constant end continuation as the
+ // original particle field sampler. An MPI interface always uses its donor.
+ Double openMagneticValue(const YeeComponent& v,unsigned a,long long i,long long j,long long k)const {
+  i=std::max(0LL,std::min(i,static_cast<long long>(v.nx())-1));
+  j=std::max(0LL,std::min(j,static_cast<long long>(v.ny())-1));
+  if(k<0&&!lower_)k=0;
+  if(k>=static_cast<long long>(v.nz())&&!upper_)k=v.nz()-1;
+  return value(v,a,i,j,k);
+ }
 };
 struct MagneticSample {Vec value=Vec(0.),maximum=Vec(0.),point=Vec(0.);int cell[2][3];};
-inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,const Vec& position,bool bounds=true,const NativeHalo* halo=nullptr) {
+inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,const Vec& position,bool bounds=true,const NativeHalo* halo=nullptr,bool openFaces=false) {
  MagneticSample result;result.point=position;const auto& g=f.geometry();const Double ds[3]={g.dx,g.dy,g.dz};Double fraction[2][3];
  for(unsigned half=0;half<2;++half)for(unsigned d=0;d<3;++d){const Double x=(position[d]-origin[d])/ds[d]-.5*half;result.cell[half][d]=(int)std::floor(x);fraction[half][d]=x-result.cell[half][d];}
  const YeeComponent* fields[3]={&f.bx(),&f.by(),&f.bz()};
@@ -54,7 +65,7 @@ inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,cons
   const unsigned hx=axis==0?0:1,hy=axis==1?0:1,hz=axis==2?0:1;
   for(unsigned k=0;k<2;++k)for(unsigned j=0;j<2;++j)for(unsigned i=0;i<2;++i) {
    const Double x=i?fraction[hx][0]:1-fraction[hx][0],y=j?fraction[hy][1]:1-fraction[hy][1],z=k?fraction[hz][2]:1-fraction[hz][2];
-   const Double b=halo?halo->value(*fields[axis],axis,result.cell[hx][0]+int(i),result.cell[hy][1]+int(j),result.cell[hz][2]+int(k)):(*fields[axis])(result.cell[hx][0]+i,result.cell[hy][1]+j,result.cell[hz][2]+k);
+   const Double b=halo?(openFaces?halo->openMagneticValue(*fields[axis],axis,result.cell[hx][0]+int(i),result.cell[hy][1]+int(j),result.cell[hz][2]+int(k)):halo->value(*fields[axis],axis,result.cell[hx][0]+int(i),result.cell[hy][1]+int(j),result.cell[hz][2]+int(k))):(*fields[axis])(result.cell[hx][0]+i,result.cell[hy][1]+j,result.cell[hz][2]+k);
    result.value[axis]+=x*y*z*b;if(bounds)result.maximum[axis]=std::max(result.maximum[axis],std::abs(b));
   }
  }
@@ -78,6 +89,19 @@ inline Vec orbitElectric(const EBFieldGrid& f,const Electric* old,
  Double x[3],d[3],cuts[32]={0.,1.};unsigned count=2;
  for(unsigned a=0;a<3;++a) {
   x[a]=(begin[a]-origin[a])/spacing[a];d[a]=(end[a]-begin[a])/spacing[a];
+  // Clipped SI endpoints can round a fraction of an ulp beyond the face
+  // when normalized at a translated origin. Snap only real global faces;
+  // no MPI interface coordinate is clamped. This matches deposition's
+  // ownership of roundoff-close outer endpoints.
+  const Double extent=a==0?g.nx:(a==1?g.ny:g.nz);
+  const Double tolerance=64*std::numeric_limits<Double>::epsilon()*(1+extent+std::abs(origin[a]/spacing[a]));
+  Double finish=(end[a]-origin[a])/spacing[a];bool snapped=false;
+  const bool low=a!=2||!halo||!halo->hasLower(),high=a!=2||!halo||!halo->hasUpper();
+  if(low&&std::abs(x[a])<=tolerance){x[a]=0.;snapped=true;}
+  if(high&&std::abs(x[a]-extent)<=tolerance){x[a]=extent;snapped=true;}
+  if(low&&std::abs(finish)<=tolerance){finish=0.;snapped=true;}
+  if(high&&std::abs(finish-extent)<=tolerance){finish=extent;snapped=true;}
+  if(snapped)d[a]=finish-x[a];
   if(d[a]!=0.) {
    const Double lo=std::min(x[a],x[a]+d[a]),hi=std::max(x[a],x[a]+d[a]);
    for(long long k=(long long)std::floor(lo)+1;k<hi;++k) {
@@ -92,6 +116,10 @@ inline Vec orbitElectric(const EBFieldGrid& f,const Electric* old,
   const Double middle=.5*(cuts[n]+cuts[n-1]);long long cell[3];Double w[3][2];
   for(unsigned a=0;a<3;++a) {
    cell[a]=(long long)std::floor(x[a]+middle*d[a]);
+   const long long extent=a==0?g.nx:(a==1?g.ny:g.nz);
+   // A chord lying exactly on an outer face belongs to its adjacent cell,
+   // as in ChargeConservingCurrentDepositor::containingCell.
+   if(cell[a]==extent&&d[a]==0.&&!(a==2&&halo&&halo->hasUpper()))--cell[a];
    if((cell[a]<0||cell[a]>=(long long)(a==0?g.nx:(a==1?g.ny:g.nz))) && !(a==2&&halo&&halo->contains(cell[a],g.nz)))throw std::out_of_range("Coupling orbit outside grid collar");
    w[a][1]=x[a]+middle*d[a]-cell[a];w[a][0]=1.-w[a][1];
   }
@@ -107,6 +135,41 @@ inline Vec orbitElectric(const EBFieldGrid& f,const Electric* old,
   }
  }
  return result;
+}
+
+struct OpenOrbit {Vec begin,end;Double first=0.,last=1.;bool valid=true;};
+inline OpenOrbit clipOpenOrbit(const EBGridGeometry& g,const Vec& origin,
+ const Vec& begin,const Vec& end,const NativeHalo* halo) {
+ OpenOrbit r;r.begin=begin;r.end=end;const Double ds[3]={g.dx,g.dy,g.dz};
+ const std::size_t size[3]={g.nx,g.ny,g.nz};
+ for(unsigned a=0;a<3;++a) {
+  const Double x=(begin[a]-origin[a])/ds[a],d=(end[a]-begin[a])/ds[a];
+  if(!std::isfinite(x)||!std::isfinite(d))throw std::runtime_error("Nonfinite open coupling orbit");
+  const bool lower=a!=2||!halo||!halo->hasLower(),upper=a!=2||!halo||!halo->hasUpper();
+  if(d==0.) {if((lower&&x<0.)||(upper&&x>size[a]))r.valid=false;continue;}
+  if(lower) {const Double t=-x/d;if(d>0.)r.first=std::max(r.first,t);else r.last=std::min(r.last,t);}
+  if(upper) {const Double t=(Double(size[a])-x)/d;if(d>0.)r.last=std::min(r.last,t);else r.first=std::max(r.first,t);}
+ }
+ r.valid=r.valid&&r.last>=r.first;
+ if(r.valid)for(unsigned a=0;a<3;++a){const Double d=end[a]-begin[a];if(r.first!=0.)r.begin[a]=begin[a]+r.first*d;if(r.last!=1.)r.end[a]=begin[a]+r.last*d;}
+ return r;
+}
+inline Vec openOrbitElectric(const EBFieldGrid& f,const Electric* old,
+ const Vec& origin,const Vec& begin,const Vec& end,const NativeHalo* halo,const NativeHalo* oldHalo) {
+ const auto r=clipOpenOrbit(f.geometry(),origin,begin,end,halo);
+ if(!r.valid)throw std::out_of_range("Active coupling orbit has no in-domain portion");
+ // The integral is normalized by the full numerical orbit. Beyond a real
+ // open face no current is deposited, hence its adjoint electric force is
+ // zero. Normalizing only by the clipped length would add unmatched work.
+ Vec result=orbitElectric(f,old,origin,r.begin,r.end,halo,oldHalo);
+ result*=r.last-r.first;return result;
+}
+inline Vec openOrbitMagnetic(const EBFieldGrid& f,const Vec& origin,
+ const Vec& begin,const Vec& end,const NativeHalo* halo) {
+ const auto r=clipOpenOrbit(f.geometry(),origin,begin,end,halo);
+ if(!r.valid)throw std::out_of_range("Active coupling magnetic orbit has no in-domain portion");
+ Vec middle(r.begin);middle+=r.end;middle*=.5;
+ return magneticSample(f,origin,middle,false,halo,true).value;
 }
 
 // Lapenta--Markidis mean velocity, with the local scalar equation solved to

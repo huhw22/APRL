@@ -13,9 +13,10 @@ check();assert not build.exists()
 run([cmake,'-S',str(source),'-B',str(build),'-DCMAKE_BUILD_TYPE=Release','-DCMAKE_CXX_COMPILER=/usr/bin/mpic++','-DCMAKE_PREFIX_PATH='+str(runtime),'-DHDF5_ROOT='+str(runtime),'-DBUILD_TESTING=ON','-DAPRL_ENABLE_OPENMP=ON','-DAPRL_ENABLE_MOVING_WINDOW=ON','-DAPRL_REQUIRE_PARALLEL_HDF5=ON'],'configure.log',120)
 run([cmake,'--build',str(build),'--parallel','12'],'compile.log',900)
 here=source/'verification/performance/cases/source_coupling_integration';common=['/usr/bin/mpic++','-std=c++11','-O3','-fopenmp','-DAPRL_HAS_OPENMP=1','-DAPRL_HAS_MOVING_WINDOW=1','-DOMPI_SKIP_MPICXX','-DMPICH_SKIP_MPICXX','-I'+str(source/'src'),'-I'+str(runtime/'include')]
-for name in ['checks','field_checks']:
+for name in ['checks','field_checks','exit_checks']:
  run([*common,str(here/(name+'.cpp')),str(build/'libdirect_eb_core.a'),str(runtime/'lib/libhdf5.so'),str(runtime/'lib/libyaml-cpp.so.0.8.0'),'-lfftw3','-Wl,-rpath,'+str(runtime/'lib'),'-o',str(build/name)],name+'-compile.log',120)
 run([str(build/'checks')],'checks.json',60);assert json.loads((root/'checks.json').read_text())['checks_pass']
+run([str(build/'exit_checks')],'exit-checks.json',60);assert json.loads((root/'exit-checks.json').read_text())['passed']
 for ranks in [1,2,4]:
  run(['mpiexec','-n',str(ranks),str(build/'field_checks'),str(root/('fields-'+str(ranks)))],'fields-'+str(ranks)+'.json',90)
  assert json.loads((root/('fields-'+str(ranks)+'.json')).read_text())['passed']
