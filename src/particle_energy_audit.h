@@ -6,6 +6,7 @@
 #include <vector>
 #include "eb_particles.h"
 #include "lab_detectors.h"
+#include "particle_work_geometry.h"
 
 namespace aprl {
 
@@ -70,14 +71,17 @@ public:
   unsigned observedSubsteps = 0;
   std::vector<Segment> segments;
   std::vector<EnergyPlaneCrossing> crossings;
+  ParticleWorkGeometry geometry;
   void reset(const BoostFrameTransform& f, const LabDetectorManager* d, bool work) {
     frame=&f; detectors=d; recordWork=work;
     segments.clear(); crossings.clear(); observedSubsteps=0;
+    geometry.fields=NULL;
   }
   void observe(const RelativisticParticleSI& before,
                const RelativisticParticleSI& after, Double begin, Double end,
                const BorisWork* work) override {
     ++observedSubsteps;
+    if (geometry.fields) geometry.observe(before,after,work);
     if (detectors)
       detectors->previewEnergyParticleStep(before, after, begin, end, crossings);
     if (recordWork) {

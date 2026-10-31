@@ -167,6 +167,7 @@ namespace aprl
     std::vector<ParticleCPMLCarrier> retirementCarriers_;
     std::unique_ptr<ParticleOpenBoundary> particleBoundary_;
     std::unique_ptr<LabDetectorManager> detectors_;
+    std::unique_ptr<ParticleWorkGeometryWriter> particleWorkGeometry_;
 
     TrajectoryWriter trajectoryWriter_;
     EnergyLedgerWriter energyLedgerWriter_;

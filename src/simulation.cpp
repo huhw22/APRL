@@ -343,6 +343,14 @@ namespace aprl
   {
     const char* gridAuditDirectory=std::getenv("APRL_GRID_WORK_AUDIT");
     const char* stageAuditDirectory=std::getenv("APRL_FIELD_STAGE_AUDIT");
+    const char* geometryAuditDirectory=std::getenv("APRL_PARTICLE_WORK_GEOMETRY");
+    if(geometryAuditDirectory && (!*geometryAuditDirectory ||
+       !config_.energyLedger.enabled || !config_.mesh.movingWindow.enabled ||
+       !config_.mesh.selfFieldFeedback || config_.mesh.ballisticOutsideTransverse ||
+       config_.particleRetirement.enabled ||
+       config_.mesh.currentFilter!=EBCurrentFilter::None || checkpointEnabled_ ||
+       !config_.checkpoint.restartFrom.empty()))
+      throw std::invalid_argument("Particle geometry audit requires moving window, enabled ledger, self-field feedback, no filter/checkpoint/ballistic outside");
     if(config_.energyLedger.discreteOperatorAudit &&
        (!config_.energyLedger.enabled||!config_.mesh.movingWindow.enabled||
         config_.mesh.currentFilter!=EBCurrentFilter::None||checkpointEnabled_||
@@ -357,6 +365,11 @@ namespace aprl
       throw std::invalid_argument("APRL_GRID_WORK_AUDIT requires a directory, moving window, ledger, unfiltered current and no checkpoint");
     const Double initializationStart = performanceNow();
     initialize();
+    if(geometryAuditDirectory) {
+      if(incident_)throw std::invalid_argument("Particle geometry audit does not support incident fields");
+      particleWorkGeometry_.reset(new ParticleWorkGeometryWriter(geometryAuditDirectory,rank_));
+      logRoot(communicator_,"[particle-work-geometry] read-only complete local active pushes; release/interface/boundary exclusions explicit; no state or deposition changes");
+    }
     std::unique_ptr<InletConstraintProbe> inletConstraintProbe;
     if(const char* directory=std::getenv("APRL_INLET_CONSTRAINT_PROBE")) {
       if(!*directory||!config_.mesh.movingWindow.enabled)
@@ -423,6 +436,7 @@ namespace aprl
         if (requestedStop) break;
 
         if(gridWorkAudit) gridWorkAudit->begin(*fields_,step_);
+        if(particleWorkGeometry_)particleWorkGeometry_->beginStep();
         if(discreteLedger)discreteLedger->begin(*fields_,step_);
         if(fieldStageAudit)fieldStageAudit->begin(*fields_,step_,particles_.size(),pmlCarriers_.size());
 
@@ -461,6 +475,7 @@ namespace aprl
           halo_->communicationSeconds() - communicationStart;
 
         pushDepositAndMigrate();
+        if(particleWorkGeometry_)particleWorkGeometry_->finishStep(step_+1);
         if(config_.mesh.movingWindow.referenceSurfaceCurrent)
           applyMovingTransverseReferenceCurrent();
         if(fieldStageAudit)fieldStageAudit->populations(particles_.size(),pmlCarriers_.size());
@@ -527,6 +542,7 @@ namespace aprl
           }
       }
 
+    if(particleWorkGeometry_)particleWorkGeometry_->close();
     if(inletConstraintProbe)inletConstraintProbe->close();
     if(gridWorkAudit) {
       movingWindow_->fields->setBeforeInletObserver(nullptr,nullptr);
@@ -4812,6 +4828,8 @@ namespace aprl
           result.borisWork.clear();
           result.auditTrace.reset(frame_, transportAudit ? detectors_.get() : NULL,
                                   config_.energyLedger.enabled);
+          if(particleWorkGeometry_)result.auditTrace.geometry.reset(fields_.get(),localOriginBox_,
+            config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],!particle.frozen);
         }
         result.activeStart = particle;
         result.activeStartTime = timeBoxSI_;
@@ -4914,7 +4932,7 @@ namespace aprl
             config_.mesh.selfFieldFeedback,
             config_.energyLedger.enabled ? &result.borisWork : NULL,
             auditEnabled ? &result.auditTrace : NULL);
-
+        if(particleWorkGeometry_)result.auditTrace.geometry.finish();
       };
 
     performanceSeconds_[ParticleDepositStage] += performanceNow() - depositionStart;
@@ -4968,6 +4986,7 @@ namespace aprl
             const std::size_t index = batch + static_cast<std::size_t>(offset);
             ParticleWorkspace::Prepared& result =
               workspace.prepared[static_cast<std::size_t>(offset)];
+            if(particleWorkGeometry_)particleWorkGeometry_->add(result.auditTrace.geometry);
             RelativisticParticleSI& particle = result.particle;
             FieldVector<Double> start(particles_[index].position);
             Double segmentStartFraction = 0.0;
