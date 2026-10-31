@@ -344,13 +344,16 @@ namespace aprl
     const char* gridAuditDirectory=std::getenv("APRL_GRID_WORK_AUDIT");
     const char* stageAuditDirectory=std::getenv("APRL_FIELD_STAGE_AUDIT");
     const char* geometryAuditDirectory=std::getenv("APRL_PARTICLE_WORK_GEOMETRY");
-    if(geometryAuditDirectory && (!*geometryAuditDirectory ||
+    const bool invalidGeometry=geometryAuditDirectory && (!*geometryAuditDirectory ||
        !config_.energyLedger.enabled || !config_.mesh.movingWindow.enabled ||
        !config_.mesh.selfFieldFeedback || config_.mesh.ballisticOutsideTransverse ||
        config_.particleRetirement.enabled ||
        config_.mesh.currentFilter!=EBCurrentFilter::None || checkpointEnabled_ ||
-       !config_.checkpoint.restartFrom.empty()))
-      throw std::invalid_argument("Particle geometry audit requires moving window, enabled ledger, self-field feedback, no filter/checkpoint/ballistic outside");
+       !config_.checkpoint.restartFrom.empty());
+    const int geometryFlags[2]={geometryAuditDirectory?1:0,invalidGeometry?1:0};int globalGeometryFlags[2]={};
+    MPI_Allreduce(geometryFlags,globalGeometryFlags,2,MPI_INT,MPI_SUM,communicator_);
+    if(globalGeometryFlags[1] || (globalGeometryFlags[0]!=0 && globalGeometryFlags[0]!=size_))
+      throw std::invalid_argument("Geometry audit requires identical valid settings on all ranks, moving window, enabled ledger, feedback, and no filter/checkpoint/retirement/ballistic outside");
     if(config_.energyLedger.discreteOperatorAudit &&
        (!config_.energyLedger.enabled||!config_.mesh.movingWindow.enabled||
         config_.mesh.currentFilter!=EBCurrentFilter::None||checkpointEnabled_||
@@ -368,7 +371,7 @@ namespace aprl
     if(geometryAuditDirectory) {
       if(incident_)throw std::invalid_argument("Particle geometry audit does not support incident fields");
       particleWorkGeometry_.reset(new ParticleWorkGeometryWriter(geometryAuditDirectory,rank_));
-      logRoot(communicator_,"[particle-work-geometry] read-only complete local active pushes; release/interface/boundary exclusions explicit; no state or deposition changes");
+      logRoot(communicator_,"[particle-work-geometry] read-only complete active pushes with private neighbor electric continuation; release/physical-boundary exclusions explicit; no state or deposition changes");
     }
     std::unique_ptr<InletConstraintProbe> inletConstraintProbe;
     if(const char* directory=std::getenv("APRL_INLET_CONSTRAINT_PROBE")) {
@@ -474,6 +477,7 @@ namespace aprl
         performanceSeconds_[FieldCommunicationStage] +=
           halo_->communicationSeconds() - communicationStart;
 
+        if(particleWorkGeometry_)particleWorkGeometry_->exchangeFields(*fields_,communicator_);
         pushDepositAndMigrate();
         if(particleWorkGeometry_)particleWorkGeometry_->finishStep(step_+1);
         if(config_.mesh.movingWindow.referenceSurfaceCurrent)
@@ -4829,7 +4833,7 @@ namespace aprl
           result.auditTrace.reset(frame_, transportAudit ? detectors_.get() : NULL,
                                   config_.energyLedger.enabled);
           if(particleWorkGeometry_)result.auditTrace.geometry.reset(fields_.get(),localOriginBox_,
-            config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],!particle.frozen);
+            config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],!particle.frozen,particleWorkGeometry_->halo());
         }
         result.activeStart = particle;
         result.activeStartTime = timeBoxSI_;

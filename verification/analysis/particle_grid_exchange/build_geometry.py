@@ -3,7 +3,8 @@
 import hashlib,json,os,subprocess,sys
 from pathlib import Path
 root=Path(sys.argv[1]).resolve();assert os.environ.get('SLURM_JOB_ID')
-ws=Path('/public/home/wfollowm/APRL_Workspace');src=ws/'source/aprl';build=ws/'build/particle-work-geometry-20261031'
+ws=Path('/public/home/wfollowm/APRL_Workspace');src=ws/'source/aprl'
+build=Path(json.loads((root/'build-plan.json').read_text())['build']) if (root/'build-plan.json').exists() else ws/'build/particle-work-geometry-20261031'
 sha=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
 frozen=json.loads((root/'FROZEN.json').read_text())
 def check():
@@ -24,6 +25,12 @@ cmd=['/usr/bin/mpic++','-std=c++11','-O2','-fopenmp','-DAPRL_HAS_OPENMP=1','-DAP
 run(cmd,'geometry-compile.log',120)
 run([str(build/'geometry_checks')],'geometry-checks.json',60)
 assert json.loads((root/'geometry-checks.json').read_text())['passed']
+if (root/'scripts/geometry_mpi_checks.cpp').exists():
+    mpi_cmd=cmd.copy();mpi_cmd[mpi_cmd.index(str(root/'scripts/geometry_checks.cpp'))]=str(root/'scripts/geometry_mpi_checks.cpp');mpi_cmd[-1]=str(build/'geometry_mpi_checks')
+    run(mpi_cmd,'geometry-mpi-compile.log',120)
+    for ranks in [2,4]:
+        run(['mpiexec','-n',str(ranks),str(build/'geometry_mpi_checks')],f'geometry-mpi-{ranks}.json',60)
+        assert json.loads((root/f'geometry-mpi-{ranks}.json').read_text())['passed']
 run(['ctest','--test-dir',str(build),'-L','required','--output-on-failure','-j','1'],'required.log',450)
 check()
 (root/'COMPLETE.json').write_text(json.dumps({'checks_passed':True,'job':os.environ['SLURM_JOB_ID'],'candidate':str(build/'aprl'),
