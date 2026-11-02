@@ -2,9 +2,14 @@
 import argparse,json,shutil
 from pathlib import Path
 from prepare import sha,save,require
+def patch_paired_reader(p):
+ require("couplingE=np.diff(a['particle_grid_work_J'])" not in p.read_text(),'Reader already contains the independent metric-work channel')
+ text=p.read_text();old="numericE=de['time_electric_J']+de['time_magnetic_J']+de['current_time_pairing_J']+de['cowan_operator_J']";require(text.count(old)==1,'Expected original independent energy decomposition');text=text.replace(old,"# Independent particle work and raw J.E are distinct under the new metric.\n couplingE=np.diff(a['particle_grid_work_J']).astype(np.longdouble)-frozenWork-carrierWork-boundaryWork-de['applied_current_mid_J']\n "+old+"+couplingE")
+ old='checks=dict(max_electric_SBP_error_eV';require(text.count(old)==1,'Expected paired check output');text=text.replace(old,'Gamma_weighted_particle_current_work_difference_eV=integrated(G*couplingE),omitted_weight_channel_negative_control_eV=float(max(abs(np.cumsum(RE-numericE+couplingE)))/Q),'+old);p.write_text(text)
 def main():
  p=argparse.ArgumentParser();p.add_argument('--workspace',required=True,type=Path);p.add_argument('--build-record',required=True,type=Path);p.add_argument('--output',required=True,type=Path);a=p.parse_args();w=a.workspace.resolve();b=a.build_record.resolve();r=a.output.resolve();require((b/'EXIT_CODE').read_text().strip()=='0','Closed unit job');program=Path(json.loads((b/'PLAN.json').read_text())['programs']['aprl']);require(sha(program)==json.loads((b/'SOURCE_BUILD.json').read_text())['program_sha256']['aprl'],'Program identity');r.mkdir(parents=True,exist_ok=False);t=Path(__file__).resolve().parent;baseline=w/'results/lab_energy_balance_20261102/coupled_sbp_r2';scripts=r/'frozen_source';shutil.copytree(w/'results/lab_coupling_algorithm_20261102/r3/frozen_source',scripts,ignore=shutil.ignore_patterns('__pycache__','*.pyc'));shutil.copy2(t/'run_flow.py',scripts/'run_flow.py')
  q=scripts/'post.py';text=q.read_text();require('candidate_magnetic_gather_changed=True' in text,'Expected prior declared algorithm-change reader');q.write_text(text.replace('candidate_magnetic_gather_changed=True','candidate_magnetic_gather_changed=True, candidate_electric_gather_changed=True, matched_Cowan_metric_ledger=False'))
+ patch_paired_reader(scripts/'paired_post.py')
  cases=[]
  for name in ['undulator-on','drift-on']:
   d=r/name;d.mkdir();(d/'run.yaml').write_text((baseline/name/'run.yaml').read_text().replace(str(baseline),str(r)))

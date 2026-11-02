@@ -29,3 +29,5 @@ sbatch /absolute/fresh-physics-result/scripts/physics.sbatch /absolute/fresh-phy
 同理分别提交 `converging` 和 `gaussian`。确认空闲资源后提交；不得改运行中冻结卡，不读未闭合 H5。结束时读取各组 `aprl.log`、组级 `*_COMPLETE.json`、`analysis/RESULT.json` 和原始账本；执行完整性、动力学误差、数值收支误差及辐射适用性分别报告。
 
 `prepare_mpi.py` 单独冻结双节点四rank的真实邻层检查。`prepare_flow.py` / `run_flow.py` 重放原257步有磁/无磁小卡，总16 MPI×8线程分布到两节点；其旧参考场账本明确标记未采用新配套度量。`review.py` 核对冻结文件、原输入与理论身份、其它内核源码及原生产程序身份，汇总已闭合JSON和逐步CSV并生成相对图；不读取运行中H5。
+
+`prepare_post.py` 在独立输出树对已闭合双节点证据重新汇总，不运行 PIC。首次19245因旧读取器省略新功差而FAILED；原记录和门限保留，19246仅修读取器加入独立功差项。原生物理收支和差额不归零。修复原因与公式见 METHOD.md。
