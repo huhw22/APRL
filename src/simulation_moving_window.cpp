@@ -99,7 +99,7 @@ void Simulation::initializeMovingWindow() {
       <<"]. Set the explicit reference/source mesh from this range; the moving E/B window remains compact.";
     throw std::runtime_error(error.str());
   }
-  const double rightMargin=4.+std::ceil((1.-frame_.beta())*durationSteps);
+  const double rightMargin=(config_.mesh.longitudinalQuintic?8.:4.)+std::ceil((1.-frame_.beta())*durationSteps);
   const double windowOrigin=std::fma(startCell,globalGeometry_.dz,w.referenceOrigin[2]);
   const double safeExit=std::fma(static_cast<double>(cells)-rightMargin,globalGeometry_.dz,windowOrigin);
   w.exitLabZ=frame_.labZFromBoxZT(safeExit,0.);
@@ -130,7 +130,7 @@ void Simulation::initializeMovingWindow() {
     // Stable identity order makes the reference independent of slab ownership.
     std::sort(source.begin(),source.end(),[](const RelativisticParticleSI& a,const RelativisticParticleSI& b){return a.id<b.id;});
     w.reference.reset(new verification::BlockedCowanReference(w.referenceGeometry,w.referenceOrigin,
-        source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF));
+        source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic));
     w.reference->writeReport(cfg.referenceDirectory+"/preparation.json");
   } else {
     for(std::size_t n=0;n<particles_.size();n+=batch) {
@@ -140,7 +140,7 @@ void Simulation::initializeMovingWindow() {
   }
   MPI_Barrier(communicator_);
   if(rank_!=0)w.reference=verification::BlockedCowanReference::openPrepared(w.referenceGeometry,w.referenceOrigin,
-      w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF);
+      w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic);
   if(cfg.referenceSurfaceCurrent) {
     const std::string currentFile=cfg.referenceDirectory+"/transverse-current.bin";
     if(rank_==0)TransverseReferenceCurrent::prepare(currentFile,*w.reference,w.referenceGeometry,w.guards,w.solverBeta);
@@ -292,7 +292,7 @@ void Simulation::installMovingWindowBoundary() {
   movingWindow_->fields->installBoundary(*fields_);
   movingWindow_->fields->enableEnergyLedger(config_.energyLedger.enabled);
   if(config_.mesh.movingWindow.inletChargeMatch) {
-    movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]));
+    movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],config_.mesh.longitudinalQuintic));
     movingWindow_->fields->setNewLayerCompletion(&Simulation::completeMovingInletLayer,this);
     if(rank_==0&&config_.energyLedger.enabled) {
       movingWindow_->inletCompletionLedger.open(config_.mesh.movingWindow.referenceDirectory+"/inlet-charge-match.csv");
@@ -308,7 +308,7 @@ void Simulation::completeMovingInletLayer(void* context,EBFieldGrid& f,std::size
   auto origin=w.referenceOrigin;origin[2]=std::fma(static_cast<double>(offset),f.geometry().dz,w.referenceOrigin[2]);
   w.inletCompletion->begin(origin);
   for(const auto& p:sim.particles_)w.inletCompletion->particle(p);
-  if(w.pending)w.pending->visitDue(step,[&](const RelativisticParticleSI& p){w.inletCompletion->particle(p);});
+  if(w.pending){const auto visit=[&](const RelativisticParticleSI& p){w.inletCompletion->particle(p);};if(sim.config_.mesh.longitudinalQuintic)w.pending->visitNear(step,8,visit);else w.pending->visitDue(step,visit);}
   const auto report=w.inletCompletion->complete(f,sim.config_.energyLedger.enabled);
   if(w.inletCompletionLedger.is_open()) {
     w.inletCompletionLedger<<step<<','<<report.particles<<','<<report.maxBefore<<','<<report.maxAfter<<','<<report.maxDeltaEz<<','<<report.nativeWorkJ<<'\n';

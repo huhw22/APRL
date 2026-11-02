@@ -46,6 +46,9 @@ public:
   void visitDue(std::size_t step,
                 const std::function<void(const Particle&)>& visitor) const;
 
+  void visitNear(std::size_t step,std::size_t lookAhead,
+      const std::function<void(const Particle&)>& visitor) const;
+
   std::size_t size() const;
   bool empty() const { return size() == 0; }
   // maximumStep + 1 means no entry is due during the configured run horizon.

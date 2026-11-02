@@ -36,7 +36,7 @@ void Simulation::solveConservativeSourceStep() {
  auto savedDetectors=std::move(detectors_);config_.energyLedger.enabled=false;config_.trajectory.enabled=false;
  bool converged=false;unsigned iterations=0;Double force=0.,work=0.;
  try {
-  for(unsigned n=0;n<8;++n){if(n)coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();coupling.beginTrial();coupling.exchangeCandidate();pushDepositAndMigrate();
+  for(unsigned n=0;n<8;++n){if(n)coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();coupling.beginTrial();coupling.exchangeCandidate();pushDepositAndMigrate();coupling.completeCurrent();
    if(config_.mesh.movingWindow.referenceSurfaceCurrent){applyMovingTransverseReferenceCurrent();finishMovingTransverseReferenceCurrent();}
    halo_->sumSharedTangentialCurrent(*fields_);coupling.applyCurrentSource(-1.);coupling.exchangeCandidate();
    const auto r=coupling.localResidual();const Double local[3]={r[1],r[2],r[3]};Double total[3]={};
@@ -50,7 +50,7 @@ void Simulation::solveConservativeSourceStep() {
  // Remove the trial current, retain the zero-current wave by swapping it into
  // the old-E buffer, and replay the converged substeps against the real old E.
  coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();movingWindow_->particleHalo->clear(*fields_);coupling.swapElectric();movingWindow_->particleHalo->exchangeAndInstall(*fields_);
- coupling.setReplay(true);pushDepositAndMigrate();coupling.setReplay(false);coupling.finish(step_+1,iterations,force,work);
+ coupling.setReplay(true);pushDepositAndMigrate();coupling.completeCurrent();coupling.setReplay(false);coupling.finish(step_+1,iterations,force,work);
 }
 void Simulation::commitConservativeElectric() {
  sourceCoupling_->swapElectric();movingWindow_->fields->undoPreviewElectricBoundary(*fields_);

@@ -8,11 +8,14 @@
 #include <mpi.h>
 #include "eb_particles.h"
 namespace aprl {
+namespace longitudinal_shape {class Current;}
 class ConservativeSourceCoupling {
 public:
-  ConservativeSourceCoupling(MPI_Comm,const std::string& directory);
+  ConservativeSourceCoupling(MPI_Comm,const std::string& directory,bool quintic=false);
   ~ConservativeSourceCoupling();
   void begin(EBFieldGrid&,const FieldVector<Double>& origin,const std::vector<RelativisticParticleSI>&,unsigned physicalCellsX=0,unsigned physicalCellsY=0);
+  longitudinal_shape::Current* longitudinalCurrent();
+  void completeCurrent();
   void beginTrial();
   void setReplay(bool enabled);
   void exchangeCandidate();

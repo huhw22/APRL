@@ -8,6 +8,7 @@
 
 namespace aprl
 {
+  namespace longitudinal_shape {class Current;}
   struct CurrentDepositResult
   {
     std::size_t subsegments;
@@ -31,7 +32,8 @@ namespace aprl
   {
   public:
     ChargeConservingCurrentDepositor(EBFieldGrid& fields,
-                                     const FieldVector<Double>& originSI);
+                                     const FieldVector<Double>& originSI,
+                                     longitudinal_shape::Current* quintic = nullptr);
 
     CurrentDepositResult depositSegment(
         const FieldVector<Double>& startSI,
@@ -67,6 +69,7 @@ namespace aprl
                             const NormalizedPosition& end,
                             Double chargeCoulomb);
 
+    longitudinal_shape::Current* quintic_;
     EBFieldGrid& fields_;
     FieldVector<Double> originSI_;
   };

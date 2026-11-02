@@ -1,4 +1,5 @@
 #include "eb_deposition.h"
+#include "longitudinal_shape.h"
 
 #include <algorithm>
 #include <cmath>
@@ -33,8 +34,8 @@ namespace aprl
   {}
 
   ChargeConservingCurrentDepositor::ChargeConservingCurrentDepositor(
-      EBFieldGrid& fields, const FieldVector<Double>& originSI)
-    : fields_(fields), originSI_(originSI)
+      EBFieldGrid& fields, const FieldVector<Double>& originSI, longitudinal_shape::Current* quintic)
+    : quintic_(quintic), fields_(fields), originSI_(originSI)
   {}
 
   CurrentDepositResult ChargeConservingCurrentDepositor::depositSegment(
@@ -46,6 +47,8 @@ namespace aprl
     validatePosition(endSI);
     if (!std::isfinite(chargeCoulomb))
       throw std::invalid_argument("Deposited particle charge must be finite");
+
+    if(quintic_){CurrentDepositResult result;result.depositedCharge=chargeCoulomb;result.subsegments=quintic_->deposit(originSI_,startSI,endSI,chargeCoulomb);return result;}
 
     const NormalizedPosition start = normalize(startSI);
     const NormalizedPosition end = normalize(endSI);

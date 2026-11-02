@@ -132,7 +132,7 @@ namespace aprl
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
             "resolution", "ballistic_outside_transverse",
-            "self_field_feedback", "moving_window", "particle_coupling"
+            "self_field_feedback", "moving_window", "particle_coupling", "longitudinal_shape"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
           if (longitudinal)
@@ -705,6 +705,7 @@ namespace aprl
       currentFilter(EBCurrentFilter::None),
       selfFieldFeedback(true),
       conservativeSourceCoupling(false),
+      longitudinalQuintic(false),
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -1035,6 +1036,8 @@ namespace aprl
         throw configError(mesh["particle_coupling"],"particle_coupling must be boris or conservative-source");
       result.mesh.conservativeSourceCoupling=method=="conservative-source";
     }
+    if(mesh["longitudinal_shape"]) {const auto shape=mesh["longitudinal_shape"].as<std::string>();if(shape!="linear"&&shape!="quintic-compensated")throw configError(mesh["longitudinal_shape"],"longitudinal_shape must be linear or quintic-compensated");result.mesh.longitudinalQuintic=shape=="quintic-compensated";}
+
     if (movingWindow)
       {
         if (movingWindow["enabled"])

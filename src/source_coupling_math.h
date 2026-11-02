@@ -24,27 +24,28 @@ inline long double chargeWork(Double q,const Vec& e,const Vec& x,const Vec& y) {
 }
 inline Electric copyElectric(const EBFieldGrid& f) {return {{f.ex(),f.ey(),f.ez()}};}
 class NativeHalo {
- bool lower_=false,upper_=false;
+ bool lower_=false,upper_=false;unsigned depth_=1;
  std::vector<Double> down_[3],up_[3];
 public:
- void exchange(const EBFieldGrid& f,MPI_Comm comm,bool magnetic=false) {
+ void exchange(const EBFieldGrid& f,MPI_Comm comm,bool magnetic=false,unsigned depth=1) {
+  depth_=depth;
   int rank=0,size=1;MPI_Comm_rank(comm,&rank);MPI_Comm_size(comm,&size);lower_=rank>0;upper_=rank+1<size;
   if(size==1)return;
   const YeeComponent* v[3]={magnetic?&f.bx():&f.ex(),magnetic?&f.by():&f.ey(),magnetic?&f.bz():&f.ez()};
-  for(unsigned a=0;a<3;++a){const auto& q=*v[a];const std::size_t count=q.nx()*q.ny();if(count>std::size_t(std::numeric_limits<int>::max()))throw std::overflow_error("Coupling halo too large");
+  for(unsigned a=0;a<3;++a){const auto& q=*v[a];const std::size_t plane=q.nx()*q.ny(),count=plane*depth_;if(q.nz()<(magnetic?a==2:a<2?true:false)+depth_)throw std::invalid_argument("Coupling halo exceeds slab");if(count>std::size_t(std::numeric_limits<int>::max()))throw std::overflow_error("Coupling halo too large");
    down_[a].resize(count);up_[a].resize(count);const bool node=magnetic?a==2:a<2;
-   MPI_Sendrecv(q.data()+(q.nz()-(node?2:1))*count,int(count),MPI_DOUBLE,upper_?rank+1:MPI_PROC_NULL,11000+2*a,down_[a].data(),int(count),MPI_DOUBLE,lower_?rank-1:MPI_PROC_NULL,11000+2*a,comm,MPI_STATUS_IGNORE);
-   MPI_Sendrecv(q.data()+(node?1:0)*count,int(count),MPI_DOUBLE,lower_?rank-1:MPI_PROC_NULL,11001+2*a,up_[a].data(),int(count),MPI_DOUBLE,upper_?rank+1:MPI_PROC_NULL,11001+2*a,comm,MPI_STATUS_IGNORE);
+   MPI_Sendrecv(q.data()+(q.nz()-(node?1:0)-depth_)*plane,int(count),MPI_DOUBLE,upper_?rank+1:MPI_PROC_NULL,11000+2*a,down_[a].data(),int(count),MPI_DOUBLE,lower_?rank-1:MPI_PROC_NULL,11000+2*a,comm,MPI_STATUS_IGNORE);
+   MPI_Sendrecv(q.data()+(node?1:0)*plane,int(count),MPI_DOUBLE,lower_?rank-1:MPI_PROC_NULL,11001+2*a,up_[a].data(),int(count),MPI_DOUBLE,upper_?rank+1:MPI_PROC_NULL,11001+2*a,comm,MPI_STATUS_IGNORE);
   }
  }
- bool contains(long long k,std::size_t nz)const{return(k==-1&&lower_)||(k==static_cast<long long>(nz)&&upper_);}
+ bool contains(long long k,std::size_t nz)const{return(k<0&&k>=-static_cast<long long>(depth_)&&lower_)||(k>=static_cast<long long>(nz)&&k<static_cast<long long>(nz+depth_)&&upper_);}
  bool hasLower()const{return lower_;}
  bool hasUpper()const{return upper_;}
  Double value(const YeeComponent& v,unsigned a,long long i,long long j,long long k)const {
   if(i<0||j<0||i>=static_cast<long long>(v.nx())||j>=static_cast<long long>(v.ny()))throw std::out_of_range("Coupling transverse native sample outside grid");
   if(k>=0&&k<static_cast<long long>(v.nz()))return v(i,j,k);
   if(!contains(k,v.nz()))throw std::out_of_range("Coupling sample outside one native MPI collar");
-  return (k<0?down_[a]:up_[a])[j*v.nx()+i];
+  return (k<0?down_[a]:up_[a])[(k<0?static_cast<long long>(depth_)+k:k-static_cast<long long>(v.nz()))*v.nx()*v.ny()+j*v.nx()+i];
  }
  // At a real global face, use the same constant end continuation as the
  // original particle field sampler. An MPI interface always uses its donor.

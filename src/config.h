@@ -75,6 +75,7 @@ namespace aprl
      * force on particles. Prescribed device fields remain active. */
     bool selfFieldFeedback;
     bool conservativeSourceCoupling;
+    bool longitudinalQuintic;
     /* Experimental finite-window boundary injection: particles outside the
      * transverse physical region remain ballistic until they enter it. */
     bool ballisticOutsideTransverse;

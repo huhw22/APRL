@@ -218,6 +218,13 @@ void PendingParticleQueue::visitDue(std::size_t step,
     visitor(particle);
   }
 }
+void PendingParticleQueue::visitNear(std::size_t step,std::size_t lookAhead,
+    const std::function<void(const Particle&)>& visitor) const {
+  if(!extracted_||step<initialStep_||step>geometry_.maximumStep)throw std::logic_error("Invalid pending support view");
+  const auto until=std::min(geometry_.maximumStep,step+std::min(lookAhead,geometry_.maximumStep-step));
+  const auto end=offsets_[until-initialStep_+1];
+  for(std::size_t n=cursor_;n<end;++n){const auto& initial=pending_[order_[n]];Particle p=initial;p.position[2]=repeatHeldAddition(initial.position[2],geometry_.heldDistancePerBeta*initial.frozenBetaZ,step-initialStep_);visitor(p);}
+}
 std::size_t PendingParticleQueue::nextDueStep() const { return nextDue_; }
 const std::vector<PendingParticleQueue::Particle>& PendingParticleQueue::initialParticles() const {
   if (!extracted_ || cursor_) throw std::logic_error("Initial pending statistics must precede admission");

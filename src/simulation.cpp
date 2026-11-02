@@ -1,4 +1,5 @@
 #include "simulation.h"
+#include "longitudinal_shape.h"
 
 #include <algorithm>
 #include <climits>
@@ -376,11 +377,12 @@ namespace aprl
         checkpointEnabled_ || !config_.checkpoint.restartFrom.empty() ||
         geometryAuditDirectory || gridAuditDirectory || stageAuditDirectory))
       throw std::invalid_argument("conservative-source requires moving Cowan, feedback, unfiltered current and no retirement/checkpoint/ballistic/legacy work probes");
+    {const int local=config_.mesh.longitudinalQuintic?1:0;int total=0;MPI_Allreduce(&local,&total,1,MPI_INT,MPI_SUM,communicator_);if(total!=0&&total!=size_)throw std::invalid_argument("longitudinal_shape must agree on every MPI rank");if(local&&!config_.mesh.conservativeSourceCoupling)throw std::invalid_argument("quintic-compensated requires conservative-source");}
     const Double initializationStart = performanceNow();
     initialize();
     if(config_.mesh.conservativeSourceCoupling) {
       if(incident_)throw std::invalid_argument("conservative-source does not support incident waves");
-      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory));
+      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic));
       logRoot(communicator_,"[source-coupling] conservative-source; original release/migration/detectors; transactional trials and converged substep replay; original Cowan curls and committed CPML history once per step");
     }
     if(geometryAuditDirectory) {
@@ -4087,7 +4089,10 @@ namespace aprl
 
   void Simulation::pushDepositAndMigrate()
   {
-    ChargeConservingCurrentDepositor depositor(*fields_, localOriginBox_);
+    ChargeConservingCurrentDepositor depositor(*fields_, localOriginBox_,sourceCoupling_?sourceCoupling_->longitudinalCurrent():nullptr);
+    if(config_.mesh.longitudinalQuintic&&rank_==0&&movingWindow_->pending) {
+      movingWindow_->pending->visitNear(step_,8,[&](const RelativisticParticleSI& p){auto end=p.position;end[2]+=SI::c*globalGeometry_.dt*p.frozenBetaZ;sourceCoupling_->longitudinalCurrent()->deposit(localOriginBox_,p.position,end,p.charge);if(config_.energyLedger.enabled)sourceCoupling_->recordConstraint(p.position,end,p.charge,false);});
+    }
     ParticleWorkspace& workspace = *particleWorkspace_;
     std::vector<RelativisticParticleSI>& retained = workspace.retained;
     retained.clear();
