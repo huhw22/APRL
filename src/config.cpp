@@ -236,7 +236,8 @@ namespace aprl
                     "type", "entrance_z", "polarization_angle_rad",
                     "strength_parameter", "period", "periods",
                     "gaussian_fringe", "fringe_relative_cutoff", "length",
-                    "field_T", "characteristic"
+                    "field_T", "characteristic", "gradient_T_per_m",
+                    "end_ramp_periods", "phase_rad"
                   });
                 }
             }
@@ -1515,6 +1516,12 @@ namespace aprl
                   magnet.fringeRelativeCutoff = finiteDouble(
                     node["fringe_relative_cutoff"],
                     "undulator fringe relative cutoff");
+                if (node["end_ramp_periods"])
+                  magnet.endRampPeriods = finiteDouble(node["end_ramp_periods"],
+                    "undulator internal end-ramp periods");
+                if (node["phase_rad"])
+                  magnet.undulatorPhase = finiteDouble(node["phase_rad"],
+                    "undulator phase");
                 magnet.prepare();
               }
             else if (type == "uniform-dipole")
@@ -1525,6 +1532,18 @@ namespace aprl
                   "dipole length") * result.inputUnits.length;
                 magnet.peakMagneticField = finiteDouble(
                   required(node, "field_T"), "dipole field");
+                magnet.polarizationAngle = angle;
+                magnet.gaussianFringe = false;
+                magnet.prepare();
+              }
+            else if (type == "quadrupole")
+              {
+                magnet.type = SIMagnetType::Quadrupole;
+                magnet.center[2] = entrance;
+                magnet.length = finiteDouble(required(node, "length"),
+                  "quadrupole length") * result.inputUnits.length;
+                magnet.quadrupoleGradient = finiteDouble(
+                  required(node, "gradient_T_per_m"), "quadrupole gradient");
                 magnet.polarizationAngle = angle;
                 magnet.gaussianFringe = false;
                 magnet.prepare();

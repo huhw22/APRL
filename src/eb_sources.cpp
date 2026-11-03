@@ -279,6 +279,7 @@ namespace aprl
     : type(SIMagnetType::PlanarUndulator), center(0.0), length(0.0),
       period(0.0), peakMagneticField(0.0), polarizationAngle(0.0),
       gaussianFringe(true), fringeRelativeCutoff(1.0e-9),
+      quadrupoleGradient(0.0), endRampPeriods(0.0), undulatorPhase(0.0),
       waveNumber_(0.0), fringeExtent_(0.0), cosineAngle_(1.0),
       sineAngle_(0.0), prepared_(false)
   {}
@@ -318,6 +319,19 @@ namespace aprl
         "Undulator fringe_relative_cutoff must be in (0,1)");
     if (type == SIMagnetType::UniformDipole && !(length > 0.0))
       throw std::invalid_argument("Dipole length must be positive");
+    if (type == SIMagnetType::Quadrupole &&
+        (!(length > 0.0) || !std::isfinite(quadrupoleGradient)))
+      throw std::invalid_argument("Quadrupole length/gradient is invalid");
+    if (!std::isfinite(endRampPeriods) || endRampPeriods < 0.0 ||
+        (endRampPeriods > 0.0 &&
+         (type != SIMagnetType::PlanarUndulator || gaussianFringe ||
+          2.0 * endRampPeriods * period > length)))
+      throw std::invalid_argument(
+        "Internal undulator end ramp requires non-Gaussian ends and fits inside length");
+    if (!std::isfinite(undulatorPhase) ||
+        (undulatorPhase != 0.0 &&
+         (type != SIMagnetType::PlanarUndulator || endRampPeriods <= 0.0)))
+      throw std::invalid_argument("Undulator phase requires internal end ramps");
 
     waveNumber_ = type == SIMagnetType::PlanarUndulator
       ? kTwoPi / period : 0.0;
@@ -340,6 +354,19 @@ namespace aprl
     FieldVector<Double> relative(positionLab);
     relative -= center;
     const Double z = relative[2];
+    if (type == SIMagnetType::Quadrupole)
+      {
+        if (z >= 0.0 && z <= length)
+          {
+            const Double x = relative[0] * cosineAngle_ + relative[1] * sineAngle_;
+            const Double y = -relative[0] * sineAngle_ + relative[1] * cosineAngle_;
+            const Double bx = quadrupoleGradient * y;
+            const Double by = quadrupoleGradient * x;
+            fields.magnetic[0] = bx * cosineAngle_ - by * sineAngle_;
+            fields.magnetic[1] = bx * sineAngle_ + by * cosineAngle_;
+          }
+        return;
+      }
     if (type == SIMagnetType::UniformDipole)
       {
         if (z >= 0.0 && z <= length)
@@ -356,6 +383,27 @@ namespace aprl
       {
         transverseShape = std::sin(waveNumber_ * z);
         longitudinalShape = std::cos(waveNumber_ * z);
+        if (undulatorPhase != 0.0)
+          {
+            transverseShape = std::sin(waveNumber_ * z + undulatorPhase);
+            longitudinalShape = std::cos(waveNumber_ * z + undulatorPhase);
+          }
+        if (endRampPeriods > 0.0)
+          {
+            const Double ramp = endRampPeriods * period;
+            const Double distance = std::min(z, length - z);
+            if (distance < ramp)
+              {
+                const Double phase = 0.5 * kTwoPi * distance / ramp;
+                const Double envelope = 0.5 * (1.0 - std::cos(phase));
+                const Double derivative = 0.25 * kTwoPi / ramp *
+                  std::sin(phase) * (z < ramp ? 1.0 : -1.0);
+                /* B_perp=-g'/k and B_z~g keep div(B)=0 and zero net kick. */
+                transverseShape = envelope * transverseShape -
+                  derivative / waveNumber_ * longitudinalShape;
+                longitudinalShape *= envelope;
+              }
+          }
       }
     else if (gaussianFringe)
       {

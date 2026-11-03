@@ -97,7 +97,8 @@ namespace aprl
   enum class SIMagnetType
   {
     PlanarUndulator,
-    UniformDipole
+    UniformDipole,
+    Quadrupole
   };
 
   /* Static laboratory-frame magnetic elements.  A planar undulator includes
@@ -116,6 +117,9 @@ namespace aprl
     Double polarizationAngle;   /* rad from +x */
     bool gaussianFringe;
     Double fringeRelativeCutoff; /* raw Gaussian at compact-support edge */
+    Double quadrupoleGradient; /* T/m; dBy/dx in the rotated local axes */
+    Double endRampPeriods; /* internal vector-potential ramp; zero preserves legacy */
+    Double undulatorPhase; /* rad; nonzero requires compact internal end ramps */
 
     void prepare();
     void fieldsLab(const FieldVector<Double>& positionLab,
