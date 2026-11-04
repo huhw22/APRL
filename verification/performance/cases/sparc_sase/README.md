@@ -55,3 +55,11 @@ slice index, whereas fixed-laboratory-plane arrival times increase toward the
 tail. Active slice groups must be reversed on import, preserving each group's
 optical phases and particle data. The 2026-11-04 radiation review corrects the
 initial reference mapping and retains its earlier outputs as historical evidence.
+
+The same review also found that BeamSolver replaces ku=0 in drifts with
+ks/(2 gamma_ref^2). The reference phase shifter must include this existing
+carrier compensation. The corrected nominal phi is about -0.9577053 rad;
+the old +1.70418 rad produced about -152.5 degrees entrance mismatch per gap.
+Closed-reference verification now checks the actual nominal phase cycle, in
+addition to checking that the requested parameter was applied. This phase test
+does not certify the full FEL physics or the 0.67 m approximate gain prediction.

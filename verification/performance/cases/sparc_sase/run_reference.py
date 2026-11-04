@@ -10,6 +10,9 @@ def main():
          '--ntasks=64','--ntasks-per-node=64','--cpus-per-task=1','--cpu-bind=cores',
          '--kill-on-bad-exit=1','--wait=30',plan['genesis'],'reference.in']
     gen=root/'genesis';rec=run(cmd,gen,4*3600,'genesis.log')
+    closure=genesis_nominal_phase_closure(gen/'reference.out.h5')
+    need(max(abs(v['nominal_entrance_residual_rad']) for v in closure)<1e-8,
+         'Reference nominal entrance phase does not close; inspect drift carrier compensation')
     with h5py.File(gen/'reference.out.h5','r') as f:
         endpoint=float(f['Lattice/z'][-1]+f['Lattice/dz'][-1]);power=f['Field/power'][:]
         z=f['Lattice/zplot'][:]
@@ -24,6 +27,7 @@ def main():
         ratio=float(power[-1].sum()/max(power[near].sum(),1e-300))
         save(gen/'COMPLETE.json',dict(run=rec,lattice_end_m=endpoint,last_over_first_segment_power=ratio,
           gap_phase_kicks_verified=True,observed_autophase_rad=observed.tolist(),
+          nominal_phase_closure_verified=True,nominal_phase_closure=closure,
           sufficient_gain_for_feedback_test=bool(ratio>10),physical_acceptance=False,
           scope='Independent reference integrity and gain report; no automatic physical precision certificate'))
 if __name__=='__main__':main()

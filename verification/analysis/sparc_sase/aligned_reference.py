@@ -26,7 +26,7 @@ def prepare(root,out):
       aligned_input_sha256=hashlib.sha256(new.read_bytes()).hexdigest())
     (out/'INPUT_DIRECTION_PROOF.json').write_text(json.dumps(proof,indent=2)+'\n')
 
-def analyze(root,review,reference,repo):
+def analyze(root,review,reference,repo,output_name='radiation_aligned_r1'):
     root=Path(root);review=Path(review);reference=Path(reference)
     assert (reference/'TRACK_COMPLETE').read_text().strip()=='0'
     # Only committed cache outputs from the already closed PIC case are used.
@@ -35,7 +35,7 @@ def analyze(root,review,reference,repo):
         time.sleep(5)
     assert (review/'pic.json').exists(),'PIC radiation reduction not available'
     plan=json.loads((root/'plan.json').read_text());pic=json.loads((review/'pic.json').read_text())
-    out=review/'radiation_aligned_r1';out.mkdir(exist_ok=False)
+    out=review/output_name;out.mkdir(exist_ok=False)
     for p in pic:
         for suffix in ['-spectra.npz','-summary.json']:(out/(p['plane']+suffix)).hardlink_to(review/(p['plane']+suffix))
     shutil.copy2(review/'pic.json',out/'pic.json')
@@ -48,4 +48,4 @@ def analyze(root,review,reference,repo):
       scope='Radiation power only; corrected G4 slice direction; existing PIC spectra reused'),indent=2)+'\n')
 if __name__=='__main__':
     if sys.argv[1]=='prepare':prepare(sys.argv[2],sys.argv[3])
-    else:analyze(*sys.argv[2:6])
+    else:analyze(*sys.argv[2:])

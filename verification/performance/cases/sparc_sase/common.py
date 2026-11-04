@@ -72,6 +72,23 @@ def slice_profile():
     need(abs(current.sum()*ds/c/Q-1)<1e-11,'Charge/profile mismatch')
     return current
 
+def genesis_nominal_phase_closure(field_output):
+    """Nominal G4 zero-offset phase cycles, including its drift carrier."""
+    import h5py
+    with h5py.File(field_output,'r') as f:
+        z=f['Lattice/z'][:];dz=f['Lattice/dz'][:]
+        aw=f['Lattice/aw'][:];ku=f['Lattice/ku'][:]
+        phase=f['Lattice/phaseshift'][:]
+    ks=2*np.pi/LAMBDA;uz=np.sqrt(GAMMA*GAMMA-1-aw*aw)
+    natural=np.where(ku==0,ks/(2*GAMMA*GAMMA),ku)-ks*(1+aw*aw)/(uz*(GAMMA+uz))
+    rows=[]
+    for j in range(5):
+        start=PREP+j*(77*LU+.4);end=start+77*LU+.4
+        mask=(z>=start-1e-8)&(z<end-1e-8)
+        advance=float(np.sum(natural[mask]*dz[mask])+np.sum(phase[mask]))
+        rows.append(dict(gap=j,nominal_entrance_residual_rad=float(np.angle(np.exp(1j*advance)))))
+    return rows
+
 def main_lattice(directory):
     """One-period internal ramps; independently precomputed phase matching."""
     from scipy.integrate import quad
@@ -96,12 +113,15 @@ def main_lattice(directory):
         u=np.sqrt(GAMMA*GAMMA-1-a*a)
         return (1+a*a)/(u*(GAMMA+u))
     g4_lag=75*LU*averaged_lag(aw)+2*sum(LU/4*averaged_lag(a) for a in ramp_aw)
+    # BeamSolver replaces ku=0 by ks/(2 gamma_ref^2) in drifts.
+    # Include that carrier term, which already cancels reference drift lag.
+    g4_natural_phase=2*np.pi*77-ks*g4_lag+ks*.4/(2*GAMMA**2)-ks*gap_lag
     for i in range(5):
         lag=delay(phases[-1])
         delta=ks*(lag+gap_lag)-2*np.pi*77
-        # Local G4 4.6.4 uses autophase=-phi once per non-undulator
-        # interval. Its fractional free-drift auto-phasing is commented out.
-        kick=-delta
+        # autophase=-phi; cancel the full nominal G4 phase advance, rather
+        # than adding physical drift lag a second time.
+        kick=g4_natural_phase
         phases.append(float(np.angle(np.exp(1j*(phases[-1]+delta)))))
         kicks.append(float(np.angle(np.exp(1j*kick))))
         closure.append(float(ks*(lag-g4_lag)))
@@ -137,8 +157,9 @@ def main_lattice(directory):
     (d/'reference.lat').write_text('\n'.join(defs)+'\n')
     save(d/'lattice.json',dict(magnets=magnets,segment_phases_rad=phases,
       genesis_gap_phase_kicks_rad=kicks,physical_line_length_m=6*length+5*.4,
-      genesis_phase_implementation='Finite final 0.242 m gap interval; one autophase=-phi kick, no extra drift length; local G4 fractional auto-phasing is disabled',
-      nominal_phase_closure_G4_minus_exact_rad=closure,
+      genesis_phase_implementation='Finite final 0.242 m gap interval; autophase=-phi; BeamSolver drift ku=ks/(2 gamma_ref^2) included; no extra drift length',
+      period_averaged_vs_exact_undulator_delay_rad=closure,
+      genesis_nominal_entrance_phase_residual_rad=[float(np.angle(np.exp(1j*(g4_natural_phase-v)))) for v in kicks],
       field_far_z_m=PREP+6*length+5*.4+.3,preparation_drift_m=PREP,
       quadrupole_location_convention='0.105 m leading edge downstream of preceding undulator',
       phase_matching='Nominal magnetic trajectory and free-drift flight delay, no radiation fitting',

@@ -9,6 +9,8 @@ def main(workspace):
     H=lambda p:hashlib.sha256(Path(p).read_bytes()).hexdigest()
     assert L(r/'COMPLETE.json')['complete']
     pic=L(r/'pic.json');gen=L(r/'genesis.json');result=L(r/'RADIATION_RESULT.json')
+    if result.get('cross_code_comparison_withdrawn'):
+        raise RuntimeError('Reference comparison withdrawn; use phase_review.py for the corrected reference')
     rows=result['plane_rows'];band=result['band_eV'];checks=[]
     for p,g in zip(pic,gen):
         a=np.load(r/(p['plane']+'-spectra.npz'));b=np.load(r/(p['plane']+'-genesis.npz'))
