@@ -49,3 +49,9 @@ For the user-approved cost screen, prepare with --slippage-multiple 3,
 This preserves peak current, emittances and energy spread; charge follows the
 shorter parabolic profile. The immutable benchmark.json configures staged
 scripts. It is a short-bunch derivative, not the published long-bunch experiment.
+
+Direction convention: local GENESIS positive slippage advances toward larger
+slice index, whereas fixed-laboratory-plane arrival times increase toward the
+tail. Active slice groups must be reversed on import, preserving each group's
+optical phases and particle data. The 2026-11-04 radiation review corrects the
+initial reference mapping and retains its earlier outputs as historical evidence.

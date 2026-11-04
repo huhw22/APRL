@@ -26,7 +26,11 @@ def main(root):
         dataset=group.create_dataset('records',shape=(n*NPART,),dtype=DTYPE,chunks=(65536,))
         template=None;cursor=0;cache=[]
         for i in range(count):
-            old=src[f'slice{i+1:06d}'];new=gen.create_group(f'slice{i+pad+1:06d}')
+            old=src[f'slice{i+1:06d}']
+            # G4 positive slippage moves the field toward larger slice index
+            # (the bunch head). A fixed-plane arrival index runs the other way.
+            gi=n-1-i if i<n else i
+            new=gen.create_group(f'slice{gi+pad+1:06d}')
             vals={key:old[key][:] for key in ['x','y','px','py','gamma','theta']}
             uz=np.sqrt(vals['gamma']**2-1-vals['px']**2-vals['py']**2)
             # The native dump specifies the published entrance state. Move it
@@ -91,6 +95,7 @@ def main(root):
       physical_charge_relative_error=float(sumw*e/Q-1),pass_noise_variance=True,
       method='Unchanged GENESIS Fawley loader, imported without adding a second noise realization',
       preparation_drift_m=PREP,
+      genesis_slice_direction='Increasing index is toward bunch head; active slices reversed relative to PIC arrival events',
       entrance_mapping='Exact ballistic inverse through 1 cm, retaining the desired entrance arrival phases and transverse phase space in the magnet-only limit',
       scope='Physical noise in registered near-resonant band and harmonics 1-3; not all-frequency point-electron noise'))
     mean_beta=sumwb/sumw;mean_bt=sumwbt/sumw
