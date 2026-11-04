@@ -83,8 +83,8 @@ def particles(root,out,plan):
     save(out/'transport.json',transport)
     return results
 
-def pic_plane(root,out,plan,name):
-    started=time.monotonic();path=root/'boris/detectors'/(name+'.h5')
+def pic_plane(root,out,plan,name,case='boris'):
+    started=time.monotonic();path=root/case/'detectors'/(name+'.h5')
     dt=plan['geometry']['dt_s']/plan['physics']['boost_gamma'];dx=plan['geometry']['dx_m'];area=dx*dx
     with h5py.File(path,'r') as f:
         g=f['field_plane'];n=int(g['committed_samples'][()])
