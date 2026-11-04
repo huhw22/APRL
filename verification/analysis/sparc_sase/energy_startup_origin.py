@@ -1,4 +1,4 @@
-"""Phase-resolved origin of early bunching; closed energy-coupled data only."""
+"""Phase-resolved early bunching for a selected closed conservative-coupling case."""
 import argparse
 import json
 from pathlib import Path
@@ -72,18 +72,20 @@ def compare_energy_planes(directory):
     return dict(rows=rows,
         raw_mean_change_eV=rows[1]['raw_mean_kinetic_eV']-rows[0]['raw_mean_kinetic_eV'],
         scalar_mean_change_eV=rows[1]['scalar_mean_kinetic_eV']-rows[0]['scalar_mean_kinetic_eV'],
-        interpretation='Equal counts and charge. Raw whole-step three-momentum reconstruction and scalar substep four-momentum interpolation disagree. This establishes diagnostic inconsistency; it does not yet assign the harmonic spectrum or BF time error.')
+        interpretation='Equal counts and charge. Raw whole-step three-momentum reconstruction and scalar substep four-momentum interpolation are compared; their measured difference is reported above. It does not by itself assign the harmonic spectrum or BF time error.')
 
 
-def run(top, out):
+def run(top, out, case='energy'):
+    if case not in ['energy','momentum']:
+        raise ValueError('Only energy and momentum conservative-coupling cases are supported')
     top, out = Path(top).resolve(), Path(out).resolve()
     out.mkdir(exist_ok=False)
     root = top/'compact-production-r1'
-    directory = root/'energy/detectors'
+    directory = root/case/'detectors'
     plan = json.loads((root/'plan.json').read_text())
-    assert json.loads((root/'energy/PIC_COMPLETE.json').read_text())['run']['exit_code']==0
+    assert json.loads((root/case/'PIC_COMPLETE.json').read_text())['run']['exit_code']==0
     source = top/'compact-preflight-r1/particles.h5'
-    paths = [source,root/'plan.json',root/'energy/run.yaml',root/'energy/PIC_COMPLETE.json',
+    paths = [source,root/'plan.json',root/case/'run.yaml',root/case/'PIC_COMPLETE.json',
         directory/'entry-particles.h5',directory/'und-entry-particles.h5',
         directory/'p1-particles.h5',directory/'entry-transport-energy.h5',
         directory/'und-entry-transport-energy.h5']
@@ -290,21 +292,21 @@ def run(top, out):
     np.savez_compressed(out/'figure_data.npz',**arrays)
     detector_comparison=compare_energy_planes(directory)
     save(out/'detector_energy_comparison.json',detector_comparison)
-    summary=dict(case='energy',all_input_particles=n,represented_electrons=float(Q),
+    summary=dict(case=case,all_input_particles=n,represented_electrons=float(Q),
         wavelength_m=wl,first_segment_end_m=end,attribution=attribution,
         p1=d['stage'],correlations=correlations,top_individual_contributions=top_share,
         release_phase_alias=alias,detector_energy_comparison=detector_comparison,no_new_simulation=True,
         reference_limit='Same averaged undulator and paraxial bulk focusing plus short-end approximation as previous entrance analysis; not exact 3D trajectories.',
-        energy_limit='Raw whole-Maxwell-step momentum interpolation disagrees with independent substep scalar energy at the undulator entrance by about 645 eV per electron. Raw gamma correlations are diagnostic associations, not established physical energy modulation. Raw arrival time uses the same whole-step chord; its BF error is not quantified here.',
+        energy_limit='Raw whole-Maxwell-step momentum interpolation and independent substep scalar energy use distinct reconstructions; measured difference is in detector_energy_comparison. Raw gamma correlations are diagnostic associations, not established physical energy modulation. Raw arrival time uses the same whole-step chord; its BF error is not quantified here.',
         missing_history='No trajectories and no particle plane between z=.01 and 2.166 m. Force-source causality and onset location remain unavailable.')
     save(out/'RESULT.json',summary)
     after=[digest(p) for p in paths];assert before==after
     validation['source_manifest']=before;validation['all_sources_unchanged']=True
-    validation['only_energy_case_read']=True
+    validation['only_requested_case_read']=case
     save(out/'VALIDATION.json',validation)
     render(out,summary,stage_rows,moment_rows,phase_rows,arrays,contributions)
     document(out,summary,stage_rows,moment_rows,contributions)
-    save(out/'COMPLETE.json',dict(complete=True,case='energy',new_simulation=False))
+    save(out/'COMPLETE.json',dict(complete=True,case=case,new_simulation=False))
     print(json.dumps(summary,indent=2),flush=True)
 
 
@@ -350,7 +352,8 @@ def render(out,result,stages,harmonics,phase_rows,data,contributions):
     axes[1,1].set_title('(d) Raw-plane energy structure at the two faces')
     axes[1,1].legend(fontsize=9)
     for ax in axes.flat:ax.grid(alpha=.18)
-    fig.suptitle('Energy-coupled PIC: phase origin of first-segment bunching\n'
+    label='Energy-coupled' if result['case']=='energy' else 'Momentum-matched'
+    fig.suptitle(label+' PIC: phase origin of first-segment bunching\n'
         'Full input; 16-clone families preserved; raw energy and arrival-time diagnostics require consistency checks',fontsize=12)
     fig.savefig(out/'energy_startup_origin.png',dpi=220,bbox_inches='tight');plt.close(fig)
     fig,axes=plt.subplots(2,1,figsize=(10.8,6.6),layout='constrained',sharex=True)
@@ -361,20 +364,22 @@ def render(out,result,stages,harmonics,phase_rows,data,contributions):
     axes[1].set_ylabel('Mean phase residual\nwithin family (rad)')
     axes[1].set_xlabel('Actual undulator-entrance optical phase (rad)')
     for ax in axes:ax.grid(alpha=.18);ax.axhline(0,color='#777777',lw=.8)
-    fig.suptitle('Phase-resolved endpoint changes; energy-coupled case only',fontsize=13)
+    fig.suptitle('Phase-resolved endpoint changes; '+label.lower()+' case',fontsize=13)
     fig.savefig(out/'phase_resolved_changes.png',dpi=220,bbox_inches='tight');plt.close(fig)
 
 
 def document(out,result,stages,harmonics,contributions):
-    text='# 能量守恒版：首段新增BF的相位来源\n\n'
-    text+='仅使用原始输入和能量版已闭合的入口、磁入口、首段出口；本轮不读取显式版，不启动新仿真。\n\n'
-    text+='现有过面记录中的新增BF，主要需要原本同动量的16个相位克隆之间产生差别位移；整组共同迟滞无法解释。束团内部贡献占主导。端点重建能量与到达相位存在较强负相关，但本轮同时查实粒子面能量与独立能量面的统计不一致，不能将这种相关直接解释为真实场做功。\n\n'
+    label='能量守恒版' if result['case']=='energy' else '动量匹配版'
+    text='# '+label+'：首段新增BF的相位来源\n\n'
+    text+='仅使用原始输入和'+label+'已闭合的入口、磁入口、首段出口；本轮不读取显式版，不启动新仿真。\n\n'
+    endstage=result['p1']
+    text+=f"首段末记录中的局部RMS BF为{endstage['bunching']['actual']['local_rms']:.9g}，无反馈参考为{endstage['bunching']['reference']['local_rms']:.9g}。下面把实际相位变化拆成每16粒子组共同位移与组内差别位移，不预设哪项占主导。端点能量关联和同面重建差须分别报告，不能直接当作受力因果。\n\n"
     dc=result['detector_energy_comparison']
-    text+=f"**优先核对探测口径：入口到磁入口，原粒子面给出平均能量变化{dc['raw_mean_change_eV']:.3f} eV，同面独立标量能量面给出{dc['scalar_mean_change_eV']:+.3f} eV。磁入口两口径相差{dc['rows'][1]['raw_minus_scalar_eV']:.3f} eV/电子，粒子数与电荷一致。** 这已证明能量重建口径存在差异，但尚未测出原过面时间插值对BF的误差。\n\n"
+    text+=f"**同面探测口径：入口到磁入口，原粒子面给出平均能量变化{dc['raw_mean_change_eV']:.3f} eV，同面独立标量能量面给出{dc['scalar_mean_change_eV']:+.3f} eV。磁入口两口径相差{dc['rows'][1]['raw_minus_scalar_eV']:.3f} eV/电子，粒子数与电荷一致。** 两种重建方法不同，实际差值如上；原过面时间插值对BF的误差尚未量化。\n\n"
     text+='![新增BF来源](energy_startup_origin.png)\n\n'
     text+='|首段末采用的相位变化|全局BF|10切片局部RMS|\n|---|---:|---:|\n'
     names={'reference':'无反馈参考','family_common_only':'仅每16粒子组共同位移',
-        'within_family_only':'仅组内差别位移','actual':'实际能量版'}
+        'within_family_only':'仅组内差别位移','actual':'实际'+label}
     for r in stages:
         if r['plane']=='p1':text+=f"|{names[r['phase_model']]}|{r['global_b']:.9g}|{r['local_rms']:.9g}|\n"
     text+='\n## 精确相位分解\n\n'
@@ -391,13 +396,13 @@ def document(out,result,stages,harmonics,contributions):
         h=next(r for r in harmonics if r['plane']==plane and r['harmonic']==1 and r['quantity']=='delta_gamma_within')
         text+=f"|{plane}|{st['residual_phase_rms_rad']:.8g}|{st['within_delta_gamma_rms']*m_e*c*c/e:.8g}|{h['global_abs']*m_e*c*c/e:.8g}|\n"
     early=json.loads((out/'und-entry_stage.json').read_text())
-    text+='\n一阶谐波按实际磁入口相位计算。谐波模不是余弦峰值，纯正弦时峰值为其2倍。目标一阶结构在现有记录中主要于0.01–2.166 m之间发展；目前这段没有中间粒子面，不能确定更精确起始位置。磁入口重建能量主要包含10、20、30次谐波，三者描述性拟合解释了'+f"{100*early['harmonic_10_20_30_fit']['within_energy_variance_fraction']:.3f}%"+'的组内方差；结合独立能量面对照，不应将它直接当作真实前端能损。\n\n'
-    text+='## 查实的探测口径差异\n\n'
+    text+='\n一阶谐波按实际磁入口相位计算。谐波模不是余弦峰值，纯正弦时峰值为其2倍。磁入口与首段出口的变化见表；0.01–2.166 m之间没有中间粒子面，不能确定更精确起始位置。对磁入口raw重建能量，以10、20、30次谐波作描述性拟合，解释了'+f"{100*early['harmonic_10_20_30_fit']['within_energy_variance_fraction']:.3f}%"+'的组内方差。它须结合独立能量面对照解释，不能直接当作真实前端能损。\n\n'
+    text+='## 同面探测口径核对\n\n'
     text+='|同一固定面|raw粒子面平均动能/eV|独立标量能量面平均动能/eV|raw减标量/eV|\n|---|---:|---:|---:|\n'
     for row in dc['rows']:
         text+=f"|{row['plane']}|{row['raw_mean_kinetic_eV']:.6f}|{row['scalar_mean_kinetic_eV']:.6f}|{row['raw_minus_scalar_eV']:.6f}|\n"
     text+='\n源码核对：`particle_energy_audit.h`逐粒子子步通知能量面，`simulation.cpp`提交这些子步过面事件；原粒子面则在整个Maxwell活动段两端之间，对位置、到达时刻和boost三动量作弦插值，再重建lab动量。日志记录每Maxwell步含7个粒子子步。\n\n'
-    text+=r'同端点同插值比例$a$下，由凸性有$\gamma_{raw}-\gamma_{endpoint}=\gamma_b\{\sqrt{1+|(1-a)\mathbf u_0^\prime+a\mathbf u_1^\prime|^2}-(1-a)\gamma_0^\prime-a\gamma_1^\prime\}\le0$。实际两个探测器的端点跨度也不同，因此不能把645 eV全归给这个单独公式。'+'\n\n'
+    text+=r'同端点同插值比例$a$下，由凸性有$\gamma_{raw}-\gamma_{endpoint}=\gamma_b\{\sqrt{1+|(1-a)\mathbf u_0^\prime+a\mathbf u_1^\prime|^2}-(1-a)\gamma_0^\prime-a\gamma_1^\prime\}\le0$。实际两个探测器的端点跨度也不同，因此不能把全部观测差归给这个单独公式。'+'\n\n'
     text+='下一步最小核验应保持推进不变，让原粒子面与独立能量面采用同一子步事件，并在首段出口增加同口径对照，分别量化到达时间/BF与能量的诊断变化；本轮尚未修改探测器或启动该测试。\n\n'
     text+='![相位分箱](phase_resolved_changes.png)\n\n'
     text+='## 解释限制\n\n'
@@ -412,4 +417,5 @@ def document(out,result,stages,harmonics,contributions):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('top');p.add_argument('out')
-    a=p.parse_args();run(a.top,a.out)
+    p.add_argument('--case',choices=['energy','momentum'],default='energy')
+    a=p.parse_args();run(a.top,a.out,a.case)
