@@ -1,8 +1,11 @@
 from pathlib import Path
-import json,sys,tempfile,csv
+import argparse,json,sys,tempfile,csv
 import numpy as np,h5py,yaml
 sys.path.insert(0,'/public/home/wfollowm/APRL_Workspace/source/aprl/verification/performance/cases/energy_critical_control')
 import mode_review as m
+parser=argparse.ArgumentParser()
+parser.add_argument('--output',type=Path,default=Path('/public/home/wfollowm/APRL_Workspace/results/energy_critical_control_20261105/closed-review/MODE_READER_REPAIR_IO_VALIDATION.json'))
+args=parser.parse_args()
 root=Path(tempfile.mkdtemp(prefix='aprl-mode-review-synthetic-'))
 gamma=2.;beta=np.sqrt(1-1/gamma**2);dz=1e-5;dt=dz/299792458;nt=6;t0=-2e-14
 geom=dict(boost_gamma=gamma,dz_m=dz,dt_box_s=dt,predicted_frame_time_origin_lab_s=t0,mesh_center_z_m=0.,reference_nz=128,active_nz=64,predicted_box_translation_m=.25*dz,predicted_entry_fraction=.25,steps=nt)
@@ -13,9 +16,9 @@ for mode,amp,cos in [('off',1.,-.9),('on',.01,.99)]:
  m.save(d/'RESULT.json',dict(program_integrity_pass=True,stage='full',steps=nt,ranks=1,synthetic_fixture=True))
  m.save(d/'PIC_COMPLETE.json',dict(analysis_complete=True,stage='full',synthetic_fixture=True))
  m.save(d/'run-plan.json',dict(expected_steps=nt,ranks=1))
- (d/'run.yaml').write_text(yaml.safe_dump({'beam':{'reference':{'activation_plane_z':0.}}}))
+ (d/'run.yaml').write_text(yaml.safe_dump({'beam':{'reference':{'activation_plane_z':0.}},'energy_ledger':{'enabled':True,'sample_interval_steps':2}}))
  (d/'aprl.log').write_text('Moving window: reference_nz=128 field_nz=64 initial_offset=64\n')
- (d/'reference/window-rank-0.csv').write_text('step,origin_box_z_m\n1,'+str(-dz)+'\n')
+ (d/'reference/window-rank-0.csv').write_text('step,origin_box_z_m\n'+''.join(str(n)+','+format(-n*dz,'.17g')+'\n' for n in [2,4,6,6]))
  with h5py.File(d/'detectors/entry-transport-energy.h5','w') as f:
   g=f.create_group('energy_plane');g.create_dataset('complete',data=1)
   g.attrs.update(time_lab_origin_s=t0,boost_gamma=gamma,boost_beta=beta)
@@ -36,6 +39,22 @@ for mode,amp,cos in [('off',1.,-.9),('on',.01,.99)]:
   with h5py.File(d/'detectors'/(plane+'.h5'),'w') as f:
    g=f.create_group('field_plane');g.create_dataset('complete',data=1);g.create_dataset('committed_samples',data=nt+1)
    g.create_dataset('time_s',data=t0+beta*z/299792458+np.arange(nt+1)*dt/gamma);g.create_dataset('fields',data=data);g.attrs['plane_z_m']=z
+# The window ledger is sampled at step two, with a repeated final row. A
+# genuine initial row is optional; missing/incorrect sampled rows are not.
+window=root/'off/reference/window-rank-0.csv';original_window=window.read_text()
+initial=m.actual_geometry(root,root/'off',geom)['origin0']
+window.write_text(original_window.replace('step,origin_box_z_m\n','step,origin_box_z_m\n0,0\n'))
+assert abs(m.actual_geometry(root,root/'off',geom)['origin0']-initial)<1e-18
+bad_windows=[
+ ('bad_first_step',original_window.replace('\n2,','\n1,',1),'Missing/repeated sampled moving-window step'),
+ ('missing_first_sample','\n'.join([original_window.splitlines()[0],*original_window.splitlines()[2:]])+'\n','Missing/repeated sampled moving-window step'),
+ ('wrong_origin',original_window.replace(format(-2*dz,'.17g'),format(-3*dz,'.17g'),1),'Actual moving origin differs')]
+for label,text,message in bad_windows:
+ window.write_text(text)
+ try:m.actual_geometry(root,root/'off',geom)
+ except RuntimeError as e:assert message in str(e),(label,str(e))
+ else:raise AssertionError('Invalid window ledger accepted: '+label)
+window.write_text(original_window)
 # Completion guards must reject before selected field data is opened.
 marker=root/'on/PIC_COMPLETE.json'; original_marker=marker.read_text(); marker.unlink()
 try:m.compare(root)
@@ -54,5 +73,6 @@ res=[x['signature_residual_amplitude'] for x in r['cases']['off']['rows'] if x['
 assert max(res)<1e-8,max(res)
 assert abs(r['cases']['off']['min_field_overlap']+.9)<1e-12
 assert abs(r['cases']['on']['min_field_overlap']-.99)<1e-12
-m.save(Path('/public/home/wfollowm/APRL_Workspace/results/energy_critical_control_20261105/design/MODE_REVIEW_IO_VALIDATION.json'),dict(passed=True,synthetic_fixture=str(root),scope='Manufactured analysis IO only; no scientific/PIC result',unclosed_plane_rejected=True,missing_final_pic_marker_rejected=True,expected_projection_ratio=.01,max_projection_ratio_error=float(max(abs(np.asarray(ratios)-.01))),max_exact_signature_residual=float(max(res)),off_overlap=-.9,on_overlap=.99,figure=str(out/'mode_comparison.png')))
+args.output.parent.mkdir(parents=True,exist_ok=True)
+m.save(args.output,dict(passed=True,synthetic_fixture=str(root),scope='Manufactured analysis IO only; no scientific/PIC result',unclosed_plane_rejected=True,missing_final_pic_marker_rejected=True,sampled_first_step_two_accepted=True,optional_initial_step_zero_accepted=True,duplicate_identical_final_sample_accepted=True,invalid_window_cases_rejected=[x[0] for x in bad_windows],expected_projection_ratio=.01,max_projection_ratio_error=float(max(abs(np.asarray(ratios)-.01))),max_exact_signature_residual=float(max(res)),off_overlap=-.9,on_overlap=.99,figure=str(out/'mode_comparison.png')))
 print(root)

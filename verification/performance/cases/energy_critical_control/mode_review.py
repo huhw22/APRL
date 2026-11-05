@@ -118,10 +118,32 @@ def actual_geometry(root, directory, geometry):
     require(int(hit[1]) == geometry['reference_nz'] and int(hit[2]) == geometry['active_nz'], 'Actual field/reference mesh differs')
     offset = int(hit[3])
     with (directory/'reference/window-rank-0.csv').open() as f:
-        first = next(csv.DictReader(f))
-    require(int(first['step']) == 1, 'Missing first remap')
-    origin0 = LD(first['origin_box_z_m'])+dz
-    require(abs(origin0-(reference_origin+offset*dz)) < dz*LD('1e-9'), 'Actual moving origin differs')
+        window_rows = list(csv.DictReader(f))
+    # finishMovingWindowStep samples at the enabled energy-ledger cadence,
+    # not necessarily step one. finalizeMovingWindow always adds the final
+    # row, including an identical duplicate when it lies on that cadence.
+    # An explicit initial-state row is also unambiguous if supplied.
+    actual_steps = int(json.loads((directory/'RESULT.json').read_text())['steps'])
+    ledger = cfg.get('energy_ledger', {})
+    require(ledger.get('enabled') is True, 'Mode review requires the sampled energy ledger')
+    cadence = int(ledger.get('sample_interval_steps', 1))
+    require(cadence > 0 and actual_steps > 0, 'Invalid moving-window cadence or duration')
+    sampled_steps = [int(row['step']) for row in window_rows]
+    expected_steps = list(range(cadence, actual_steps+1, cadence))+[actual_steps]
+    if sampled_steps and sampled_steps[0] == 0:
+        expected_steps.insert(0, 0)
+    require(sampled_steps == expected_steps, 'Missing/repeated sampled moving-window step')
+    expected_origin0 = reference_origin+offset*dz
+    for row, step in zip(window_rows, sampled_steps):
+        observed = LD(row['origin_box_z_m'])
+        expected = reference_origin+(offset-step)*dz
+        require(np.isfinite(observed) and abs(observed-expected) < dz*LD('1e-9'),
+                'Actual moving origin differs')
+    if len(sampled_steps) >= 2 and sampled_steps[-2] == sampled_steps[-1]:
+        require(window_rows[-2] == window_rows[-1], 'Repeated final moving-window row differs')
+    first = window_rows[0]
+    origin0 = LD(first['origin_box_z_m'])+sampled_steps[0]*dz
+    require(abs(origin0-expected_origin0) < dz*LD('1e-9'), 'Reconstructed moving origin differs')
     translation = LD(geometry['predicted_box_translation_m'])
     # The current program does not emit boxZOrigin at full precision. This
     # value is reconstructed from the exact frozen input by prepare.py.
@@ -130,7 +152,10 @@ def actual_geometry(root, directory, geometry):
     require(abs(((f0-predicted_f+LD('.5')) % 1)-LD('.5')) < LD('1e-8'), 'Prepared plane/grid fraction differs')
     return dict(g=g, beta=beta, dz=dz, dt=dt, t0=t0, anchor=anchor,
                 translation=translation, origin0=origin0, plan=plan,
-                coordinate_note='Frame time/gamma/beta and moving-grid origin checked against completed output; box translation reconstructed from frozen input by prepare.py, not directly recorded at full precision by the program.')
+                window_origin_validation=dict(first_record_step=sampled_steps[0],
+                    sample_interval_steps=cadence, final_step=actual_steps,
+                    sampled_rows=len(window_rows), all_sampled_origins_checked=True),
+                coordinate_note='Frame time/gamma/beta and every sampled moving-grid origin checked against completed output; initial origin reconstructed as recorded origin + recorded step*dz. Box translation reconstructed from frozen input by prepare.py, not directly recorded at full precision by the program.')
 
 
 def require_case_complete(directory):
@@ -194,7 +219,8 @@ def analyze_mode(root, mode, geometry, targets):
         sources.append(dict(**before, selected_frames=chosen))
     return dict(rows=rows, overlap=overlap, sources=sources,
         min_field_overlap=float(cosine.min()), field_overlap_final=float(cosine[-1]),
-        coordinate_note=geo['coordinate_note'])
+        coordinate_note=geo['coordinate_note'],
+        window_origin_validation=geo['window_origin_validation'])
 
 
 def write_csv(path, rows):
