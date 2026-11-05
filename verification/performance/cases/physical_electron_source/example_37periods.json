@@ -1,0 +1,29 @@
+{
+  "schema": "APRL_physical_electron_source_v1",
+  "electrons": 60360290,
+  "count_mode": "physical_fixed_n",
+  "seed": 20261106,
+  "profile": {
+    "type": "parabolic_time",
+    "full_duration_s": 2.2714570353391546e-12,
+    "peak_current_A": 53.27545382794002,
+    "window_start_s": 1.0439524758376923e-12,
+    "window_stop_s": 1.2258657016116074e-12,
+    "bin_width_s": 1.63885788985509e-15
+  },
+  "phase_space": {
+    "gamma_mean": 298.2608843802298,
+    "gamma_sigma": 0.059652176876045966,
+    "sigma_x_m": 0.000132,
+    "sigma_y_m": 7.5e-05,
+    "emittance_n_x_m": 2.5e-06,
+    "emittance_n_y_m": 2.9e-06,
+    "alpha_x": 0.938,
+    "alpha_y": -0.705,
+    "parameter_plane_z_m": 0.01,
+    "output_plane_z_m": 0.0
+  },
+  "wavelength_m": 4.913172351123507e-07,
+  "chunk_records": 262144,
+  "compression": 0
+}
