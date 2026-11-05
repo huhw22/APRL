@@ -164,6 +164,24 @@ def pic_plane(root,out,plan,name,case='boris'):
     save(out/(name+'-summary.json'),result);print('PIC',name,summ['rect'],flush=True)
     del cube;gc.collect();return result
 
+def lattice_dump_positions(z,dz,steps):
+    """Coordinates of GENESIS dumps, including the terminal boundary.
+
+    Lattice/z labels step entrances. A dump at step len(z) is located at
+    z[-1]+dz[-1], although that endpoint is not itself a Lattice/z record.
+    Interior coordinates retain exactly the original z[step] values.
+    """
+    z=np.asarray(z);dz=np.asarray(dz);steps=np.asarray(steps)
+    need(z.ndim==dz.ndim==steps.ndim==1 and len(z)>0 and z.shape==dz.shape,
+         'Invalid GENESIS lattice or dump shape')
+    need(np.isfinite(z).all() and np.isfinite(dz).all(), 'Nonfinite GENESIS lattice')
+    indices=steps.astype(np.int64)
+    need(np.array_equal(indices,steps) and np.all(indices>=0) and np.all(indices<=len(z)),
+         'GENESIS dump step is outside the lattice boundaries')
+    positions=np.empty(len(z)+1,dtype=np.result_type(z.dtype,dz.dtype))
+    positions[:-1]=z;positions[-1]=z[-1]+dz[-1]
+    return positions[indices]
+
 def genesis(root,out,plan,pic,reference_directory=None):
     base=root/'genesis' if reference_directory is None else Path(reference_directory)
     photon=h*c/e/plan['physics']['wavelength_m']
@@ -172,6 +190,7 @@ def genesis(root,out,plan,pic,reference_directory=None):
         gamma0=plan['physics']['gamma'];uz=np.sqrt(gamma0*gamma0-1-aw*aw)
         reference_lag=dz*(1+aw*aw)/(uz*(gamma0+uz))
         dumpsteps=f['Meta/Fielddumps/intstep'][:].astype(int)
+        dumppositions=lattice_dump_positions(z,dz,dumpsteps)
         zplot=f['Lattice/zplot'][:];I=f['Beam/current'][:];ga=f['Beam/energy'][:]
         b=f['Beam/bunching'][:]*np.exp(1j*f['Beam/bunchingphase'][:])
         eg=(I*ga).sum(1)/I.sum(1);bg=abs((I*b).sum(1)/I.sum(1))
@@ -182,8 +201,9 @@ def genesis(root,out,plan,pic,reference_directory=None):
         name=p['plane'];position=p['z_m']
         if name=='far':path=base/'far.fld.h5';step=len(z)
         else:
-            step=int(dumpsteps[np.argmin(abs(z[dumpsteps]-position))])
-            need(abs(z[step]-position)<1e-8,'Wrong dump plane');path=base/f'reference.{step}.fld.h5'
+            dumpindex=int(np.argmin(abs(dumppositions-position)))
+            step=int(dumpsteps[dumpindex])
+            need(abs(dumppositions[dumpindex]-position)<1e-8,'Wrong dump plane');path=base/f'reference.{step}.fld.h5'
         cache=np.load(out/(name+'-spectra.npz'));x=cache['x_m'];y=cache['y_m'];area=(x[1]-x[0])*(y[1]-y[0])
         with h5py.File(path,'r') as f:
             ns=int(f['slicecount'][0]);ng=int(f['gridpoints'][0]);ds=float(f['slicespacing'][0])
