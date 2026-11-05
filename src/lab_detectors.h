@@ -28,6 +28,19 @@ namespace aprl
     long double kineticBox, totalBox, cpzBox;
     long double kineticLab, totalLab, cpzLab;
   };
+  /* Diagnostic-only affine four-momentum of an actual converged particle
+   * substep. Interpolating its endpoint worldline is not an analytic crossing
+   * solve, and the affine (gamma,u) pair need not be exactly on shell. */
+  struct SubstepParticleCrossing
+  {
+    std::size_t planeIndex;
+    std::uint64_t particleId, sourceId;
+    Double timeBox, timeLab, position[3];
+    Double properVelocityLab[3], properVelocityBox[3];
+    Double gammaLab, gammaBox, kineticLab, kineticBox;
+    Double charge, mass, weight;
+    std::int32_t direction;
+  };
   /* An immutable prefix of an existing detector file at a checkpoint.  A
    * restarted run writes a new segment; reference entries in these prefixes
    * must remain available to radiation/near-field postprocessing. */
@@ -83,6 +96,16 @@ namespace aprl
                              Double timeBoxAfter);
 
     bool hasEnergyPlanes() const;
+    bool hasSubstepParticlePlanes() const;
+    void previewSubstepParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,
+                                   Double timeBoxBefore, Double timeBoxAfter,
+                                   std::vector<SubstepParticleCrossing>& events) const;
+    void commitSubstepParticleCrossings(
+        const std::vector<SubstepParticleCrossing>& events, Double maximumTimeBox);
+    void captureSubstepParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,
+                                   Double timeBoxBefore, Double timeBoxAfter);
     void previewEnergyParticleStep(const RelativisticParticleSI& before,
                                    const RelativisticParticleSI& after,
                                    Double timeBoxBefore, Double timeBoxAfter,

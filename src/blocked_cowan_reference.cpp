@@ -209,7 +209,7 @@ struct BlockedCowanReference::Impl {
     std::uint64_t used=0;
     std::vector<Double> values;
   };
-  bool quintic=false;
+  bool quintic=false,linearNotch=false;
   EBGridGeometry g;
   FieldVector<Double> origin;
   Double beta,translation,upperWeight,lowerWeight,magneticScale;
@@ -229,11 +229,12 @@ struct BlockedCowanReference::Impl {
   Impl(const EBGridGeometry& geometry,const FieldVector<Double>& where,
        const std::vector<RelativisticParticleSI>& particles,Double velocity,
        const std::size_t guards[3],std::size_t block,const std::string& dir,
-       MPI_Comm communicator,bool shaped)
-    : quintic(shaped),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
+       MPI_Comm communicator,bool shaped,bool notch)
+    : quintic(shaped),linearNotch(notch),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
       lowerWeight(0.),magneticScale(0.),requestedBlockLayers(block),blockLayers(block),
       area(0),fullArea(0),directory(dir) {
     const auto start=Clock::now();
+    if(quintic&&linearNotch)throw std::invalid_argument("Ambiguous reference source shape");
     configure(guards,communicator);
     // Validate the discrete operator before any filesystem mutation.
     std::vector<Double> diagonal(area),offDiagonal(area);
@@ -244,7 +245,7 @@ struct BlockedCowanReference::Impl {
     checkpointFile.create(directory+"/checkpoints.bin");
     phiFile.create(directory+"/phi.bin");
     stats.particles=particles.size();
-    if(quintic)depositQuintic(particles);else deposit(particles);
+    if(quintic||linearNotch)depositQuintic(particles);else deposit(particles);
     solve(diagonal,offDiagonal);
     validateFileLengths();
     // Publish completion only after data have reached the shared filesystem.
@@ -259,11 +260,12 @@ struct BlockedCowanReference::Impl {
 
   Impl(const EBGridGeometry& geometry,const FieldVector<Double>& where,
        Double velocity,const std::size_t guards[3],std::size_t block,
-       const std::string& dir,MPI_Comm communicator,bool shaped)
-    : quintic(shaped),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
+       const std::string& dir,MPI_Comm communicator,bool shaped,bool notch)
+    : quintic(shaped),linearNotch(notch),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
       lowerWeight(0.),magneticScale(0.),requestedBlockLayers(block),blockLayers(block),
       area(0),fullArea(0),directory(dir) {
     const auto start=Clock::now();
+    if(quintic&&linearNotch)throw std::invalid_argument("Ambiguous reference source shape");
     configure(guards,communicator);
     readMetadata();
     rhoFile.openReadOnly(directory+"/rho.bin");
@@ -380,6 +382,7 @@ struct BlockedCowanReference::Impl {
       << "\npotential_bytes " << bytes(product(area,nodes[2]))
       << "\nEND_CONTRACT\n";
     if(quintic)out<<"longitudinal_source quintic-continuum-seven-point-v1\n";
+    if(linearNotch)out<<"longitudinal_source linear-notch-sin6-seven-point-v1\n";
     return out.str();
   }
 
@@ -514,7 +517,7 @@ struct BlockedCowanReference::Impl {
     std::vector<double> block(product(blockLayers,area));long double deposited=0.;
     for(std::size_t b=0;b<stats.blocks;++b){const auto count=product(layers(b),area);std::fill(block.begin(),block.begin()+count,0.);
       const auto first=b?b-1:0,last=std::min(stats.blocks,b+2);
-      for(std::size_t n=offsets[first];n<offsets[last];++n){const auto& p=particles[order[n]];const double x=(p.position[0]-origin[0])/g.dx,y=(p.position[1]-origin[1])/g.dy,z=(p.position[2]-origin[2])/g.dz;const long long ix=static_cast<long long>(std::floor(x)),iy=static_cast<long long>(std::floor(y));const double fx=x-ix,fy=y-iy,scale=p.charge/(g.dx*g.dy*g.dz);const auto weights=longitudinal_shape::basis(z);
+      for(std::size_t n=offsets[first];n<offsets[last];++n){const auto& p=particles[order[n]];const double x=(p.position[0]-origin[0])/g.dx,y=(p.position[1]-origin[1])/g.dy,z=(p.position[2]-origin[2])/g.dz;const long long ix=static_cast<long long>(std::floor(x)),iy=static_cast<long long>(std::floor(y));const double fx=x-ix,fy=y-iy,scale=p.charge/(g.dx*g.dy*g.dz);const auto weights=longitudinal_shape::basis(z,false,linearNotch?longitudinal_shape::Shape::LinearNotch:longitudinal_shape::Shape::QuinticCompensated);
        for(unsigned c=0;c<weights.count;++c){const auto k=weights.first+c;if(weights.v[c]==0.)continue;
         for(unsigned j=0;j<2;++j)for(unsigned i=0;i<2;++i){const double value=scale*(i?fx:1.-fx)*(j?fy:1.-fy)*weights.v[c];if(value==0.)continue;if(k<0||ix<0||iy<0||!interior(ix+i,iy+j,k))throw std::invalid_argument("Quintic reference support touches Dirichlet surface");const std::size_t kk=k-lower[2]-1;if(kk/blockLayers!=b)continue;block[(kk%blockLayers)*area+(iy+j-lower[1]-1)*nodes[0]+ix+i-lower[0]-1]+=value;}
        }
@@ -830,16 +833,16 @@ struct BlockedCowanReference::Impl {
 BlockedCowanReference::BlockedCowanReference(const EBGridGeometry& g,
     const FieldVector<Double>& origin,const std::vector<RelativisticParticleSI>& particles,
     Double beta,const std::size_t guards[3],std::size_t block,const std::string& directory,
-    MPI_Comm communicator,bool shaped)
-  :impl_(new Impl(g,origin,particles,beta,guards,block,directory,communicator,shaped)) {}
+    MPI_Comm communicator,bool shaped,bool notch)
+  :impl_(new Impl(g,origin,particles,beta,guards,block,directory,communicator,shaped,notch)) {}
 BlockedCowanReference::BlockedCowanReference(std::unique_ptr<Impl> implementation)
   :impl_(std::move(implementation)) {}
 std::unique_ptr<BlockedCowanReference> BlockedCowanReference::openPrepared(
     const EBGridGeometry& g,const FieldVector<Double>& origin,Double beta,
     const std::size_t guards[3],std::size_t block,const std::string& directory,
-    MPI_Comm communicator,bool shaped) {
+    MPI_Comm communicator,bool shaped,bool notch) {
   return std::unique_ptr<BlockedCowanReference>(new BlockedCowanReference(
-    std::unique_ptr<Impl>(new Impl(g,origin,beta,guards,block,directory,communicator,shaped))));
+    std::unique_ptr<Impl>(new Impl(g,origin,beta,guards,block,directory,communicator,shaped,notch))));
 }
 BlockedCowanReference::~BlockedCowanReference() = default;
 Double BlockedCowanReference::field(unsigned c,std::size_t i,std::size_t j,std::size_t k) {

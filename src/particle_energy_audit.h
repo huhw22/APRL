@@ -68,13 +68,16 @@ public:
   const BoostFrameTransform* frame = NULL;
   const LabDetectorManager* detectors = NULL;
   bool recordWork = false;
+  bool recordSubstepParticles = false;
   unsigned observedSubsteps = 0;
   std::vector<Segment> segments;
   std::vector<EnergyPlaneCrossing> crossings;
+  std::vector<SubstepParticleCrossing> substepCrossings;
   ParticleWorkGeometry geometry;
   void reset(const BoostFrameTransform& f, const LabDetectorManager* d, bool work) {
     frame=&f; detectors=d; recordWork=work;
-    segments.clear(); crossings.clear(); observedSubsteps=0;
+    recordSubstepParticles=d&&d->hasSubstepParticlePlanes();
+    segments.clear(); crossings.clear(); substepCrossings.clear(); observedSubsteps=0;
     geometry.fields=NULL;
   }
   void observe(const RelativisticParticleSI& before,
@@ -83,7 +86,11 @@ public:
     ++observedSubsteps;
     if (geometry.fields) geometry.observe(before,after,work);
     if (detectors)
-      detectors->previewEnergyParticleStep(before, after, begin, end, crossings);
+      {
+        detectors->previewEnergyParticleStep(before, after, begin, end, crossings);
+        if (recordSubstepParticles)
+          detectors->previewSubstepParticleStep(before, after, begin, end, substepCrossings);
+      }
     if (recordWork) {
       Segment s;
       s.begin=begin; s.end=end;

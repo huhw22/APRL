@@ -377,12 +377,13 @@ namespace aprl
         checkpointEnabled_ || !config_.checkpoint.restartFrom.empty() ||
         geometryAuditDirectory || gridAuditDirectory || stageAuditDirectory))
       throw std::invalid_argument("conservative-source requires moving Cowan, feedback, unfiltered current and no retirement/checkpoint/ballistic/legacy work probes");
-    {const int local=config_.mesh.longitudinalQuintic?1:0;int total=0;MPI_Allreduce(&local,&total,1,MPI_INT,MPI_SUM,communicator_);if(total!=0&&total!=size_)throw std::invalid_argument("longitudinal_shape must agree on every MPI rank");if(local&&!config_.mesh.conservativeSourceCoupling)throw std::invalid_argument("quintic-compensated requires conservative-source");}
+    {const int local=config_.mesh.longitudinalQuintic?1:(config_.mesh.longitudinalNotch?2:0);int lo=0,hi=0;MPI_Allreduce(&local,&lo,1,MPI_INT,MPI_MIN,communicator_);MPI_Allreduce(&local,&hi,1,MPI_INT,MPI_MAX,communicator_);if(lo!=hi)throw std::invalid_argument("longitudinal_shape must agree on every MPI rank");if(local&&!config_.mesh.conservativeSourceCoupling)throw std::invalid_argument("Wide longitudinal shapes require conservative-source");}
     const Double initializationStart = performanceNow();
     initialize();
     if(config_.mesh.conservativeSourceCoupling) {
       if(incident_)throw std::invalid_argument("conservative-source does not support incident waves");
-      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic));
+      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch));
+      if(config_.mesh.longitudinalNotch)logRoot(communicator_,"[source-coupling] linear-notch: matched seven-point charge/current/electric source shape and magnetic gather; F=1-sin^6(kz*dz/2); Cowan curls/dt unchanged");
       logRoot(communicator_,"[source-coupling] conservative-source; original release/migration/detectors; transactional trials and converged substep replay; original Cowan curls and committed CPML history once per step");
     }
     if(geometryAuditDirectory) {
@@ -4090,7 +4091,7 @@ namespace aprl
   void Simulation::pushDepositAndMigrate()
   {
     ChargeConservingCurrentDepositor depositor(*fields_, localOriginBox_,sourceCoupling_?sourceCoupling_->longitudinalCurrent():nullptr);
-    if(config_.mesh.longitudinalQuintic&&rank_==0&&movingWindow_->pending) {
+    if(config_.mesh.wideLongitudinalSource()&&rank_==0&&movingWindow_->pending) {
       movingWindow_->pending->visitNear(step_,8,[&](const RelativisticParticleSI& p){auto end=p.position;end[2]+=SI::c*globalGeometry_.dt*p.frozenBetaZ;sourceCoupling_->depositFrozenSourceSupport(p.position,end,p.charge,config_.energyLedger.enabled);});
     }
     ParticleWorkspace& workspace = *particleWorkspace_;
@@ -4851,7 +4852,7 @@ namespace aprl
             "An active particle is upstream of the moving window; "
             "the inlet guard did not contain its release event");
         result.prescribedWork = 0.0;
-        const bool transportAudit = detectors_ && detectors_->hasEnergyPlanes();
+        const bool transportAudit = detectors_ && (detectors_->hasEnergyPlanes() || detectors_->hasSubstepParticlePlanes());
         const bool auditEnabled = config_.energyLedger.enabled || transportAudit;
         if (auditEnabled) {
           result.borisWork.clear();
@@ -5031,6 +5032,11 @@ namespace aprl
               detectors_->captureEnergyParticleStep(particles_[index],
                 hasActiveSegment ? activeStart : particle, timeBoxSI_,
                 hasActiveSegment ? activeStartTime : timeBoxSI_ + globalGeometry_.dt);
+            if (detectors_ && detectors_->hasSubstepParticlePlanes() &&
+                particles_[index].frozen && (!hasActiveSegment || activeStartTime > timeBoxSI_))
+              detectors_->captureSubstepParticleStep(particles_[index],
+                hasActiveSegment ? activeStart : particle, timeBoxSI_,
+                hasActiveSegment ? activeStartTime : timeBoxSI_ + globalGeometry_.dt);
             if (detectors_ && result.captureFrozenSegment)
               detectors_->captureParticleStep(particles_[index],
                 hasActiveSegment ? activeStart : particle, timeBoxSI_,
@@ -5048,7 +5054,7 @@ namespace aprl
                     "Moving-window upstream admission requires an unreleased held particle on rank zero");
                 if (particle.position[2] < globalOriginBox_[2])
                   {
-                    if (config_.mesh.longitudinalQuintic)
+                    if (config_.mesh.wideLongitudinalSource())
                       sourceCoupling_->depositFrozenSourceSupport(start,
                         particle.position, particle.charge,
                         config_.energyLedger.enabled);
@@ -5068,7 +5074,7 @@ namespace aprl
                 // Its high-order source already overlaps retained grid nodes
                 // before that event, so complete the missing current prefix.
                 // The ordinary path below deposits the suffix exactly once.
-                if (config_.mesh.longitudinalQuintic)
+                if (config_.mesh.wideLongitudinalSource())
                   sourceCoupling_->depositFrozenSourceSupport(
                     particles_[index].position, start, particle.charge,
                     config_.energyLedger.enabled);
@@ -5121,6 +5127,14 @@ namespace aprl
                       std::numeric_limits<Double>::infinity());
                   else
                     detectors_->captureEnergyParticleStep(activeStart,particle,
+                      activeStartTime,timeBoxSI_ + globalGeometry_.dt);
+                }
+                if (detectors_ && detectors_->hasSubstepParticlePlanes() && hasActiveSegment) {
+                  if (result.auditTrace.observedSubsteps)
+                    detectors_->commitSubstepParticleCrossings(result.auditTrace.substepCrossings,
+                      std::numeric_limits<Double>::infinity());
+                  else
+                    detectors_->captureSubstepParticleStep(activeStart,particle,
                       activeStartTime,timeBoxSI_ + globalGeometry_.dt);
                 }
                 if (detectors_ && hasActiveSegment &&
@@ -5246,6 +5260,14 @@ namespace aprl
                 detectors_->captureEnergyParticleStep(activeStart,diagnosticEnd,
                   activeStartTime,diagnosticTime);
             }
+            if (detectors_ && detectors_->hasSubstepParticlePlanes() && hasActiveSegment) {
+              if (result.auditTrace.observedSubsteps)
+                detectors_->commitSubstepParticleCrossings(result.auditTrace.substepCrossings,
+                  hasTerminalEvent ? diagnosticTime : std::numeric_limits<Double>::infinity());
+              else
+                detectors_->captureSubstepParticleStep(activeStart,diagnosticEnd,
+                  activeStartTime,diagnosticTime);
+            }
             if (detectors_ && hasActiveSegment &&
                 activeStartTime < diagnosticTime)
               detectors_->captureParticleStep(
@@ -5333,7 +5355,7 @@ namespace aprl
           const Double remaining =
             (1.0 - transfer.activationKinkFraction) * globalGeometry_.dt;
           Double prescribedWork = 0.0;
-          const bool transportAudit = detectors_ && detectors_->hasEnergyPlanes();
+          const bool transportAudit = detectors_ && (detectors_->hasEnergyPlanes() || detectors_->hasSubstepParticlePlanes());
           const bool auditEnabled = config_.energyLedger.enabled || transportAudit;
           BorisWork borisWork;
           ParticleEnergyTrace auditTrace;
@@ -5398,6 +5420,14 @@ namespace aprl
               if (auditTerminal) throw std::logic_error("Terminal audit requires substep history");
               detectors_->captureEnergyParticleStep(activeStart,activeEnd,
                 activeStartTime,auditStop);
+            }
+            if (detectors_->hasSubstepParticlePlanes()) {
+              if (auditTrace.observedSubsteps)
+                detectors_->commitSubstepParticleCrossings(auditTrace.substepCrossings,
+                  auditTerminal ? auditStop : std::numeric_limits<Double>::infinity());
+              else
+                detectors_->captureSubstepParticleStep(activeStart,activeEnd,
+                  activeStartTime,auditStop);
             }
           }
           if (detectors_ && remaining > 0.0)

@@ -28,6 +28,7 @@ namespace aprl
     const int FIELD_SAMPLE_TAG = 8702;
     const int FIELD_NEIGHBOUR_TAG = 8703;
     const int ENERGY_SAMPLE_TAG = 8704;
+    const int SUBSTEP_CROSSING_TAG = 8705;
 
     struct FieldInterpolationAxis
     {
@@ -1453,6 +1454,108 @@ namespace aprl
       hid_t validationFileType_;
     };
 
+    hid_t createSubstepParticleType(bool file)
+    {
+      hid_t type = H5Tcreate(H5T_COMPOUND, sizeof(SubstepParticleCrossing));
+      requireHandle(type, "Cannot create substep particle datatype");
+      const hid_t real = file ? H5T_IEEE_F64LE : H5T_NATIVE_DOUBLE;
+      hsize_t three[1] = {3};
+      hid_t vector = H5Tarray_create2(real, 1, three);
+      requireHandle(vector, "Cannot create substep particle vector datatype");
+      try {
+#define SUBSTEP_MEMBER(name, member, kind) requireStatus(H5Tinsert(type, name, HOFFSET(SubstepParticleCrossing, member), kind), "Cannot add substep particle field " name)
+        SUBSTEP_MEMBER("particle_id", particleId, file ? H5T_STD_U64LE : H5T_NATIVE_UINT64);
+        SUBSTEP_MEMBER("source_id", sourceId, file ? H5T_STD_U64LE : H5T_NATIVE_UINT64);
+        SUBSTEP_MEMBER("time_box_s", timeBox, real);
+        SUBSTEP_MEMBER("time_s", timeLab, real);
+        SUBSTEP_MEMBER("position_m", position, vector);
+        SUBSTEP_MEMBER("proper_velocity", properVelocityLab, vector);
+        SUBSTEP_MEMBER("proper_velocity_box", properVelocityBox, vector);
+        SUBSTEP_MEMBER("gamma_lab", gammaLab, real);
+        SUBSTEP_MEMBER("gamma_box", gammaBox, real);
+        SUBSTEP_MEMBER("kinetic_lab_J", kineticLab, real);
+        SUBSTEP_MEMBER("kinetic_box_J", kineticBox, real);
+        SUBSTEP_MEMBER("charge_C", charge, real);
+        SUBSTEP_MEMBER("mass_kg", mass, real);
+        SUBSTEP_MEMBER("weight", weight, real);
+        SUBSTEP_MEMBER("crossing_direction", direction, file ? H5T_STD_I32LE : H5T_NATIVE_INT32);
+#undef SUBSTEP_MEMBER
+        if (file) requireStatus(H5Tpack(type), "Cannot pack substep particle file datatype");
+      } catch (...) { H5Tclose(vector); H5Tclose(type); throw; }
+      H5Tclose(vector);
+      return type;
+    }
+
+    class SubstepParticleWriter
+    {
+      hid_t file_=-1, group_=-1, records_=-1, committed_=-1, complete_=-1, memory_=-1;
+      std::uint64_t count_=0;
+      std::size_t limit_=0;
+      std::vector<SubstepParticleCrossing> buffer_;
+      void handles() noexcept {
+        if(records_>=0)H5Dclose(records_);if(committed_>=0)H5Dclose(committed_);
+        if(complete_>=0)H5Dclose(complete_);if(memory_>=0)H5Tclose(memory_);
+        if(group_>=0)H5Gclose(group_);if(file_>=0)H5Fclose(file_);
+        file_=group_=records_=committed_=complete_=memory_=-1;
+      }
+    public:
+      ~SubstepParticleWriter(){try{close(false);}catch(...){handles();}}
+      void open(const std::string& path,const ParticleDetectorPlaneConfig& plane,
+                int mpiSize,bool overwrite,const RunMetadata* metadata) {
+        if(file_>=0)throw std::logic_error("Substep particle writer already open");
+        limit_=plane.bufferRecords;buffer_.reserve(limit_);
+        file_=H5Fcreate(path.c_str(),overwrite?H5F_ACC_TRUNC:H5F_ACC_EXCL,H5P_DEFAULT,H5P_DEFAULT);
+        requireHandle(file_,"Cannot create substep particle file");
+        try {
+          group_=H5Gcreate2(file_,"/particle_substep_plane",H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);
+          requireHandle(group_,"Cannot create substep particle group");
+          memory_=createSubstepParticleType(false);
+          hid_t fileType=createSubstepParticleType(true);
+          hsize_t zero[1]={0},unlimited[1]={H5S_UNLIMITED},chunk[1]={static_cast<hsize_t>(limit_)};
+          hid_t space=H5Screate_simple(1,zero,unlimited),creation=H5Pcreate(H5P_DATASET_CREATE);
+          requireHandle(space,"Cannot create substep dataspace");requireHandle(creation,"Cannot create substep properties");
+          requireStatus(H5Pset_chunk(creation,1,chunk),"Cannot chunk substep records");
+          if(plane.compression){requireStatus(H5Pset_shuffle(creation),"Cannot shuffle substep records");requireStatus(H5Pset_deflate(creation,plane.compression),"Cannot compress substep records");}
+          records_=H5Dcreate2(group_,"records",fileType,space,H5P_DEFAULT,creation,H5P_DEFAULT);
+          H5Sclose(space);H5Pclose(creation);H5Tclose(fileType);
+          requireHandle(records_,"Cannot create substep records");
+          hid_t scalar=H5Screate(H5S_SCALAR);
+          committed_=H5Dcreate2(group_,"committed_records",H5T_STD_U64LE,scalar,H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);
+          complete_=H5Dcreate2(group_,"complete",H5T_STD_U8LE,scalar,H5P_DEFAULT,H5P_DEFAULT,H5P_DEFAULT);H5Sclose(scalar);
+          requireHandle(committed_,"Cannot create substep commit marker");requireHandle(complete_,"Cannot create substep completion marker");
+          writeUnsignedScalar(committed_,0,"Cannot initialize substep count");writeByteScalar(complete_,0,"Cannot initialize substep completion");
+          writeUnsignedAttribute(group_,"format_version",1);writeUnsignedAttribute(group_,"mpi_size",mpiSize);
+          writeStringAttribute(group_,"name",plane.name);writeDoubleAttribute(group_,"plane_z_m",plane.z);
+          writeStringAttribute(group_,"frame","laboratory; box four-momentum also stored");
+          writeStringAttribute(group_,"sampling","actual converged particle substep endpoints; diagnostic only");
+          writeStringAttribute(group_,"crossing_interpolation","linear endpoint worldline inside one actual substep; not an exact continuous-time solve");
+          writeStringAttribute(group_,"four_momentum_interpolation","affine endpoint (gamma,u); may be off shell; gamma is not recomputed from interpolated u");
+          writeStringAttribute(group_,"four_momentum_units","dimensionless (gamma,gamma*v/c); multiply by macro mass*c^2 for (energy,cP)");
+          writeStringAttribute(group_,"proper_velocity_unit","gamma*v/c");
+          writeStringAttribute(group_,"affects_particle_push","false");writeStringAttribute(group_,"affects_maxwell_current","false");
+          if(metadata){writeStringAttribute(group_,"run_id",metadata->runId);writeStringAttribute(group_,"source_revision",metadata->sourceRevision);writeStringAttribute(group_,"run_manifest",metadata->manifestPath);}
+        }catch(...){handles();throw;}
+      }
+      void append(const SubstepParticleCrossing& event){
+        if(file_<0)throw std::logic_error("Substep particle writer closed");
+        buffer_.push_back(event);if(buffer_.size()>=limit_)flush();
+      }
+      void flush(){
+        if(buffer_.empty())return;
+        hsize_t start[1]={count_},count[1]={static_cast<hsize_t>(buffer_.size())},extent[1]={start[0]+count[0]};
+        requireStatus(H5Dset_extent(records_,extent),"Cannot extend substep records");
+        hid_t fileSpace=H5Dget_space(records_),memorySpace=H5Screate_simple(1,count,NULL);
+        requireStatus(H5Sselect_hyperslab(fileSpace,H5S_SELECT_SET,start,NULL,count,NULL),"Cannot select substep records");
+        const herr_t status=H5Dwrite(records_,memory_,memorySpace,fileSpace,H5P_DEFAULT,buffer_.data());
+        H5Sclose(memorySpace);H5Sclose(fileSpace);requireStatus(status,"Cannot write substep records");
+        count_+=buffer_.size();buffer_.clear();writeUnsignedScalar(committed_,count_,"Cannot publish substep records");
+      }
+      void close(bool complete){
+        if(file_<0)return;flush();writeByteScalar(complete_,complete?1:0,"Cannot complete substep records");
+        requireStatus(H5Fflush(file_,H5F_SCOPE_GLOBAL),"Cannot flush substep file");handles();
+      }
+    };
+
     struct EnergyParticleRecord
     {
       std::uint64_t downstream, upstream;
@@ -1711,6 +1814,8 @@ namespace aprl
       if (!config_.enabled())
         throw std::invalid_argument(
           "LabDetectorManager requires at least one detector plane");
+      if (config_.substepParticlePlanes && config_.particlePlanes.empty())
+        throw std::invalid_argument("Substep particle diagnostics require particle planes");
       for (std::size_t detector = 0;
            detector < config_.fieldPlanes.size(); ++detector)
         {
@@ -1765,6 +1870,14 @@ namespace aprl
                     config_.particlePlanes[i].name + ".h5"),
                     config_.particlePlanes[i], size_, overwrite, metadata);
                   particleWriters_.push_back(std::move(writer));
+                  if (config_.substepParticlePlanes)
+                    {
+                      std::unique_ptr<SubstepParticleWriter> substep(new SubstepParticleWriter());
+                      substep->open(joinPath(config_.directory,
+                        config_.particlePlanes[i].name + "-substeps.h5"),
+                        config_.particlePlanes[i], size_, overwrite, metadata);
+                      substepWriters_.push_back(std::move(substep));
+                    }
                 }
               referenceWriters_.reserve(config_.fieldPlanes.size());
               if (hasValidationPlanes_)
@@ -1815,6 +1928,106 @@ namespace aprl
     }
 
     bool hasEnergyPlanes() const { return !config_.energyPlanes.empty(); }
+    bool hasSubstepParticlePlanes() const { return config_.substepParticlePlanes; }
+
+    void previewSubstepParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,
+                                   Double t0,Double t1,
+                                   std::vector<SubstepParticleCrossing>& events) const
+    {
+      if (!hasSubstepParticlePlanes()) return;
+      if (!(t1>t0)) throw std::invalid_argument("Substep diagnostic time interval must increase");
+      Double labT0,labZ0,labT1,labZ1;
+      frame_.boxToLab(t0,before.position[2],labT0,labZ0);
+      frame_.boxToLab(t1,after.position[2],labT1,labZ1);
+      for(std::size_t i=0;i<config_.particlePlanes.size();++i) {
+        const Double z=config_.particlePlanes[i].z;
+        const int direction=labZ0<z&&labZ1>=z?1:(labZ0>z&&labZ1<=z?-1:0);
+        if(!direction)continue;
+        const long double a=std::max(0.L,std::min(1.L,
+          ((long double)z-labZ0)/((long double)labZ1-labZ0)));
+        SubstepParticleCrossing event={};event.planeIndex=i;event.particleId=after.id;event.sourceId=after.sourceId;
+        event.direction=direction;event.timeBox=t0+a*(t1-t0);event.timeLab=labT0+a*(labT1-labT0);
+        for(unsigned d=0;d<2;++d)event.position[d]=before.position[d]+a*(after.position[d]-before.position[d]);
+        event.position[2]=z;event.charge=after.charge;event.mass=after.mass;event.weight=after.weight;
+        long double gamma[2],gammaLab[2],kinetic[2],kineticLab[2],uLab[2][3];
+        const RelativisticParticleSI* states[2]={&before,&after};
+        const long double rest=(long double)after.mass*SI::c*SI::c;
+        for(unsigned e=0;e<2;++e) {
+          const auto& p=*states[e];long double u2=0;
+          for(unsigned d=0;d<3;++d)u2+=(long double)p.properVelocity[d]*p.properVelocity[d];
+          gamma[e]=std::sqrt(1.L+u2);kinetic[e]=rest*u2/(gamma[e]+1.L);
+          uLab[e][0]=p.properVelocity[0];uLab[e][1]=p.properVelocity[1];
+          uLab[e][2]=frame_.gamma()*(long double)p.properVelocity[2]+frame_.gammaBeta()*gamma[e];
+          gammaLab[e]=frame_.gamma()*gamma[e]+frame_.gammaBeta()*(long double)p.properVelocity[2];
+          const long double labU2=uLab[e][0]*uLab[e][0]+uLab[e][1]*uLab[e][1]+uLab[e][2]*uLab[e][2];
+          kineticLab[e]=rest*labU2/(std::sqrt(1.L+labU2)+1.L);
+        }
+        for(unsigned d=0;d<3;++d) {
+          event.properVelocityBox[d]=before.properVelocity[d]+a*(after.properVelocity[d]-before.properVelocity[d]);
+          event.properVelocityLab[d]=uLab[0][d]+a*(uLab[1][d]-uLab[0][d]);
+        }
+        event.gammaBox=gamma[0]+a*(gamma[1]-gamma[0]);event.gammaLab=gammaLab[0]+a*(gammaLab[1]-gammaLab[0]);
+        event.kineticBox=kinetic[0]+a*(kinetic[1]-kinetic[0]);event.kineticLab=kineticLab[0]+a*(kineticLab[1]-kineticLab[0]);
+        events.push_back(event);
+      }
+    }
+
+    void commitSubstepParticleCrossings(const std::vector<SubstepParticleCrossing>& events,Double maximumTimeBox)
+    {
+      if(!hasSubstepParticlePlanes())return;
+      for(const auto& event:events) {
+        if(event.timeBox>maximumTimeBox)continue;
+        if(event.planeIndex>=config_.particlePlanes.size() || (event.direction!=1&&event.direction!=-1) ||
+           !std::isfinite(event.timeBox)||!std::isfinite(event.timeLab)||!std::isfinite(event.gammaLab)||!std::isfinite(event.gammaBox))
+          throw std::runtime_error("Invalid substep particle event");
+        localSubstepEvents_.push_back(event);
+      }
+    }
+
+    void captureSubstepParticleStep(const RelativisticParticleSI& before,
+                                   const RelativisticParticleSI& after,Double t0,Double t1)
+    {
+      if(!hasSubstepParticlePlanes()||t1<=t0)return;
+      std::vector<SubstepParticleCrossing> events;
+      previewSubstepParticleStep(before,after,t0,t1,events);commitSubstepParticleCrossings(events,t1);
+    }
+
+    void collectSubstepParticleCrossings()
+    {
+      if(!hasSubstepParticlePlanes())return;
+      const unsigned long long localCount=localSubstepEvents_.size();
+      MPI_Gather(&localCount,1,MPI_UNSIGNED_LONG_LONG,rank_==0?crossingCounts_.data():NULL,
+        1,MPI_UNSIGNED_LONG_LONG,0,communicator_);
+      const std::size_t chunkSize=std::max<std::size_t>(1,std::min<std::size_t>(1048576,
+        static_cast<std::size_t>(INT_MAX)/sizeof(SubstepParticleCrossing)));
+      const auto dispatch=[&](const std::vector<SubstepParticleCrossing>& events){
+        for(const auto& event:events) {
+          if(event.planeIndex>=substepWriters_.size())throw std::runtime_error("Invalid received substep plane index");
+          substepWriters_[event.planeIndex]->append(event);
+        }
+      };
+      if(rank_==0) {
+        dispatch(localSubstepEvents_);
+        for(int source=1;source<size_;++source) {
+          unsigned long long remaining=crossingCounts_[source];
+          while(remaining) {
+            const std::size_t count=std::min<unsigned long long>(remaining,chunkSize);
+            receivedSubstepEvents_.resize(count);
+            MPI_Recv(receivedSubstepEvents_.data(),checkedByteCount(count,sizeof(SubstepParticleCrossing),"Substep crossing receive"),
+              MPI_BYTE,source,SUBSTEP_CROSSING_TAG,communicator_,MPI_STATUS_IGNORE);
+            dispatch(receivedSubstepEvents_);remaining-=count;
+          }
+        }
+      } else {
+        for(std::size_t start=0;start<localSubstepEvents_.size();start+=chunkSize) {
+          const std::size_t count=std::min(chunkSize,localSubstepEvents_.size()-start);
+          MPI_Send(localSubstepEvents_.data()+start,checkedByteCount(count,sizeof(SubstepParticleCrossing),"Substep crossing send"),
+            MPI_BYTE,0,SUBSTEP_CROSSING_TAG,communicator_);
+        }
+      }
+      localSubstepEvents_.clear();
+    }
 
     void previewEnergyParticleStep(const RelativisticParticleSI& before,
                                    const RelativisticParticleSI& after,
@@ -2117,6 +2330,7 @@ namespace aprl
     void collectParticleCrossings()
     {
       collectEnergyParticleCrossings();
+      collectSubstepParticleCrossings();
       if (config_.particlePlanes.empty() && !hasReferencePlanes_) return;
       const unsigned long long localCount =
         static_cast<unsigned long long>(localCrossingEvents_.size());
@@ -2273,6 +2487,7 @@ namespace aprl
 
     void flushForCheckpoint()
     {
+      if(hasSubstepParticlePlanes())throw std::runtime_error("Substep diagnostics do not support checkpoints");
       if (closed_ || !localCrossingEvents_.empty())
         throw std::runtime_error(
           "Detector checkpoint requires open outputs and a complete particle step");
@@ -2287,6 +2502,7 @@ namespace aprl
 
     std::vector<DetectorCheckpointPrefix> checkpointPrefixes() const
     {
+      if(hasSubstepParticlePlanes())throw std::runtime_error("Substep diagnostics do not support checkpoints");
       if (closed_ || !localCrossingEvents_.empty())
         throw std::runtime_error("Detector checkpoint prefixes need a complete step");
       std::vector<DetectorCheckpointPrefix> result;
@@ -2326,6 +2542,7 @@ namespace aprl
 
     std::vector<unsigned char> checkpointState() const
     {
+      if(hasSubstepParticlePlanes())throw std::runtime_error("Substep diagnostics do not support checkpoints");
       if (closed_ || !localCrossingEvents_.empty())
         throw std::runtime_error("Detector checkpoint requires a complete step");
       if (externalBackground_)
@@ -2378,6 +2595,7 @@ namespace aprl
 
     void restoreCheckpointState(const std::vector<unsigned char>& bytes)
     {
+      if(hasSubstepParticlePlanes())throw std::runtime_error("Substep diagnostics do not support checkpoints");
       if (closed_ || !localCrossingEvents_.empty() || externalBackground_)
         throw std::runtime_error("Cannot restore this detector manager state");
       // Restoration belongs to fresh output files, never to a running writer.
@@ -2487,6 +2705,7 @@ namespace aprl
             fieldWriters_[i]->close(completed);
           for (std::size_t i = 0; i < particleWriters_.size(); ++i)
             particleWriters_[i]->close(completed);
+          for (auto& writer : substepWriters_)writer->close(completed);
           for (std::size_t i = 0; i < referenceWriters_.size(); ++i)
             if (referenceWriters_[i])
               {
@@ -2821,6 +3040,8 @@ namespace aprl
     std::vector<double> fieldNeighbour_;
     std::vector<std::unique_ptr<FieldPlaneWriter> > fieldWriters_;
     std::vector<std::unique_ptr<ParticlePlaneWriter> > particleWriters_;
+    std::vector<SubstepParticleCrossing> localSubstepEvents_,receivedSubstepEvents_;
+    std::vector<std::unique_ptr<SubstepParticleWriter> > substepWriters_;
     std::vector<std::unique_ptr<ParticlePlaneWriter> > referenceWriters_;
     std::vector<std::unique_ptr<ValidationEntryMap> > validationEntries_;
     std::vector<BallisticValidationStats> validationStats_;
@@ -2856,6 +3077,16 @@ namespace aprl
   }
 
   bool LabDetectorManager::hasEnergyPlanes() const { return impl_->hasEnergyPlanes(); }
+  bool LabDetectorManager::hasSubstepParticlePlanes() const { return impl_->hasSubstepParticlePlanes(); }
+
+  void LabDetectorManager::previewSubstepParticleStep(const RelativisticParticleSI& before,
+      const RelativisticParticleSI& after,Double t0,Double t1,std::vector<SubstepParticleCrossing>& events) const
+  {impl_->previewSubstepParticleStep(before,after,t0,t1,events);}
+  void LabDetectorManager::commitSubstepParticleCrossings(const std::vector<SubstepParticleCrossing>& events,Double maximumTimeBox)
+  {impl_->commitSubstepParticleCrossings(events,maximumTimeBox);}
+  void LabDetectorManager::captureSubstepParticleStep(const RelativisticParticleSI& before,
+      const RelativisticParticleSI& after,Double t0,Double t1)
+  {impl_->captureSubstepParticleStep(before,after,t0,t1);}
 
   void LabDetectorManager::previewEnergyParticleStep(
       const RelativisticParticleSI& before, const RelativisticParticleSI& after,

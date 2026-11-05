@@ -254,6 +254,12 @@ namespace aprl
                        "true" : "false") << "\n";
             if(config.mesh.conservativeSourceCoupling)
               stream << "  particle_coupling: conservative-source\n";
+            if(config.mesh.longitudinalNotch)
+              stream << "  longitudinal_shape: linear-notch\n"
+                     << "  notch_response: 1-sin(kz*dz/2)^6\n";
+            if(config.mesh.movingWindow.particleCollarCells)
+              stream << "  moving_particle_collar_cells: "
+                     << config.mesh.movingWindow.particleCollarCells << "\n";
             if (longitudinalLayout)
               {
                 const LongitudinalLayout& layout =
@@ -300,6 +306,9 @@ namespace aprl
                   << "    right_rounding_padding_m: "
                   << layout.rightRoundingPadding << "\n";
               }
+            if (config.detectors.substepParticlePlanes)
+              stream << "resolved_detectors:\n  substep_particle_planes: true\n"
+                     << "  substep_interpolation: affine endpoints of converged particle substeps\n";
             stream << "configuration_yaml: |\n";
             std::istringstream card(config.configurationText);
             std::string line;

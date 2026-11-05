@@ -145,7 +145,7 @@ namespace aprl
           if (moving)
             validateMapKeys(moving, "mesh.moving_window", {
               "enabled", "cells", "lower_guard_cells", "upper_guard_cells",
-              "block_layers", "reference_directory", "reference_through_cpml", "reference_surface_current", "inlet_charge_match"
+              "block_layers", "particle_collar_cells", "reference_directory", "reference_through_cpml", "reference_surface_current", "inlet_charge_match"
             });
         }
 
@@ -247,7 +247,8 @@ namespace aprl
       if (detectors)
         {
           validateMapKeys(detectors, "detectors", {
-            "enabled", "directory", "field_planes", "particle_planes", "energy_planes"
+            "enabled", "directory", "field_planes", "particle_planes", "energy_planes",
+            "substep_particle_planes"
           });
           const YAML::Node fieldPlanes = detectors["field_planes"];
           if (fieldPlanes)
@@ -695,7 +696,7 @@ namespace aprl
 
   MovingWindowConfig::MovingWindowConfig()
     : enabled(false), cells(0), lowerGuardCells(64), upperGuardCells(128),
-      blockLayers(32), referenceThroughCpml(false), referenceSurfaceCurrent(false), inletChargeMatch(false), referenceDirectory()
+      blockLayers(32), particleCollarCells(0), referenceThroughCpml(false), referenceSurfaceCurrent(false), inletChargeMatch(false), referenceDirectory()
   {}
 
   MeshConfig::MeshConfig()
@@ -707,6 +708,7 @@ namespace aprl
       selfFieldFeedback(true),
       conservativeSourceCoupling(false),
       longitudinalQuintic(false),
+      longitudinalNotch(false),
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -827,7 +829,7 @@ namespace aprl
   {}
 
   DetectorConfig::DetectorConfig()
-    : directory("output/detectors"), fieldPlanes(), particlePlanes(), energyPlanes()
+    : directory("output/detectors"), fieldPlanes(), particlePlanes(), energyPlanes(), substepParticlePlanes(false)
   { physicalGuardCells[0] = physicalGuardCells[1] = 0; }
 
   bool DetectorConfig::enabled() const
@@ -1037,10 +1039,13 @@ namespace aprl
         throw configError(mesh["particle_coupling"],"particle_coupling must be boris or conservative-source");
       result.mesh.conservativeSourceCoupling=method=="conservative-source";
     }
-    if(mesh["longitudinal_shape"]) {const auto shape=mesh["longitudinal_shape"].as<std::string>();if(shape!="linear"&&shape!="quintic-compensated")throw configError(mesh["longitudinal_shape"],"longitudinal_shape must be linear or quintic-compensated");result.mesh.longitudinalQuintic=shape=="quintic-compensated";}
+    if(mesh["longitudinal_shape"]) {const auto shape=mesh["longitudinal_shape"].as<std::string>();if(shape!="linear"&&shape!="quintic-compensated"&&shape!="linear-notch")throw configError(mesh["longitudinal_shape"],"longitudinal_shape must be linear, quintic-compensated or linear-notch");result.mesh.longitudinalQuintic=shape=="quintic-compensated";result.mesh.longitudinalNotch=shape=="linear-notch";}
 
     if (movingWindow)
       {
+        if (movingWindow["particle_collar_cells"])
+          result.mesh.movingWindow.particleCollarCells=nonnegativeSize(
+            movingWindow["particle_collar_cells"],"mesh.moving_window particle_collar_cells");
         if (movingWindow["enabled"])
           result.mesh.movingWindow.enabled = movingWindow["enabled"].as<bool>();
         if (movingWindow["cells"])
@@ -1575,6 +1580,8 @@ namespace aprl
             detectors["directory"].as<std::string>();
         if (detectorsEnabled && result.detectors.directory.empty())
           throw configError(detectors, "detector directory cannot be empty");
+        if (detectorsEnabled && detectors["substep_particle_planes"])
+          result.detectors.substepParticlePlanes = detectors["substep_particle_planes"].as<bool>();
 
         const YAML::Node fieldPlanes = detectors["field_planes"];
         if (detectorsEnabled && fieldPlanes)
@@ -2087,7 +2094,7 @@ namespace aprl
         result.trajectory.flushEverySamples == 0)
       throw configError(trajectory,
         "interactive trajectory flush_every_samples must be positive");
-    if (!result.detectors.energyPlanes.empty())
+    if (!result.detectors.energyPlanes.empty() || result.detectors.substepParticlePlanes)
       {
         std::set<std::string> outputStems;
         for (std::size_t i = 0; i < result.detectors.fieldPlanes.size(); ++i)
@@ -2099,6 +2106,10 @@ namespace aprl
           }
         for (std::size_t i = 0; i < result.detectors.particlePlanes.size(); ++i)
           outputStems.insert(result.detectors.particlePlanes[i].name);
+        if (result.detectors.substepParticlePlanes)
+          for (std::size_t i = 0; i < result.detectors.particlePlanes.size(); ++i)
+            if (!outputStems.insert(result.detectors.particlePlanes[i].name + "-substeps").second)
+              throw configError(detectors, "substep particle output filename collides with another detector file");
         for (std::size_t i = 0; i < result.detectors.energyPlanes.size(); ++i)
           if (!outputStems.insert(result.detectors.energyPlanes[i].name + "-energy").second)
             throw configError(detectors, "energy plane output filename collides with another detector file");
@@ -2110,6 +2121,12 @@ namespace aprl
         (result.checkpoint.enabled() || !result.checkpoint.restartFrom.empty()))
       throw configError(detectors,
         "energy_planes do not support checkpoint/restart; use an independent diagnostics run");
+    if (result.detectors.substepParticlePlanes && result.detectors.particlePlanes.empty())
+      throw configError(detectors, "substep_particle_planes requires configured particle_planes");
+    if (result.detectors.substepParticlePlanes &&
+        (result.checkpoint.enabled() || !result.checkpoint.restartFrom.empty()))
+      throw configError(detectors,
+        "substep_particle_planes do not support checkpoint/restart");
     return result;
   }
 }

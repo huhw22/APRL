@@ -49,6 +49,9 @@ namespace aprl
     std::size_t lowerGuardCells;
     std::size_t upperGuardCells;
     std::size_t blockLayers;
+    // Zero retains the native source-support collar. A common explicit
+    // collar permits controlled source-shape comparisons at one exit plane.
+    std::size_t particleCollarCells;
     // Extend the finite reference solve/fields through transverse CPML to
     // the existing outer PEC termination, instead of cutting at its entrance.
     bool referenceThroughCpml;
@@ -76,6 +79,8 @@ namespace aprl
     bool selfFieldFeedback;
     bool conservativeSourceCoupling;
     bool longitudinalQuintic;
+    bool longitudinalNotch;
+    bool wideLongitudinalSource() const {return longitudinalQuintic || longitudinalNotch;}
     /* Experimental finite-window boundary injection: particles outside the
      * transverse physical region remain ballistic until they enter it. */
     bool ballisticOutsideTransverse;
@@ -394,6 +399,8 @@ namespace aprl
     std::vector<FieldDetectorPlaneConfig> fieldPlanes;
     std::vector<ParticleDetectorPlaneConfig> particlePlanes;
     std::vector<EnergyDetectorPlaneConfig> energyPlanes;
+    /* Independent converged-substep records alongside legacy particle files. */
+    bool substepParticlePlanes;
     /* Derived from the transverse CPML, never an independent input knob. */
     std::size_t physicalGuardCells[2];
 
