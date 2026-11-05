@@ -15,6 +15,10 @@ public:
   ~ConservativeSourceCoupling();
   void begin(EBFieldGrid&,const FieldVector<Double>& origin,const std::vector<RelativisticParticleSI>&,unsigned physicalCellsX=0,unsigned physicalCellsY=0);
   longitudinal_shape::Current* longitudinalCurrent();
+  // Frozen high-order sources can overlap the grid while their centers are
+  // outside. Deposit their full source segment and pair its constraint work
+  // without applying particle-center boundary clipping.
+  void depositFrozenSourceSupport(const FieldVector<Double>& begin,const FieldVector<Double>& end,Double charge,bool recordWork);
   void completeCurrent();
   void beginTrial();
   void setReplay(bool enabled);

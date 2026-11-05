@@ -4091,7 +4091,7 @@ namespace aprl
   {
     ChargeConservingCurrentDepositor depositor(*fields_, localOriginBox_,sourceCoupling_?sourceCoupling_->longitudinalCurrent():nullptr);
     if(config_.mesh.longitudinalQuintic&&rank_==0&&movingWindow_->pending) {
-      movingWindow_->pending->visitNear(step_,8,[&](const RelativisticParticleSI& p){auto end=p.position;end[2]+=SI::c*globalGeometry_.dt*p.frozenBetaZ;sourceCoupling_->longitudinalCurrent()->deposit(localOriginBox_,p.position,end,p.charge);if(config_.energyLedger.enabled)sourceCoupling_->recordConstraint(p.position,end,p.charge,false);});
+      movingWindow_->pending->visitNear(step_,8,[&](const RelativisticParticleSI& p){auto end=p.position;end[2]+=SI::c*globalGeometry_.dt*p.frozenBetaZ;sourceCoupling_->depositFrozenSourceSupport(p.position,end,p.charge,config_.energyLedger.enabled);});
     }
     ParticleWorkspace& workspace = *particleWorkspace_;
     std::vector<RelativisticParticleSI>& retained = workspace.retained;
@@ -5048,6 +5048,10 @@ namespace aprl
                     "Moving-window upstream admission requires an unreleased held particle on rank zero");
                 if (particle.position[2] < globalOriginBox_[2])
                   {
+                    if (config_.mesh.longitudinalQuintic)
+                      sourceCoupling_->depositFrozenSourceSupport(start,
+                        particle.position, particle.charge,
+                        config_.energyLedger.enabled);
                     retained.push_back(particle);
                     continue;
                   }
@@ -5060,6 +5064,14 @@ namespace aprl
                   start[axis] += fraction * (particle.position[axis] - start[axis]);
                 start[2] = globalOriginBox_[2];
                 segmentStartFraction = fraction;
+                // The center's boundary event still clips the particle path.
+                // Its high-order source already overlaps retained grid nodes
+                // before that event, so complete the missing current prefix.
+                // The ordinary path below deposits the suffix exactly once.
+                if (config_.mesh.longitudinalQuintic)
+                  sourceCoupling_->depositFrozenSourceSupport(
+                    particles_[index].position, start, particle.charge,
+                    config_.energyLedger.enabled);
               }
 
             const bool hasActivationKink =

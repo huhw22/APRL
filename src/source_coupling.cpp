@@ -38,6 +38,12 @@ ConservativeSourceCoupling::ConservativeSourceCoupling(MPI_Comm c,const std::str
 ConservativeSourceCoupling::~ConservativeSourceCoupling()=default;
 void ConservativeSourceCoupling::begin(EBFieldGrid& f,const Vec& origin,const std::vector<RelativisticParticleSI>& p,unsigned cx,unsigned cy){auto& s=*impl_;s.cx=cx;s.cy=cy;s.fields=&f;s.origin=origin;s.old[0]=f.ex();s.old[1]=f.ey();s.old[2]=f.ez();s.oldHalo.exchange(f,s.comm,false,s.quintic?8:1);if(s.quintic&&!s.shapedCurrent)s.shapedCurrent.reset(new longitudinal_shape::Current(f,s.comm));s.magneticHalo.exchange(f,s.comm,true);s.index.clear();s.slots.clear();s.slots.reserve(p.size()+32);for(const auto& q:p){s.index.emplace(q.id,s.slots.size());s.slots.emplace_back();}s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();s.trialPushes=s.committedPushes=0;s.replay=false;}
 longitudinal_shape::Current* ConservativeSourceCoupling::longitudinalCurrent(){return impl_->shapedCurrent.get();}
+void ConservativeSourceCoupling::depositFrozenSourceSupport(const Vec& begin,const Vec& end,Double charge,bool recordWork){
+ auto& s=*impl_;
+ if(!s.quintic||!s.shapedCurrent)throw std::logic_error("Frozen source support requires initialized high-order current");
+ s.shapedCurrent->deposit(s.origin,begin,end,charge);
+ if(recordWork)s.constraints.push_back({begin,end,charge,false});
+}
 void ConservativeSourceCoupling::completeCurrent(){if(impl_->shapedCurrent)impl_->shapedCurrent->complete();}
 void ConservativeSourceCoupling::beginTrial(){if(impl_->shapedCurrent)impl_->shapedCurrent->clear();for(auto& q:impl_->slots)q.seen=false;}
 void ConservativeSourceCoupling::setReplay(bool enabled){impl_->replay=enabled;if(enabled&&impl_->shapedCurrent)impl_->shapedCurrent->clear();}
