@@ -38,3 +38,5 @@ There is no automatic physics acceptance. A source-filter switch is not proof th
 - The unfiltered crop fails to reproduce startup: repeat with the original full bunch and first segment; do not infer the original cause from this crop.
 
 The scripts never submit jobs themselves or replace default programs, physical cards or existing results.
+
+`power_review.py` and its bounded batch wrapper compare the completed exit fields using an unchanged snapshot of the earlier SPARC `analyze_explicit.py::pic_plane()` reducer. They retain rectangular/energy-normalized Hann windows, the fixed ±5% resonance band, signed native E×B and transverse E² proxy, physical aperture and all stored magnetic time staggering. Only the independent comparison to the online energy plane converts the installed SciPy mu0 to the explicitly compiled PIC constant; the reported older FFT convention is preserved. `plot_power_review.py` renders the completed numerical output. These are closed-only analyses, never new PIC runs or pure-radiation acceptance.
