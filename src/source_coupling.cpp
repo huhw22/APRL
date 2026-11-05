@@ -2,6 +2,7 @@
 #include "source_coupling_math.h"
 #include "longitudinal_shape.h"
 #include "particle_momentum_probe.h"
+#include "particle_force_probe.h"
 #include <fstream>
 #include <iomanip>
 #include <unordered_map>
@@ -77,7 +78,7 @@ void ConservativeSourceCoupling::push(RelativisticParticleSI& p,const SIFieldSou
    BorisWork w;w.gridWork=chargeWork(p.charge,q.usedE,before.position,p.position);w.prescribedWork=chargeWork(p.charge,ee,before.position,p.position);w.totalDeltaK=(long double)p.mass*SI::c*SI::c*deltaGamma(before.properVelocity,p.properVelocity);w.roundoffResidual=w.totalDeltaK-w.gridWork-w.prescribedWork;w.absoluteWork=std::abs(w.gridWork)+std::abs(w.prescribedWork);q.works.push_back(w);q.states.push_back(p);
   }q.last=p;q.guess=p.position;
  }
- if(s.replay){q.replayed=true;p=q.last;for(unsigned n=0;n<steps;++n){if(work)work->add(q.works[n]);if(prescribed)*prescribed+=static_cast<Double>(q.works[n].prescribedWork);if(observer)observer->observe(q.states[n],q.states[n+1],time+n*(dt/steps),time+(n+1)*(dt/steps),&q.works[n]);}if(ParticleMomentumProbe::selected(time))ParticleMomentumProbe::record(q.first,p,q.usedE,q.usedB,time,dt);}
+ if(s.replay){q.replayed=true;p=q.last;for(unsigned n=0;n<steps;++n){if(work)work->add(q.works[n]);if(prescribed)*prescribed+=static_cast<Double>(q.works[n].prescribedWork);if(observer)observer->observe(q.states[n],q.states[n+1],time+n*(dt/steps),time+(n+1)*(dt/steps),&q.works[n]);}if(ParticleMomentumProbe::selected(time))ParticleMomentumProbe::record(q.first,p,q.usedE,q.usedB,time,dt);if(ParticleForceProbe::selected(q.first.sourceId))ParticleForceProbe::record(s.completedStep+1,s.rank,q.first,p,q.usedE,q.usedB,time,dt,steps,q.states,q.works,sources,frame);}
 }
 std::array<Double,4> ConservativeSourceCoupling::localResidual(){auto& s=*impl_;Double force=0.,defect=0.,scale=0.,calls=0.;for(auto& q:s.slots)if(q.seen){calls+=1;const Vec e=s.electric(q.first.position,q.last.position);const Vec b=s.magnetic(q.first.position,q.last.position);q.nextE=e;q.nextB=b;q.nextReady=true;Vec de=e;de-=q.usedE;Vec db=b;db-=q.usedB;force=std::max(force,std::abs(q.first.charge/q.first.mass)*q.dt/SI::c*(std::sqrt(de.norm2())+SI::c*std::sqrt(db.norm2())));defect+=std::abs(chargeWork(q.first.charge,de,q.first.position,q.last.position));for(const auto& w:q.works)scale+=std::abs(w.gridWork);scale+=std::abs(chargeWork(q.first.charge,e,q.first.position,q.last.position));}return {{force,defect,scale,calls}};}
 void ConservativeSourceCoupling::recordConstraint(const Vec& a,const Vec& b,Double charge,bool carrier){impl_->constraints.push_back({a,b,charge,carrier});}

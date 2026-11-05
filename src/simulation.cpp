@@ -25,6 +25,7 @@
 #include "field_stage_audit.h"
 #include "discrete_field_ledger.h"
 #include "inlet_constraint_probe.h"
+#include "particle_force_probe.h"
 
 namespace aprl
 {
@@ -568,6 +569,7 @@ namespace aprl
 
     if(particleWorkGeometry_)particleWorkGeometry_->close();
     if(sourceCoupling_)sourceCoupling_->close(step_);
+    ParticleForceProbe::close(rank_,step_,!interrupted_&&configuredStopReached_);
     if(inletConstraintProbe)inletConstraintProbe->close();
     if(gridWorkAudit) {
       movingWindow_->fields->setBeforeInletObserver(nullptr,nullptr);
