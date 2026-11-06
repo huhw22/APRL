@@ -15,8 +15,10 @@ namespace aprl {
 class ChargeMatchedInlet {
 public:
   struct Report {long double nativeWorkJ=0.;double maxBefore=0.,maxAfter=0.,maxDeltaEz=0.;std::size_t particles=0;};
-  ChargeMatchedInlet(const EBGridGeometry& g,std::size_t gx,std::size_t gy,bool quintic=false,bool linearNotch=false)
-    :g_(g),gx_(gx),gy_(gy),quintic_(quintic||linearNotch),linearNotch_(linearNotch),rho_((g.nx+1)*(g.ny+1),0.) {
+  ChargeMatchedInlet(const EBGridGeometry& g,std::size_t gx,std::size_t gy,bool quintic=false,bool linearNotch=false,bool linearBinomial3=false)
+    :g_(g),gx_(gx),gy_(gy),quintic_(quintic||linearNotch||linearBinomial3),linearNotch_(linearNotch),linearBinomial3_(linearBinomial3),rho_((g.nx+1)*(g.ny+1),0.) {
+    if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)
+      throw std::invalid_argument("Ambiguous charge-matched inlet source shape");
     if(g.nz<2 || gx+1>=g.nx-gx || gy+1>=g.ny-gy)
       throw std::invalid_argument("Charge-matched inlet needs an interior physical aperture");
   }
@@ -24,7 +26,7 @@ public:
     origin_=origin;std::fill(rho_.begin(),rho_.end(),0.);particles_=0;
   }
   void particle(const RelativisticParticleSI& p) {
-    const double z=(p.position[2]-origin_[2])/g_.dz,wz=quintic_?longitudinal_shape::nodeWeight(z,1,linearNotch_?longitudinal_shape::Shape::LinearNotch:longitudinal_shape::Shape::QuinticCompensated):std::max(0.,1.-std::abs(z-1.));
+    const double z=(p.position[2]-origin_[2])/g_.dz,wz=quintic_?longitudinal_shape::nodeWeight(z,1,linearBinomial3_?longitudinal_shape::Shape::LinearBinomial3:(linearNotch_?longitudinal_shape::Shape::LinearNotch:longitudinal_shape::Shape::QuinticCompensated)):std::max(0.,1.-std::abs(z-1.));
     if(wz==0.)return;
     const double x=(p.position[0]-origin_[0])/g_.dx,y=(p.position[1]-origin_[1])/g_.dy;
     if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z)||!std::isfinite(p.charge))
@@ -58,7 +60,7 @@ public:
   }
 private:
   EBGridGeometry g_;std::size_t gx_,gy_,particles_=0;FieldVector<Double> origin_;
-  bool quintic_,linearNotch_;
+  bool quintic_,linearNotch_,linearBinomial3_;
   std::vector<double> rho_;
 };
 }

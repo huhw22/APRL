@@ -74,7 +74,7 @@ public:
       const FieldVector<Double>& globalOrigin,
       const std::vector<RelativisticParticleSI>& particles,
       Double beta, const std::size_t guards[3], std::size_t blockLayers,
-      const std::string& directory, MPI_Comm communicator = MPI_COMM_WORLD,bool longitudinalQuintic = false,bool linearNotch = false);
+      const std::string& directory, MPI_Comm communicator = MPI_COMM_WORLD,bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false);
   // Open an already completed shared reference without modifying files or
   // allocating source/solver arrays. All parameters must match the writer
   // exactly, including requested blockLayers, even when it exceeded nz.
@@ -84,7 +84,7 @@ public:
       const EBGridGeometry& globalGeometry,
       const FieldVector<Double>& globalOrigin, Double beta,
       const std::size_t guards[3], std::size_t blockLayers,
-      const std::string& directory, MPI_Comm communicator = MPI_COMM_SELF,bool longitudinalQuintic = false,bool linearNotch = false);
+      const std::string& directory, MPI_Comm communicator = MPI_COMM_SELF,bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false);
   ~BlockedCowanReference();
   BlockedCowanReference(const BlockedCowanReference&) = delete;
   BlockedCowanReference& operator=(const BlockedCowanReference&) = delete;

@@ -11,12 +11,27 @@ namespace aprl { namespace longitudinal_shape {
 // Quintic source and quartic normal-current basis, with the same symmetric
 // seven-point continuum-response compensation as the independent 1-D model.
 struct Basis {long long first;unsigned count;double v[12];};
-enum class Shape {QuinticCompensated,LinearNotch};
+enum class Shape {QuinticCompensated,LinearNotch,LinearBinomial3};
 inline double notchCoefficient(int offset) {
  const double c[7]={1./64.,-6./64.,15./64.,44./64.,15./64.,-6./64.,1./64.};
  return c[offset+3];
 }
+inline double binomial3Coefficient(int offset) {
+ const double c[3]={.25,.5,.25};
+ return c[offset+1];
+}
 inline Basis basis(double z,bool edge=false,Shape shape=Shape::QuinticCompensated) {
+ if(shape==Shape::LinearBinomial3) {
+  const double cell=std::floor(z),f=z-cell;Basis r;
+  r.first=static_cast<long long>(cell)-1;r.count=edge?3:4;
+  std::fill(r.v,r.v+12,0.);
+  for(int k=-1;k<=1;++k) {
+   const double w=binomial3Coefficient(k);
+   if(edge)r.v[k+1]+=w;
+   else {r.v[k+1]+=w*(1.-f);r.v[k+2]+=w*f;}
+  }
+  return r;
+ }
  if(shape==Shape::LinearNotch) {
   const double cell=std::floor(z),f=z-cell;Basis r;
   r.first=static_cast<long long>(cell)-3;r.count=edge?7:8;
@@ -46,7 +61,7 @@ template<class Visit> unsigned weights(const EBGridGeometry& g,const FieldVector
   if(v[a]!=0.)for(long long j=static_cast<long long>(std::floor(std::min(x[a],x[a]+v[a])))+1;j<std::max(x[a],x[a]+v[a]);++j){if(count==64)throw std::runtime_error("Quintic orbit exceeds crossing budget");cuts[count++]=(j-x[a])/v[a];}}
  std::sort(cuts,cuts+count);const double q[4]={-.8611363115940525752,-.3399810435848562648,.3399810435848562648,.8611363115940525752},qw[4]={.3478548451374538574,.6521451548625461426,.6521451548625461426,.3478548451374538574};unsigned segments=0;
  for(unsigned s=1;s<count;++s){const double width=cuts[s]-cuts[s-1];if(width<=0.)continue;++segments;
-  const unsigned points=shape==Shape::LinearNotch?2:4;
+  const unsigned points=(shape==Shape::LinearNotch||shape==Shape::LinearBinomial3)?2:4;
   for(unsigned t=0;t<points;++t){const double node=points==2?(t?0.57735026918962576451:-0.57735026918962576451):q[t],weight=points==2?1.:qw[t];const double u=.5*(cuts[s]+cuts[s-1]+width*node),factor=.5*width*weight,xx=x[0]+u*v[0],yy=x[1]+u*v[1],zz=x[2]+u*v[2];
    long long i=static_cast<long long>(std::floor(xx)),j=static_cast<long long>(std::floor(yy));if(i==static_cast<long long>(g.nx))--i;if(j==static_cast<long long>(g.ny))--j;
    const double fx=xx-i,fy=yy-j;const auto nodes=basis(zz,false,shape),edge=basis(zz,true,shape);

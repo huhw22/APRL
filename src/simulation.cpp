@@ -378,13 +378,14 @@ namespace aprl
         checkpointEnabled_ || !config_.checkpoint.restartFrom.empty() ||
         geometryAuditDirectory || gridAuditDirectory || stageAuditDirectory))
       throw std::invalid_argument("conservative-source requires moving Cowan, feedback, unfiltered current and no retirement/checkpoint/ballistic/legacy work probes");
-    {const int local=config_.mesh.longitudinalQuintic?1:(config_.mesh.longitudinalNotch?2:0);int lo=0,hi=0;MPI_Allreduce(&local,&lo,1,MPI_INT,MPI_MIN,communicator_);MPI_Allreduce(&local,&hi,1,MPI_INT,MPI_MAX,communicator_);if(lo!=hi)throw std::invalid_argument("longitudinal_shape must agree on every MPI rank");if(local&&!config_.mesh.conservativeSourceCoupling)throw std::invalid_argument("Wide longitudinal shapes require conservative-source");}
+    {const int local=config_.mesh.longitudinalQuintic?1:(config_.mesh.longitudinalNotch?2:(config_.mesh.longitudinalBinomial3?3:0));int lo=0,hi=0;MPI_Allreduce(&local,&lo,1,MPI_INT,MPI_MIN,communicator_);MPI_Allreduce(&local,&hi,1,MPI_INT,MPI_MAX,communicator_);if(lo!=hi)throw std::invalid_argument("longitudinal_shape must agree on every MPI rank");if(local&&!config_.mesh.conservativeSourceCoupling)throw std::invalid_argument("Wide longitudinal shapes require conservative-source");}
     const Double initializationStart = performanceNow();
     initialize();
     if(config_.mesh.conservativeSourceCoupling) {
       if(incident_)throw std::invalid_argument("conservative-source does not support incident waves");
-      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch));
+      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3));
       if(config_.mesh.longitudinalNotch)logRoot(communicator_,"[source-coupling] linear-notch: matched seven-point charge/current/electric source shape and magnetic gather; F=1-sin^6(kz*dz/2); Cowan curls/dt unchanged");
+      if(config_.mesh.longitudinalBinomial3)logRoot(communicator_,"[source-coupling] linear-binomial3: matched three-point charge/current/electric source shape and magnetic gather; F=cos^2(kz*dz/2); Cowan curls/dt unchanged");
       logRoot(communicator_,"[source-coupling] conservative-source; original release/migration/detectors; transactional trials and converged substep replay; original Cowan curls and committed CPML history once per step");
     }
     if(geometryAuditDirectory) {

@@ -257,6 +257,10 @@ namespace aprl
             if(config.mesh.longitudinalNotch)
               stream << "  longitudinal_shape: linear-notch\n"
                      << "  notch_response: 1-sin(kz*dz/2)^6\n";
+            if(config.mesh.longitudinalBinomial3)
+              stream << "  longitudinal_shape: linear-binomial3\n"
+                     << "  binomial3_coefficients: [0.25, 0.5, 0.25]\n"
+                     << "  binomial3_response: cos(kz*dz/2)^2\n";
             if(config.mesh.movingWindow.particleCollarCells)
               stream << "  moving_particle_collar_cells: "
                      << config.mesh.movingWindow.particleCollarCells << "\n";

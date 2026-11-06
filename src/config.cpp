@@ -709,6 +709,7 @@ namespace aprl
       conservativeSourceCoupling(false),
       longitudinalQuintic(false),
       longitudinalNotch(false),
+      longitudinalBinomial3(false),
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -1039,7 +1040,7 @@ namespace aprl
         throw configError(mesh["particle_coupling"],"particle_coupling must be boris or conservative-source");
       result.mesh.conservativeSourceCoupling=method=="conservative-source";
     }
-    if(mesh["longitudinal_shape"]) {const auto shape=mesh["longitudinal_shape"].as<std::string>();if(shape!="linear"&&shape!="quintic-compensated"&&shape!="linear-notch")throw configError(mesh["longitudinal_shape"],"longitudinal_shape must be linear, quintic-compensated or linear-notch");result.mesh.longitudinalQuintic=shape=="quintic-compensated";result.mesh.longitudinalNotch=shape=="linear-notch";}
+    if(mesh["longitudinal_shape"]) {const auto shape=mesh["longitudinal_shape"].as<std::string>();if(shape!="linear"&&shape!="quintic-compensated"&&shape!="linear-notch"&&shape!="linear-binomial3")throw configError(mesh["longitudinal_shape"],"longitudinal_shape must be linear, quintic-compensated, linear-notch or linear-binomial3");result.mesh.longitudinalQuintic=shape=="quintic-compensated";result.mesh.longitudinalNotch=shape=="linear-notch";result.mesh.longitudinalBinomial3=shape=="linear-binomial3";}
 
     if (movingWindow)
       {

@@ -133,7 +133,7 @@ void Simulation::initializeMovingWindow() {
     // Stable identity order makes the reference independent of slab ownership.
     std::sort(source.begin(),source.end(),[](const RelativisticParticleSI& a,const RelativisticParticleSI& b){return a.id<b.id;});
     w.reference.reset(new verification::BlockedCowanReference(w.referenceGeometry,w.referenceOrigin,
-        source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch));
+        source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3));
     w.reference->writeReport(cfg.referenceDirectory+"/preparation.json");
   } else {
     for(std::size_t n=0;n<particles_.size();n+=batch) {
@@ -143,7 +143,7 @@ void Simulation::initializeMovingWindow() {
   }
   MPI_Barrier(communicator_);
   if(rank_!=0)w.reference=verification::BlockedCowanReference::openPrepared(w.referenceGeometry,w.referenceOrigin,
-      w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch);
+      w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3);
   if(cfg.referenceSurfaceCurrent) {
     const std::string currentFile=cfg.referenceDirectory+"/transverse-current.bin";
     if(rank_==0)TransverseReferenceCurrent::prepare(currentFile,*w.reference,w.referenceGeometry,w.guards,w.solverBeta);
@@ -295,7 +295,7 @@ void Simulation::installMovingWindowBoundary() {
   movingWindow_->fields->installBoundary(*fields_);
   movingWindow_->fields->enableEnergyLedger(config_.energyLedger.enabled);
   if(config_.mesh.movingWindow.inletChargeMatch) {
-    movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch));
+    movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3));
     movingWindow_->fields->setNewLayerCompletion(&Simulation::completeMovingInletLayer,this);
     if(rank_==0&&config_.energyLedger.enabled) {
       movingWindow_->inletCompletionLedger.open(config_.mesh.movingWindow.referenceDirectory+"/inlet-charge-match.csv");

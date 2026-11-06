@@ -16,9 +16,9 @@ using namespace source_coupling_math;
 struct ConservativeSourceCoupling::Impl {
  struct Slot {RelativisticParticleSI first,last;Vec guess=Vec(0.),usedE=Vec(0.),usedB=Vec(0.),nextE=Vec(0.),nextB=Vec(0.);bool seen=false,initialized=false,replayed=false,nextReady=false;unsigned pushes=0;Double time=0.,dt=0.;std::vector<RelativisticParticleSI> states;std::vector<BorisWork> works;};
  struct Constraint {Vec begin,end;Double charge;bool carrier;};
- bool quintic=false,linearNotch=false;std::unique_ptr<longitudinal_shape::Current> shapedCurrent;
- bool wide()const{return quintic||linearNotch;}
- longitudinal_shape::Shape shape()const{return linearNotch?longitudinal_shape::Shape::LinearNotch:longitudinal_shape::Shape::QuinticCompensated;}
+ bool quintic=false,linearNotch=false,linearBinomial3=false;std::unique_ptr<longitudinal_shape::Current> shapedCurrent;
+ bool wide()const{return quintic||linearNotch||linearBinomial3;}
+ longitudinal_shape::Shape shape()const{return linearBinomial3?longitudinal_shape::Shape::LinearBinomial3:(linearNotch?longitudinal_shape::Shape::LinearNotch:longitudinal_shape::Shape::QuinticCompensated);}
  Vec electric(const Vec& a,const Vec& b,bool open=true){
   if(!wide())return open?openOrbitElectric(*fields,&old,origin,a,b,&newHalo,&oldHalo):orbitElectric(*fields,&old,origin,a,b,&newHalo,&oldHalo);
   const auto path=open?clipOpenOrbit(fields->geometry(),origin,a,b,&newHalo):OpenOrbit();
@@ -28,10 +28,11 @@ struct ConservativeSourceCoupling::Impl {
   if(open)result*=path.last-path.first;return result;
  }
  Vec magnetic(const Vec& a,const Vec& b){
-  if(!linearNotch)return openOrbitMagnetic(*fields,origin,a,b,&magneticHalo);
+  if(!linearNotch&&!linearBinomial3)return openOrbitMagnetic(*fields,origin,a,b,&magneticHalo);
   const auto path=clipOpenOrbit(fields->geometry(),origin,a,b,&magneticHalo);
   if(!path.valid)throw std::out_of_range("Notch magnetic orbit outside domain");
   Vec middle(path.begin);middle+=path.end;middle*=.5;Vec result(0.);
+  if(linearBinomial3){for(int k=-1;k<=1;++k){Vec point(middle);point[2]+=k*fields->geometry().dz;const Vec value=magneticSample(*fields,origin,point,false,&magneticHalo,true).value;result.pmv(longitudinal_shape::binomial3Coefficient(k),value);}return result;}
   for(int k=-3;k<=3;++k){Vec point(middle);point[2]+=k*fields->geometry().dz;const Vec value=magneticSample(*fields,origin,point,false,&magneticHalo,true).value;result.pmv(longitudinal_shape::notchCoefficient(k),value);}
   return result;
  }
@@ -45,9 +46,9 @@ struct ConservativeSourceCoupling::Impl {
 #endif
  index.emplace(p.id,slots.size());slots.emplace_back();return slots.back();}
 };
-ConservativeSourceCoupling::ConservativeSourceCoupling(MPI_Comm c,const std::string& directory,bool quintic,bool linearNotch):impl_(new Impl(c,directory)){if(quintic&&linearNotch)throw std::invalid_argument("Ambiguous longitudinal source shape");impl_->quintic=quintic;impl_->linearNotch=linearNotch;}
+ConservativeSourceCoupling::ConservativeSourceCoupling(MPI_Comm c,const std::string& directory,bool quintic,bool linearNotch,bool linearBinomial3):impl_(new Impl(c,directory)){if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)throw std::invalid_argument("Ambiguous longitudinal source shape");impl_->quintic=quintic;impl_->linearNotch=linearNotch;impl_->linearBinomial3=linearBinomial3;}
 ConservativeSourceCoupling::~ConservativeSourceCoupling()=default;
-void ConservativeSourceCoupling::begin(EBFieldGrid& f,const Vec& origin,const std::vector<RelativisticParticleSI>& p,unsigned cx,unsigned cy){auto& s=*impl_;s.cx=cx;s.cy=cy;s.fields=&f;s.origin=origin;s.old[0]=f.ex();s.old[1]=f.ey();s.old[2]=f.ez();s.oldHalo.exchange(f,s.comm,false,s.wide()?8:1);if(s.wide()&&!s.shapedCurrent)s.shapedCurrent.reset(new longitudinal_shape::Current(f,s.comm,s.shape()));s.magneticHalo.exchange(f,s.comm,true,s.linearNotch?8:1);s.index.clear();s.slots.clear();s.slots.reserve(p.size()+32);for(const auto& q:p){s.index.emplace(q.id,s.slots.size());s.slots.emplace_back();}s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();s.trialPushes=s.committedPushes=0;s.replay=false;}
+void ConservativeSourceCoupling::begin(EBFieldGrid& f,const Vec& origin,const std::vector<RelativisticParticleSI>& p,unsigned cx,unsigned cy){auto& s=*impl_;s.cx=cx;s.cy=cy;s.fields=&f;s.origin=origin;s.old[0]=f.ex();s.old[1]=f.ey();s.old[2]=f.ez();s.oldHalo.exchange(f,s.comm,false,s.wide()?8:1);if(s.wide()&&!s.shapedCurrent)s.shapedCurrent.reset(new longitudinal_shape::Current(f,s.comm,s.shape()));s.magneticHalo.exchange(f,s.comm,true,(s.linearNotch||s.linearBinomial3)?8:1);s.index.clear();s.slots.clear();s.slots.reserve(p.size()+32);for(const auto& q:p){s.index.emplace(q.id,s.slots.size());s.slots.emplace_back();}s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();s.trialPushes=s.committedPushes=0;s.replay=false;}
 longitudinal_shape::Current* ConservativeSourceCoupling::longitudinalCurrent(){return impl_->shapedCurrent.get();}
 void ConservativeSourceCoupling::depositFrozenSourceSupport(const Vec& begin,const Vec& end,Double charge,bool recordWork){
  auto& s=*impl_;

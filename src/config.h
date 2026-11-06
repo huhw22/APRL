@@ -80,7 +80,8 @@ namespace aprl
     bool conservativeSourceCoupling;
     bool longitudinalQuintic;
     bool longitudinalNotch;
-    bool wideLongitudinalSource() const {return longitudinalQuintic || longitudinalNotch;}
+    bool longitudinalBinomial3;
+    bool wideLongitudinalSource() const {return longitudinalQuintic || longitudinalNotch || longitudinalBinomial3;}
     /* Experimental finite-window boundary injection: particles outside the
      * transverse physical region remain ballistic until they enter it. */
     bool ballisticOutsideTransverse;
