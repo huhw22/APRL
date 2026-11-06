@@ -129,6 +129,9 @@ namespace aprl
      * does not rebase the Lorentz frame, detector cadence or stored events. */
     void updateGridOrigins(const FieldVector<Double>& globalOriginBox,
                            const FieldVector<Double>& localOriginBox);
+    void updateGridPartition(const std::vector<std::size_t>& cuts,
+                             const FieldVector<Double>& globalOriginBox,
+                             const FieldVector<Double>& localOriginBox);
 
     /* Sample due fixed-z field planes with the global Yee interpolation
      * stencil. The owning rank obtains one adjacent Ez/Bx/By layer only when

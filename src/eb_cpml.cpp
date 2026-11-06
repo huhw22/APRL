@@ -575,4 +575,78 @@ namespace aprl
     return (index < 6 ? impl_->magneticTerm[component][derivative] :
                        impl_->electricTerm[component][derivative])->history;
   }
+
+  EBConvolutionalPML::NativeZHistoryLayout
+  EBConvolutionalPML::nativeZHistoryLayout(std::size_t index) const
+  {
+    if (index >= checkpointHistoryCount())
+      throw std::out_of_range("CPML native-z history index is out of range");
+    if (impl_->parameters.cells[2] != 0)
+      throw std::invalid_argument("Native-z history transport requires transverse-only CPML");
+    const unsigned int pairs[6][2] = {
+      {0, 1}, {0, 2}, {1, 2}, {1, 0}, {2, 0}, {2, 1}
+    };
+    const unsigned int component = pairs[index % 6][0];
+    const unsigned int derivative = pairs[index % 6][1];
+    const CPMLMemoryTerm& term = *(index < 6 ?
+      impl_->magneticTerm[component][derivative] :
+      impl_->electricTerm[component][derivative]);
+    NativeZHistoryLayout result;
+    result.layers = term.dimensions[2];
+    result.nodeCentered = result.layers == impl_->geometry.nz + 1;
+    if (result.layers != impl_->geometry.nz && !result.nodeCentered)
+      throw std::logic_error("CPML native-z layer count does not match geometry");
+    if (derivative == 2 && !term.history.empty())
+      throw std::logic_error("Transverse-only CPML has longitudinal derivative history");
+    if (term.history.size() % result.layers)
+      throw std::logic_error("CPML native-z history has an invalid length");
+    result.valuesPerPlane = term.history.size() / result.layers;
+    return result;
+  }
+
+  std::vector<Double> EBConvolutionalPML::packNativeZHistory(
+      std::size_t index) const
+  {
+    const NativeZHistoryLayout layout = nativeZHistoryLayout(index);
+    const unsigned int derivative[6] = {1, 2, 2, 0, 0, 1};
+    const std::vector<Double>& history = checkpointHistory(index);
+    std::vector<Double> packed(history.size());
+    if (packed.empty()) return packed;
+    const unsigned int axis = derivative[index % 6];
+    const unsigned int component[6] = {0, 0, 1, 1, 2, 2};
+    std::size_t dimensions[3];
+    componentShape(impl_->geometry, index >= 6, component[index % 6], dimensions);
+    const std::size_t row = dimensions[axis == 0 ? 1 : 0];
+    const std::size_t slots = layout.valuesPerPlane / row;
+    if (slots * row != layout.valuesPerPlane)
+      throw std::logic_error("CPML transverse history row length changed");
+    for (std::size_t k = 0; k < layout.layers; ++k)
+      for (std::size_t slot = 0; slot < slots; ++slot)
+        std::copy_n(history.data() + (slot * layout.layers + k) * row,
+                    row, packed.data() + k * layout.valuesPerPlane + slot * row);
+    return packed;
+  }
+
+  void EBConvolutionalPML::restoreNativeZHistory(
+      std::size_t index, const std::vector<Double>& packed)
+  {
+    const NativeZHistoryLayout layout = nativeZHistoryLayout(index);
+    std::vector<Double>& history = checkpointHistory(index);
+    if (packed.size() != history.size())
+      throw std::invalid_argument("CPML native-z restore length changed");
+    if (packed.empty()) return;
+    const unsigned int derivative[6] = {1, 2, 2, 0, 0, 1};
+    const unsigned int component[6] = {0, 0, 1, 1, 2, 2};
+    const unsigned int axis = derivative[index % 6];
+    std::size_t dimensions[3];
+    componentShape(impl_->geometry, index >= 6, component[index % 6], dimensions);
+    const std::size_t row = dimensions[axis == 0 ? 1 : 0];
+    const std::size_t slots = layout.valuesPerPlane / row;
+    if (slots * row != layout.valuesPerPlane)
+      throw std::logic_error("CPML transverse history row length changed");
+    for (std::size_t k = 0; k < layout.layers; ++k)
+      for (std::size_t slot = 0; slot < slots; ++slot)
+        std::copy_n(packed.data() + k * layout.valuesPerPlane + slot * row,
+                    row, history.data() + (slot * layout.layers + k) * row);
+  }
 }

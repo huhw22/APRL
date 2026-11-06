@@ -3,6 +3,7 @@
 // Local equations validated by the independent source-coupling prototype.
 #include "eb_particles.h"
 #include "eb_deposition.h"
+#include "z_partition.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -26,11 +27,70 @@ inline Electric copyElectric(const EBFieldGrid& f) {return {{f.ex(),f.ey(),f.ez(
 class NativeHalo {
  bool lower_=false,upper_=false;unsigned depth_=1;
  std::vector<Double> down_[3],up_[3];
+ // Route only requested collar planes, never a full global field grid.
+ void exchangeThin(const EBFieldGrid& f,MPI_Comm comm,bool magnetic,
+                   const ZPartition& partition,int rank,int size) {
+  if(partition.totalCells()>static_cast<std::size_t>(std::numeric_limits<long long>::max()))
+   throw std::overflow_error("Coupling global z indices exceed signed routing range");
+  const YeeComponent* components[3]={magnetic?&f.bx():&f.ex(),magnetic?&f.by():&f.ey(),magnetic?&f.bz():&f.ez()};
+  const auto displacement=[](const std::vector<int>& counts,std::vector<int>& offsets)->std::size_t {
+   std::size_t total=0;offsets.resize(counts.size());
+   for(std::size_t p=0;p<counts.size();++p){if(counts[p]<0||total>static_cast<std::size_t>(std::numeric_limits<int>::max())-static_cast<std::size_t>(counts[p]))throw std::overflow_error("Coupling plane routing exceeds MPI count");offsets[p]=static_cast<int>(total);total+=counts[p];}return total;
+  };
+  for(unsigned a=0;a<3;++a) {
+   const auto& q=*components[a];const std::size_t plane=q.nx()*q.ny();
+   if(plane>static_cast<std::size_t>(std::numeric_limits<int>::max())/depth_)
+    throw std::overflow_error("Coupling collar exceeds MPI count");
+   down_[a].assign(plane*depth_,0.);up_[a].assign(plane*depth_,0.);
+   const bool node=magnetic?a==2:a<2;
+   const long long last=static_cast<long long>(partition.totalCells())-(node?0:1);
+   std::vector<std::vector<unsigned long long> > requests(static_cast<std::size_t>(size));
+   std::vector<std::vector<std::size_t> > targets(static_cast<std::size_t>(size));
+   for(unsigned side=0;side<2;++side)for(unsigned k=0;k<depth_;++k) {
+    long long global=static_cast<long long>(partition.offset(rank))+
+     (side?static_cast<long long>(q.nz()+k):static_cast<long long>(k)-depth_);
+    if(global<0||global>last) {
+     // Charge/current are cut at the true global face. Magnetic gathering
+     // retains its physical-end constant continuation across thin slabs.
+     if(!magnetic)continue;
+     global=std::max(0LL,std::min(global,last));
+    }
+    const int owner=node?partition.ownerNode(static_cast<std::size_t>(global)):
+      partition.ownerCell(static_cast<std::size_t>(global));
+    requests[owner].push_back(static_cast<unsigned long long>(global));
+    targets[owner].push_back(static_cast<std::size_t>(side)*depth_+k);
+   }
+   std::vector<int> sendCounts(static_cast<std::size_t>(size)),receiveCounts(static_cast<std::size_t>(size));
+   for(int p=0;p<size;++p)sendCounts[p]=static_cast<int>(requests[p].size());
+   if(MPI_Alltoall(sendCounts.data(),1,MPI_INT,receiveCounts.data(),1,MPI_INT,comm)!=MPI_SUCCESS)
+    throw std::runtime_error("Cannot exchange coupling collar requests");
+   std::vector<int> sendOffsets,receiveOffsets;
+   const auto sent=displacement(sendCounts,sendOffsets),received=displacement(receiveCounts,receiveOffsets);
+   std::vector<unsigned long long> sendIndices(sent),receiveIndices(received);
+   std::vector<std::size_t> destination(sent);
+   for(int p=0;p<size;++p){std::copy(requests[p].begin(),requests[p].end(),sendIndices.begin()+sendOffsets[p]);std::copy(targets[p].begin(),targets[p].end(),destination.begin()+sendOffsets[p]);}
+   if(MPI_Alltoallv(sendIndices.data(),sendCounts.data(),sendOffsets.data(),MPI_UNSIGNED_LONG_LONG,
+       receiveIndices.data(),receiveCounts.data(),receiveOffsets.data(),MPI_UNSIGNED_LONG_LONG,comm)!=MPI_SUCCESS)
+    throw std::runtime_error("Cannot route coupling collar requests");
+   std::vector<int> valueSendCounts(static_cast<std::size_t>(size)),valueReceiveCounts(static_cast<std::size_t>(size));
+   for(int p=0;p<size;++p){if(static_cast<std::size_t>(receiveCounts[p])>static_cast<std::size_t>(std::numeric_limits<int>::max())/plane||static_cast<std::size_t>(sendCounts[p])>static_cast<std::size_t>(std::numeric_limits<int>::max())/plane)throw std::overflow_error("Coupling plane reply exceeds MPI count");valueSendCounts[p]=static_cast<int>(receiveCounts[p]*plane);valueReceiveCounts[p]=static_cast<int>(sendCounts[p]*plane);}
+   std::vector<int> valueSendOffsets,valueReceiveOffsets;
+   const auto valueSent=displacement(valueSendCounts,valueSendOffsets),valueReceived=displacement(valueReceiveCounts,valueReceiveOffsets);
+   std::vector<Double> sendValues(valueSent),receiveValues(valueReceived);
+   for(std::size_t n=0;n<received;++n){const auto global=static_cast<std::size_t>(receiveIndices[n]);if(global<partition.offset(rank)||global-partition.offset(rank)>=q.nz())throw std::logic_error("Coupling request reached a non-owning rank");const auto k=global-partition.offset(rank);std::copy(q.data()+k*plane,q.data()+(k+1)*plane,sendValues.begin()+n*plane);}
+   if(MPI_Alltoallv(sendValues.data(),valueSendCounts.data(),valueSendOffsets.data(),MPI_DOUBLE,
+       receiveValues.data(),valueReceiveCounts.data(),valueReceiveOffsets.data(),MPI_DOUBLE,comm)!=MPI_SUCCESS)
+    throw std::runtime_error("Cannot exchange coupling collar planes");
+   for(std::size_t n=0;n<sent;++n){const auto slot=destination[n];auto& target=slot<depth_?down_[a]:up_[a];const auto k=slot%depth_;std::copy(receiveValues.begin()+n*plane,receiveValues.begin()+(n+1)*plane,target.begin()+k*plane);}
+  }
+ }
 public:
  void exchange(const EBFieldGrid& f,MPI_Comm comm,bool magnetic=false,unsigned depth=1) {
   depth_=depth;
   int rank=0,size=1;MPI_Comm_rank(comm,&rank);MPI_Comm_size(comm,&size);lower_=rank>0;upper_=rank+1<size;
   if(size==1)return;
+  const auto partition=ZPartition::gather(f.geometry().nz,comm);
+  if(partition.minimumCells()<depth_){exchangeThin(f,comm,magnetic,partition,rank,size);return;}
   const YeeComponent* v[3]={magnetic?&f.bx():&f.ex(),magnetic?&f.by():&f.ey(),magnetic?&f.bz():&f.ez()};
   for(unsigned a=0;a<3;++a){const auto& q=*v[a];const std::size_t plane=q.nx()*q.ny(),count=plane*depth_;if(q.nz()<(magnetic?a==2:a<2?true:false)+depth_)throw std::invalid_argument("Coupling halo exceeds slab");if(count>std::size_t(std::numeric_limits<int>::max()))throw std::overflow_error("Coupling halo too large");
    down_[a].resize(count);up_[a].resize(count);const bool node=magnetic?a==2:a<2;
@@ -58,7 +118,7 @@ public:
  }
 };
 struct MagneticSample {Vec value=Vec(0.),maximum=Vec(0.),point=Vec(0.);int cell[2][3];};
-inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,const Vec& position,bool bounds=true,const NativeHalo* halo=nullptr,bool openFaces=false) {
+inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,const Vec& position,bool bounds=true,const NativeHalo* halo=nullptr,bool openFaces=false,bool skipZeroWeights=false) {
  MagneticSample result;result.point=position;const auto& g=f.geometry();const Double ds[3]={g.dx,g.dy,g.dz};Double fraction[2][3];
  for(unsigned half=0;half<2;++half)for(unsigned d=0;d<3;++d){const Double x=(position[d]-origin[d])/ds[d]-.5*half;result.cell[half][d]=(int)std::floor(x);fraction[half][d]=x-result.cell[half][d];}
  const YeeComponent* fields[3]={&f.bx(),&f.by(),&f.bz()};
@@ -66,6 +126,9 @@ inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,cons
   const unsigned hx=axis==0?0:1,hy=axis==1?0:1,hz=axis==2?0:1;
   for(unsigned k=0;k<2;++k)for(unsigned j=0;j<2;++j)for(unsigned i=0;i<2;++i) {
    const Double x=i?fraction[hx][0]:1-fraction[hx][0],y=j?fraction[hy][1]:1-fraction[hy][1],z=k?fraction[hz][2]:1-fraction[hz][2];
+   // Compact gathering needs only nonzero support. At an exact staggered
+   // endpoint the otherwise-read outer corner may lie one layer farther.
+   if(skipZeroWeights&&(x==0.||y==0.||z==0.))continue;
    const Double b=halo?(openFaces?halo->openMagneticValue(*fields[axis],axis,result.cell[hx][0]+int(i),result.cell[hy][1]+int(j),result.cell[hz][2]+int(k)):halo->value(*fields[axis],axis,result.cell[hx][0]+int(i),result.cell[hy][1]+int(j),result.cell[hz][2]+int(k))):(*fields[axis])(result.cell[hx][0]+i,result.cell[hy][1]+j,result.cell[hz][2]+k);
    result.value[axis]+=x*y*z*b;if(bounds)result.maximum[axis]=std::max(result.maximum[axis],std::abs(b));
   }

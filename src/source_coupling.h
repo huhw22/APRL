@@ -11,8 +11,9 @@ namespace aprl {
 namespace longitudinal_shape {class Current;}
 class ConservativeSourceCoupling {
 public:
-  ConservativeSourceCoupling(MPI_Comm,const std::string& directory,bool quintic=false,bool linearNotch=false,bool linearBinomial3=false);
+  ConservativeSourceCoupling(MPI_Comm,const std::string& directory,bool quintic=false,bool linearNotch=false,bool linearBinomial3=false,bool compact=false);
   ~ConservativeSourceCoupling();
+  void reconfigurePartition();
   void begin(EBFieldGrid&,const FieldVector<Double>& origin,const std::vector<RelativisticParticleSI>&,unsigned physicalCellsX=0,unsigned physicalCellsY=0);
   longitudinal_shape::Current* longitudinalCurrent();
   // Frozen high-order sources can overlap the grid while their centers are

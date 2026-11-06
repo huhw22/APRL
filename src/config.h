@@ -62,6 +62,16 @@ namespace aprl
     MovingWindowConfig();
   };
 
+  struct MpiParticleBalanceConfig
+  {
+    bool enabled;
+    std::size_t intervalSteps, minimumCells;
+    Double minimumImprovement, frozenWeight, fieldCellWeight;
+    MpiParticleBalanceConfig()
+      :enabled(false),intervalSteps(5),minimumCells(3),
+       minimumImprovement(.1),frozenWeight(.2),fieldCellWeight(0.) {}
+  };
+
   struct MeshConfig
   {
     std::size_t cells[3];
@@ -87,6 +97,7 @@ namespace aprl
     bool ballisticOutsideTransverse;
     LongitudinalMeshConfig longitudinal;
     MovingWindowConfig movingWindow;
+    MpiParticleBalanceConfig particleBalance;
 
     MeshConfig();
   };

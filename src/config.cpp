@@ -132,9 +132,14 @@ namespace aprl
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
             "resolution", "ballistic_outside_transverse",
-            "self_field_feedback", "moving_window", "particle_coupling", "longitudinal_shape"
+            "self_field_feedback", "moving_window", "particle_coupling", "longitudinal_shape", "mpi_particle_balance"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
+          if (mesh["mpi_particle_balance"])
+            validateMapKeys(mesh["mpi_particle_balance"], "mesh.mpi_particle_balance", {
+              "enabled", "interval_steps", "minimum_cells", "minimum_improvement",
+              "frozen_weight", "field_cell_weight"
+            });
           if (longitudinal)
             validateMapKeys(longitudinal, "mesh.longitudinal", {
               "mode", "lower_guard_cells", "upper_guard_cells",
@@ -1034,6 +1039,18 @@ namespace aprl
       result.mesh.selfFieldFeedback =
         mesh["self_field_feedback"].as<bool>();
     const YAML::Node movingWindow = mesh["moving_window"];
+    if (const YAML::Node balance = mesh["mpi_particle_balance"])
+      {
+        auto& b=result.mesh.particleBalance;
+        if(balance["enabled"])b.enabled=balance["enabled"].as<bool>();
+        if(balance["interval_steps"])b.intervalSteps=positiveSize(balance["interval_steps"],"mpi_particle_balance interval_steps");
+        if(balance["minimum_cells"])b.minimumCells=positiveSize(balance["minimum_cells"],"mpi_particle_balance minimum_cells");
+        if(balance["minimum_improvement"])b.minimumImprovement=finiteDouble(balance["minimum_improvement"],"mpi_particle_balance minimum_improvement");
+        if(balance["frozen_weight"])b.frozenWeight=finiteDouble(balance["frozen_weight"],"mpi_particle_balance frozen_weight");
+        if(balance["field_cell_weight"])b.fieldCellWeight=finiteDouble(balance["field_cell_weight"],"mpi_particle_balance field_cell_weight");
+        if(b.minimumCells<2 || b.minimumImprovement<0 || b.minimumImprovement>=1 || b.frozenWeight<0 || b.fieldCellWeight<0)
+          throw configError(balance,"mpi_particle_balance needs minimum_cells>=2, improvement in [0,1), and nonnegative weights");
+      }
     if(mesh["particle_coupling"]) {
       const auto method=mesh["particle_coupling"].as<std::string>();
       if(method!="boris"&&method!="conservative-source")
@@ -1891,6 +1908,9 @@ namespace aprl
         "boost_gamma must be at least one");
     if (!(result.mesh.duration > 0.0))
       throw configError(mesh["duration"], "duration must be positive");
+    if (result.mesh.particleBalance.enabled &&
+        (!result.mesh.movingWindow.enabled || !result.mesh.conservativeSourceCoupling))
+      throw configError(mesh["mpi_particle_balance"],"mpi_particle_balance requires moving_window and conservative-source");
     if (result.mesh.movingWindow.enabled)
       {
         if (result.mesh.fieldSolver != EBMaxwellSolver::CowanZ ||

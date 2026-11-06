@@ -47,6 +47,7 @@ namespace aprl
       ParticleMigrationStage, DiagnosticsStage, ControlStage,
       FieldCommunicationStage, ParticleCommunicationStage,
       PendingAdmissionStage, MovingWindowStage, PendingStatisticsStage,
+      CouplingTotalStage, CouplingCacheStage, CouplingResidualStage,
       PerformanceStageCount
     };
     struct Slab
@@ -127,6 +128,7 @@ namespace aprl
     void pushDepositAndMigrate();
     void solveConservativeSourceStep();
     void commitConservativeElectric();
+    bool maybeBalanceParticles();
     bool conservativeLongitudinalHandoff(const ParticleBoundaryHit&,
         const FieldVector<Double>& fullEnd) const;
     void pushParticle(RelativisticParticleSI& p,Double time,Double dt,
@@ -158,6 +160,9 @@ namespace aprl
     EBGridGeometry globalGeometry_;
     EBGridGeometry localGeometry_;
     std::size_t localZOffset_;
+    std::vector<std::size_t> slabCuts_;
+    std::size_t particleBalanceEvents_ = 0;
+    double particleBalanceSeconds_ = 0.;
     FieldVector<Double> globalOriginBox_;
     FieldVector<Double> localOriginBox_;
     Double referenceCenterBoxZ_;

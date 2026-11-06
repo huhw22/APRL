@@ -2413,6 +2413,16 @@ namespace aprl
       localOriginBox_ = localOriginBox;
     }
 
+    void updateGridPartition(const std::vector<std::size_t>& cuts,
+                             const FieldVector<Double>& globalOrigin,
+                             const FieldVector<Double>& localOrigin)
+    {
+      if(cuts.size()!=static_cast<std::size_t>(size_)+1 || cuts.front()!=0 || cuts.back()!=globalGeometry_.nz)
+        throw std::invalid_argument("Invalid detector MPI partition");
+      for(std::size_t k=1;k<cuts.size();++k)if(cuts[k]<=cuts[k-1])throw std::invalid_argument("Empty detector slab");
+      slabCuts_=cuts;updateGridOrigins(globalOrigin,localOrigin);
+    }
+
     void sampleFieldPlanes(const EBFieldGrid& localFields, Double timeBox)
     {
       for (std::size_t detector = 0;
@@ -2744,6 +2754,7 @@ namespace aprl
   private:
     std::size_t slabOffset(int rank) const
     {
+      if(!slabCuts_.empty())return slabCuts_[rank];
       const std::size_t base = globalGeometry_.nz /
         static_cast<std::size_t>(size_);
       const std::size_t remainder = globalGeometry_.nz %
@@ -2811,6 +2822,7 @@ namespace aprl
         coordinate >= static_cast<double>(globalGeometry_.nz) ?
         globalGeometry_.nz - 1 :
         static_cast<std::size_t>(std::max(0.0, std::floor(coordinate)));
+      if(!slabCuts_.empty())return static_cast<int>(std::upper_bound(slabCuts_.begin(),slabCuts_.end(),cell)-slabCuts_.begin()-1);
       const std::size_t base = globalGeometry_.nz /
         static_cast<std::size_t>(size_);
       const std::size_t remainder = globalGeometry_.nz %
@@ -3020,6 +3032,7 @@ namespace aprl
 
     DetectorConfig config_;
     EBGridGeometry globalGeometry_;
+    std::vector<std::size_t> slabCuts_;
     FieldVector<Double> globalOriginBox_;
     FieldVector<Double> localOriginBox_;
     BoostFrameTransform frame_;
@@ -3119,6 +3132,11 @@ namespace aprl
       const FieldVector<Double>& localOriginBox)
   {
     impl_->updateGridOrigins(globalOriginBox, localOriginBox);
+  }
+  void LabDetectorManager::updateGridPartition(const std::vector<std::size_t>& cuts,
+      const FieldVector<Double>& globalOriginBox,const FieldVector<Double>& localOriginBox)
+  {
+    impl_->updateGridPartition(cuts,globalOriginBox,localOriginBox);
   }
 
   void LabDetectorManager::flushForCheckpoint()

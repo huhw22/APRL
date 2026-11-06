@@ -52,6 +52,20 @@ namespace aprl
     std::vector<Double>& checkpointHistory(std::size_t index);
     const std::vector<Double>& checkpointHistory(std::size_t index) const;
 
+    // Exact native-z transport for transverse CPML. Each packed z plane
+    // contains the existing transverse history slots in their original order.
+    // No history interpolation, profile reevaluation or array resizing occurs.
+    struct NativeZHistoryLayout
+    {
+      std::size_t layers;
+      std::size_t valuesPerPlane;
+      bool nodeCentered;
+    };
+    NativeZHistoryLayout nativeZHistoryLayout(std::size_t index) const;
+    std::vector<Double> packNativeZHistory(std::size_t index) const;
+    void restoreNativeZHistory(std::size_t index,
+                               const std::vector<Double>& zMajorValues);
+
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

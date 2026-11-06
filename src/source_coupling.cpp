@@ -16,11 +16,19 @@ using namespace source_coupling_math;
 struct ConservativeSourceCoupling::Impl {
  struct Slot {RelativisticParticleSI first,last;Vec guess=Vec(0.),usedE=Vec(0.),usedB=Vec(0.),nextE=Vec(0.),nextB=Vec(0.);bool seen=false,initialized=false,replayed=false,nextReady=false;unsigned pushes=0;Double time=0.,dt=0.;std::vector<RelativisticParticleSI> states;std::vector<BorisWork> works;};
  struct Constraint {Vec begin,end;Double charge;bool carrier;};
- bool quintic=false,linearNotch=false,linearBinomial3=false;std::unique_ptr<longitudinal_shape::Current> shapedCurrent;
+ bool quintic=false,linearNotch=false,linearBinomial3=false,compact=false;std::unique_ptr<longitudinal_shape::Current> shapedCurrent;
  bool wide()const{return quintic||linearNotch||linearBinomial3;}
+ // Two layers cover exact nonzero F3 support. Retain one more native layer
+ // for IEEE world/local normalization and exact-zero interpolation corners.
+ unsigned depth()const{return linearBinomial3&&compact?3:8;}
+ void checkCompactChord(const Vec& a,const Vec& b)const{
+  if(depth()>=8)return;const auto& g=fields->geometry();const double distance=std::abs(b[2]-a[2]),tolerance=128*std::numeric_limits<double>::epsilon()*std::max(g.dz,std::max(std::abs(origin[2]),std::max(std::abs(a[2]),std::abs(b[2]))));
+  if(!std::isfinite(distance)||distance>g.dz+tolerance)throw std::out_of_range("Compact binomial3 gather requires at most one-cell longitudinal motion");
+ }
  longitudinal_shape::Shape shape()const{return linearBinomial3?longitudinal_shape::Shape::LinearBinomial3:(linearNotch?longitudinal_shape::Shape::LinearNotch:longitudinal_shape::Shape::QuinticCompensated);}
  Vec electric(const Vec& a,const Vec& b,bool open=true){
   if(!wide())return open?openOrbitElectric(*fields,&old,origin,a,b,&newHalo,&oldHalo):orbitElectric(*fields,&old,origin,a,b,&newHalo,&oldHalo);
+  checkCompactChord(a,b);
   const auto path=open?clipOpenOrbit(fields->geometry(),origin,a,b,&newHalo):OpenOrbit();
   const Vec& first=open?path.begin:a;const Vec& last=open?path.end:b;if(open&&!path.valid)throw std::out_of_range("Quintic active orbit outside domain");
   Vec result(0.);const YeeComponent* e[3]={&fields->ex(),&fields->ey(),&fields->ez()};
@@ -29,6 +37,7 @@ struct ConservativeSourceCoupling::Impl {
  }
  Vec magnetic(const Vec& a,const Vec& b){
   if(!linearNotch&&!linearBinomial3)return openOrbitMagnetic(*fields,origin,a,b,&magneticHalo);
+  checkCompactChord(a,b);
   const auto path=clipOpenOrbit(fields->geometry(),origin,a,b,&magneticHalo);
   if(!path.valid)throw std::out_of_range("Notch magnetic orbit outside domain");
   Vec middle(path.begin);middle+=path.end;middle*=.5;Vec result(0.);
@@ -46,9 +55,10 @@ struct ConservativeSourceCoupling::Impl {
 #endif
  index.emplace(p.id,slots.size());slots.emplace_back();return slots.back();}
 };
-ConservativeSourceCoupling::ConservativeSourceCoupling(MPI_Comm c,const std::string& directory,bool quintic,bool linearNotch,bool linearBinomial3):impl_(new Impl(c,directory)){if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)throw std::invalid_argument("Ambiguous longitudinal source shape");impl_->quintic=quintic;impl_->linearNotch=linearNotch;impl_->linearBinomial3=linearBinomial3;}
+ConservativeSourceCoupling::ConservativeSourceCoupling(MPI_Comm c,const std::string& directory,bool quintic,bool linearNotch,bool linearBinomial3,bool compact):impl_(new Impl(c,directory)){if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)throw std::invalid_argument("Ambiguous longitudinal source shape");impl_->quintic=quintic;impl_->linearNotch=linearNotch;impl_->linearBinomial3=linearBinomial3;impl_->compact=compact;}
 ConservativeSourceCoupling::~ConservativeSourceCoupling()=default;
-void ConservativeSourceCoupling::begin(EBFieldGrid& f,const Vec& origin,const std::vector<RelativisticParticleSI>& p,unsigned cx,unsigned cy){auto& s=*impl_;s.cx=cx;s.cy=cy;s.fields=&f;s.origin=origin;s.old[0]=f.ex();s.old[1]=f.ey();s.old[2]=f.ez();s.oldHalo.exchange(f,s.comm,false,s.wide()?8:1);if(s.wide()&&!s.shapedCurrent)s.shapedCurrent.reset(new longitudinal_shape::Current(f,s.comm,s.shape()));s.magneticHalo.exchange(f,s.comm,true,(s.linearNotch||s.linearBinomial3)?8:1);s.index.clear();s.slots.clear();s.slots.reserve(p.size()+32);for(const auto& q:p){s.index.emplace(q.id,s.slots.size());s.slots.emplace_back();}s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();s.trialPushes=s.committedPushes=0;s.replay=false;}
+void ConservativeSourceCoupling::reconfigurePartition(){auto& s=*impl_;s.shapedCurrent.reset();s.fields=nullptr;s.index.clear();s.slots.clear();s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();}
+void ConservativeSourceCoupling::begin(EBFieldGrid& f,const Vec& origin,const std::vector<RelativisticParticleSI>& p,unsigned cx,unsigned cy){auto& s=*impl_;s.cx=cx;s.cy=cy;s.fields=&f;s.origin=origin;s.old[0]=f.ex();s.old[1]=f.ey();s.old[2]=f.ez();s.oldHalo.exchange(f,s.comm,false,s.wide()?s.depth():1);if(s.wide()&&!s.shapedCurrent)s.shapedCurrent.reset(new longitudinal_shape::Current(f,s.comm,s.shape(),s.depth()));s.magneticHalo.exchange(f,s.comm,true,(s.linearNotch||s.linearBinomial3)?s.depth():1);s.index.clear();s.slots.clear();s.slots.reserve(p.size()+32);for(const auto& q:p){s.index.emplace(q.id,s.slots.size());s.slots.emplace_back();}s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();s.trialPushes=s.committedPushes=0;s.replay=false;}
 longitudinal_shape::Current* ConservativeSourceCoupling::longitudinalCurrent(){return impl_->shapedCurrent.get();}
 void ConservativeSourceCoupling::depositFrozenSourceSupport(const Vec& begin,const Vec& end,Double charge,bool recordWork){
  auto& s=*impl_;
@@ -59,7 +69,7 @@ void ConservativeSourceCoupling::depositFrozenSourceSupport(const Vec& begin,con
 void ConservativeSourceCoupling::completeCurrent(){if(impl_->shapedCurrent)impl_->shapedCurrent->complete();}
 void ConservativeSourceCoupling::beginTrial(){if(impl_->shapedCurrent)impl_->shapedCurrent->clear();for(auto& q:impl_->slots)q.seen=false;}
 void ConservativeSourceCoupling::setReplay(bool enabled){impl_->replay=enabled;if(enabled&&impl_->shapedCurrent)impl_->shapedCurrent->clear();}
-void ConservativeSourceCoupling::exchangeCandidate(){impl_->newHalo.exchange(*impl_->fields,impl_->comm,false,impl_->wide()?8:1);}
+void ConservativeSourceCoupling::exchangeCandidate(){impl_->newHalo.exchange(*impl_->fields,impl_->comm,false,impl_->wide()?impl_->depth():1);}
 void ConservativeSourceCoupling::swapElectric(){auto& s=*impl_;using std::swap;swap(s.fields->ex(),s.old[0]);swap(s.fields->ey(),s.old[1]);swap(s.fields->ez(),s.old[2]);}
 void ConservativeSourceCoupling::applyCurrentSource(Double sign){auto& s=*impl_;auto& f=*s.fields;const auto& g=f.geometry();YeeComponent* e[3]={&f.ex(),&f.ey(),&f.ez()};const YeeComponent* j[3]={&f.jx(),&f.jy(),&f.jz()};
  for(unsigned a=0;a<3;++a){auto* dst=e[a]->data();const auto* current=j[a]->data();const auto nx=e[a]->nx(),ny=e[a]->ny(),nz=e[a]->nz();
@@ -87,7 +97,7 @@ void ConservativeSourceCoupling::recordActiveSegment(const Vec& a,const Vec& b,D
 void ConservativeSourceCoupling::recordLongitudinalHandoff(std::uint64_t id,const Vec& crossing,bool carrier){
  if(!carrier)return;auto& s=*impl_;const auto found=s.index.find(id);if(found==s.index.end())throw std::logic_error("Longitudinal handoff has no coupled orbit");const auto& q=s.slots[found->second];s.longitudinalHandoffs.push_back({crossing,q.last.position,q.first.charge,true});
 }
-std::array<long double,8> ConservativeSourceCoupling::finalizeConstraints(){auto& s=*impl_;s.newHalo.exchange(*s.fields,s.comm,false,s.wide()?8:1);std::array<long double,8> out{};for(const auto& q:s.constraints){const Vec e=s.electric(q.begin,q.end,false);const auto work=-chargeWork(q.charge,e,q.begin,q.end);const unsigned i=q.carrier?3:0;out[i]+=work;out[i+1]+=std::abs(work);out[i+2]+=1;}long double held=0.;
+std::array<long double,8> ConservativeSourceCoupling::finalizeConstraints(){auto& s=*impl_;s.newHalo.exchange(*s.fields,s.comm,false,s.wide()?s.depth():1);std::array<long double,8> out{};for(const auto& q:s.constraints){const Vec e=s.electric(q.begin,q.end,false);const auto work=-chargeWork(q.charge,e,q.begin,q.end);const unsigned i=q.carrier?3:0;out[i]+=work;out[i+1]+=std::abs(work);out[i+2]+=1;}long double held=0.;
  for(const auto& q:s.longitudinalHandoffs){const auto path=clipOpenOrbit(s.fields->geometry(),s.origin,q.begin,q.end,&s.newHalo);if(path.valid){const Vec e=s.electric(path.begin,path.end,false);out[7]+=chargeWork(q.charge,e,path.begin,path.end);}}
  long double active=0.;if(s.exitAudit.is_open())for(const auto& q:s.activeSegments){const Vec e=s.electric(q.begin,q.end,false);active+=chargeWork(q.charge,e,q.begin,q.end);}
  const auto& f=*s.fields;const auto& g=f.geometry();const long double v=(long double)g.dt*g.dx*g.dy*g.dz;

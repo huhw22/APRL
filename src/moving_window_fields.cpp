@@ -43,6 +43,108 @@ void sameGeometry(const EBGridGeometry& a,const EBGridGeometry& b) {
      a.dz!=b.dz||a.dt!=b.dt||a.solver!=b.solver)
     throw std::invalid_argument("Moving-window geometry changed");
 }
+struct IntegerSlabPartition {
+  std::vector<std::size_t> oldOffset,oldCells,nextOffset,nextCells;
+  int rank=0,size=1;
+};
+IntegerSlabPartition integerSlabs(MPI_Comm comm,std::size_t globalNz,
+    std::size_t oldOffset,std::size_t oldCells,
+    std::size_t nextOffset,std::size_t nextCells) {
+  IntegerSlabPartition p;MPI_Comm_rank(comm,&p.rank);MPI_Comm_size(comm,&p.size);
+  const unsigned long long local[4]={static_cast<unsigned long long>(oldOffset),
+    static_cast<unsigned long long>(oldCells),static_cast<unsigned long long>(nextOffset),
+    static_cast<unsigned long long>(nextCells)};
+  std::vector<unsigned long long> all(4*static_cast<std::size_t>(p.size));
+  if(MPI_Allgather(local,4,MPI_UNSIGNED_LONG_LONG,all.data(),4,
+      MPI_UNSIGNED_LONG_LONG,comm)!=MPI_SUCCESS)
+    throw std::runtime_error("Cannot collect integer z-slab partitions");
+  p.oldOffset.resize(p.size);p.oldCells.resize(p.size);
+  p.nextOffset.resize(p.size);p.nextCells.resize(p.size);
+  std::size_t oldEnd=0,nextEnd=0;
+  for(int rank=0;rank<p.size;++rank) {
+    const auto index=4*static_cast<std::size_t>(rank);
+    p.oldOffset[rank]=static_cast<std::size_t>(all[index]);
+    p.oldCells[rank]=static_cast<std::size_t>(all[index+1]);
+    p.nextOffset[rank]=static_cast<std::size_t>(all[index+2]);
+    p.nextCells[rank]=static_cast<std::size_t>(all[index+3]);
+    if(p.oldOffset[rank]!=oldEnd||p.nextOffset[rank]!=nextEnd||
+       p.oldCells[rank]<2||p.nextCells[rank]<2||oldEnd>globalNz||nextEnd>globalNz||
+       p.oldCells[rank]>globalNz-oldEnd||p.nextCells[rank]>globalNz-nextEnd)
+      throw std::invalid_argument("Integer z-slab remap must preserve contiguous global coverage and at least two cells per rank");
+    oldEnd+=p.oldCells[rank];nextEnd+=p.nextCells[rank];
+  }
+  if(oldEnd!=globalNz||nextEnd!=globalNz)
+    throw std::invalid_argument("Integer z-slab remap changed the global cell count");
+  return p;
+}
+std::vector<Double> remapNativePlanes(const Double* oldValues,std::size_t plane,
+    bool node,const IntegerSlabPartition& p,MPI_Comm comm) {
+  const auto destinationLayers=p.nextCells[p.rank]+(node?1:0);
+  std::vector<Double> next(multiply(destinationLayers,plane));
+  const unsigned long long localPlane=static_cast<unsigned long long>(plane);
+  unsigned long long minimum=0,maximum=0;
+  MPI_Allreduce(&localPlane,&minimum,1,MPI_UNSIGNED_LONG_LONG,MPI_MIN,comm);
+  MPI_Allreduce(&localPlane,&maximum,1,MPI_UNSIGNED_LONG_LONG,MPI_MAX,comm);
+  if(minimum!=maximum)throw std::invalid_argument("Native z-remap transverse plane sizes differ across ranks");
+  if(!plane)return next;
+  if(plane>static_cast<std::size_t>(std::numeric_limits<int>::max()))
+    throw std::overflow_error("Native z-remap plane exceeds MPI count");
+  // A duplicated old node must already denote the same physical value. Do
+  // not silently turn repartitioning into a field/history correction.
+  if(node&&p.size>1) {
+    std::vector<Double> lower(plane);
+    const int below=p.rank?p.rank-1:MPI_PROC_NULL;
+    const int above=p.rank+1<p.size?p.rank+1:MPI_PROC_NULL;
+    if(MPI_Sendrecv(oldValues+p.oldCells[p.rank]*plane,static_cast<int>(plane),
+        MPI_DOUBLE,above,23701,lower.data(),static_cast<int>(plane),MPI_DOUBLE,
+        below,23701,comm,MPI_STATUS_IGNORE)!=MPI_SUCCESS)
+      throw std::runtime_error("Cannot validate shared native z nodes");
+    int mismatch=0,anyMismatch=0;
+    if(p.rank)for(std::size_t i=0;i<plane;++i)
+      if(oldValues[i]!=lower[i]){mismatch=1;break;}
+    MPI_Allreduce(&mismatch,&anyMismatch,1,MPI_INT,MPI_MAX,comm);
+    if(anyMismatch)throw std::runtime_error("Cannot repartition inconsistent duplicated native field or CPML nodes");
+  }
+  std::vector<int> sendCount(p.size),receiveCount(p.size),sendDisplacement(p.size),receiveDisplacement(p.size);
+  std::vector<std::size_t> sendFirst(p.size),receiveFirst(p.size);
+  std::size_t sendTotal=0,receiveTotal=0;
+  for(int peer=0;peer<p.size;++peer) {
+    // Interface nodes are owned by the upper slab; the final global node
+    // belongs to the last rank. Both new copies read that single old donor.
+    const auto ownBegin=p.oldOffset[p.rank];
+    const auto ownEnd=ownBegin+p.oldCells[p.rank]+(node&&p.rank+1==p.size?1:0);
+    const auto wantedBegin=p.nextOffset[peer];
+    const auto wantedEnd=wantedBegin+p.nextCells[peer]+(node?1:0);
+    const auto first=std::max(ownBegin,wantedBegin),last=std::min(ownEnd,wantedEnd);
+    const auto sendValues=last>first?multiply(last-first,plane):0;
+    const auto peerBegin=p.oldOffset[peer];
+    const auto peerEnd=peerBegin+p.oldCells[peer]+(node&&peer+1==p.size?1:0);
+    const auto destinationBegin=p.nextOffset[p.rank];
+    const auto destinationEnd=destinationBegin+destinationLayers;
+    const auto receiveBegin=std::max(peerBegin,destinationBegin);
+    const auto receiveEnd=std::min(peerEnd,destinationEnd);
+    const auto receiveValues=receiveEnd>receiveBegin?multiply(receiveEnd-receiveBegin,plane):0;
+    const auto limit=static_cast<std::size_t>(std::numeric_limits<int>::max());
+    if(sendValues>limit||receiveValues>limit||sendTotal>limit-sendValues||receiveTotal>limit-receiveValues)
+      throw std::overflow_error("Native z-remap message exceeds MPI count/displacement");
+    sendFirst[peer]=first;receiveFirst[peer]=receiveBegin;
+    sendCount[peer]=static_cast<int>(sendValues);receiveCount[peer]=static_cast<int>(receiveValues);
+    sendDisplacement[peer]=static_cast<int>(sendTotal);receiveDisplacement[peer]=static_cast<int>(receiveTotal);
+    sendTotal+=sendValues;receiveTotal+=receiveValues;
+  }
+  if(receiveTotal!=next.size())throw std::logic_error("Native z-remap destination has missing or repeated planes");
+  std::vector<Double> send(sendTotal),receive(receiveTotal);
+  for(int peer=0;peer<p.size;++peer)if(sendCount[peer])
+    std::copy_n(oldValues+(sendFirst[peer]-p.oldOffset[p.rank])*plane,
+                sendCount[peer],send.data()+sendDisplacement[peer]);
+  if(MPI_Alltoallv(send.data(),sendCount.data(),sendDisplacement.data(),MPI_DOUBLE,
+      receive.data(),receiveCount.data(),receiveDisplacement.data(),MPI_DOUBLE,comm)!=MPI_SUCCESS)
+    throw std::runtime_error("Native z-slab state remap failed");
+  for(int peer=0;peer<p.size;++peer)if(receiveCount[peer])
+    std::copy_n(receive.data()+receiveDisplacement[peer],receiveCount[peer],
+                next.data()+(receiveFirst[peer]-p.nextOffset[p.rank])*plane);
+  return next;
+}
 }
 
 struct MovingWindowFields::Impl {
@@ -214,19 +316,21 @@ struct MovingWindowFields::Impl {
   void* layerContext = nullptr;
 
   Impl(const EBGridGeometry& g,std::size_t nz,std::size_t local,
-       MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r)
+       MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r,
+       bool nonuniform=false)
     :geometry(g),globalNz(nz),localOffset(local),communicator(comm),parameters(p),reference(r) {
     MPI_Comm_rank(comm,&rank);MPI_Comm_size(comm,&size);
     const auto ranks=static_cast<std::size_t>(size);
     const auto base=nz/ranks,remainder=nz%ranks;
     if(g.solver!=EBMaxwellSolver::CowanZ||g.nz<2||g.nx<2||g.ny<2||
-       g.nz!=base+(static_cast<std::size_t>(rank)<remainder)||
-       local!=base*rank+std::min(static_cast<std::size_t>(rank),remainder)||
+       (!nonuniform&&(g.nz!=base+(static_cast<std::size_t>(rank)<remainder)||
+       local!=base*rank+std::min(static_cast<std::size_t>(rank),remainder)))||
+       local>nz||g.nz>nz-local||
        p.cells[2]!=0||p.cells[0]<2||p.cells[1]<2||
        p.cells[0]>=g.nx||p.cells[0]>=g.nx-p.cells[0]||
        p.cells[1]>=g.ny||p.cells[1]>=g.ny-p.cells[1]||
        (rank==0&&!r.value))
-      throw std::invalid_argument("Moving-window requires fixed Cowan z slabs, xy-only CPML and an inlet reference");
+      throw std::invalid_argument("Moving-window requires valid Cowan integer z slabs, xy-only CPML and an inlet reference");
     if(!std::isfinite(g.dt)||!std::isfinite(g.dz)||!(g.dz>0)||
        std::abs(SI::c*g.dt-g.dz)>64*std::numeric_limits<Double>::epsilon()*g.dz)
       throw std::invalid_argument("Moving-window requires c*dt=dz");
@@ -404,8 +508,9 @@ struct MovingWindowFields::Impl {
 };
 
 MovingWindowFields::MovingWindowFields(const EBGridGeometry& g,std::size_t nz,
-    std::size_t local,MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r)
-  :impl_(new Impl(g,nz,local,comm,p,r)) {}
+    std::size_t local,MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r,
+    bool nonuniform)
+  :impl_(new Impl(g,nz,local,comm,p,r,nonuniform)) {}
 MovingWindowFields::~MovingWindowFields() {}
 void MovingWindowFields::installBoundary(EBFieldGrid& f) {
   sameGeometry(impl_->geometry,f.geometry());
@@ -455,6 +560,68 @@ EBElectricHaloView MovingWindowFields::physicalElectricHalos(const EBFieldGrid& 
 }
 MovingWindowFieldShiftReport MovingWindowFields::shift(EBFieldGrid& f,std::size_t n,std::ptrdiff_t k,bool reset) {
   return impl_->shift(f,n,k,reset);
+}
+std::unique_ptr<MovingWindowFields> MovingWindowFields::repartition(
+    const EBFieldGrid& oldFields,EBFieldGrid& nextFields,std::size_t newLocalOffset) const {
+  const auto& old=*impl_;const auto& g=nextFields.geometry();
+  int invalid=0,anyInvalid=0;
+  try {
+    old.validate(oldFields);
+    if(&oldFields==&nextFields||old.boundary->phase!=Impl::Boundary::Phase::Idle||
+       old.boundary->previewPresent||old.boundary->electricPreview||
+       g.nx!=old.geometry.nx||g.ny!=old.geometry.ny||g.nz<2||
+       g.dx!=old.geometry.dx||g.dy!=old.geometry.dy||g.dz!=old.geometry.dz||
+       g.dt!=old.geometry.dt||g.solver!=old.geometry.solver)
+      invalid=1;
+  }catch(...){invalid=1;}
+  MPI_Allreduce(&invalid,&anyInvalid,1,MPI_INT,MPI_MAX,old.communicator);
+  if(anyInvalid)throw std::invalid_argument("Moving-window repartition requires distinct grids at an Idle completed step and unchanged physical geometry");
+  const auto partition=integerSlabs(old.communicator,old.globalNz,old.localOffset,
+      old.geometry.nz,newLocalOffset,g.nz);
+  std::unique_ptr<MovingWindowFields> result(new MovingWindowFields(g,old.globalNz,
+      newLocalOffset,old.communicator,old.parameters,old.reference,true));
+  result->installBoundary(nextFields);
+  auto& next=*result->impl_;
+  for(unsigned a=0;a<9;++a) {
+    const auto& source=component(oldFields,a);auto& destination=component(nextFields,a);
+    const bool node=source.nz()==old.geometry.nz+1;
+    const auto values=remapNativePlanes(source.data(),multiply(source.nx(),source.ny()),
+                                       node,partition,old.communicator);
+    if(values.size()!=destination.size())throw std::logic_error("Native field repartition shape changed");
+    std::copy(values.begin(),values.end(),destination.data());
+  }
+  for(std::size_t h=0;h<old.boundary->checkpointHistoryCount();++h) {
+    const auto sourceLayout=old.boundary->nativeZHistoryLayout(h);
+    const auto destinationLayout=next.boundary->nativeZHistoryLayout(h);
+    if(sourceLayout.valuesPerPlane!=destinationLayout.valuesPerPlane||
+       sourceLayout.nodeCentered!=destinationLayout.nodeCentered)
+      throw std::logic_error("CPML repartition changed the transverse history layout");
+    const auto source=old.boundary->packNativeZHistory(h);
+    const auto values=remapNativePlanes(source.data(),sourceLayout.valuesPerPlane,
+        sourceLayout.nodeCentered,partition,old.communicator);
+    next.boundary->restoreNativeZHistory(h,values);
+  }
+  // Cumulative rank histories remain attached to their rank. Their MPI sum
+  // is exactly the previous ledger, and repartition is not a physical event.
+  next.energy=old.energy;
+  next.beforeInletObserver=old.beforeInletObserver;
+  next.beforeInletContext=old.beforeInletContext;
+  next.stageObserver=old.stageObserver;next.stageContext=old.stageContext;
+  next.discreteObserver=old.discreteObserver;next.discreteContext=old.discreteContext;
+  next.layerCompletion=old.layerCompletion;next.layerContext=old.layerContext;
+  next.boundary->phase=old.boundary->phase;
+  next.boundary->established=old.boundary->established;
+  next.boundary->step=old.boundary->step;next.boundary->offset=old.boundary->offset;
+  next.boundary->queries=old.boundary->queries;
+  next.boundary->startPower=old.boundary->startPower;
+  next.boundary->overwritePowerDelta=old.boundary->overwritePowerDelta;
+  next.boundary->energyStepFinished=old.boundary->energyStepFinished;
+  for(unsigned a=0;a<3;++a) {
+    next.boundary->lower[a]=old.boundary->lower[a];
+    next.boundary->upper[a]=old.boundary->upper[a];
+  }
+  next.validate(nextFields);
+  return result;
 }
 std::size_t MovingWindowFields::memoryBytes() const {
   return sizeof(Impl)+(impl_->send.capacity()+impl_->receive.capacity())*sizeof(Double);

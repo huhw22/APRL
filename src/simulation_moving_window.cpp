@@ -84,8 +84,9 @@ void Simulation::initializeMovingWindow() {
       startCell<1.||minimumCells<8.||durationSteps>std::numeric_limits<std::ptrdiff_t>::max()/4)
     throw std::runtime_error("Moving-window release/last diagnostic/reference geometry is invalid");
   const std::size_t cells=cfg.cells?cfg.cells:static_cast<std::size_t>(minimumCells);
-  if(cells<minimumCells||cells<8*static_cast<std::size_t>(size_))
-    throw std::runtime_error("Moving-window cells must cover release, all interactions/detectors, 64/128 guards and at least eight cells per rank");
+  const std::size_t minimumRankCells=config_.mesh.particleBalance.enabled?config_.mesh.particleBalance.minimumCells:8;
+  if(cells<minimumCells||cells/minimumRankCells<static_cast<std::size_t>(size_))
+    throw std::runtime_error("Moving-window cells must cover release, interactions/detectors and original guards; each MPI slab must meet its configured minimum cells");
   if(cfg.lowerGuardCells<4||cfg.upperGuardCells<8)
     throw std::runtime_error("Moving-window particle stencils require lower/upper guards of at least 4/8 cells");
   w.initialOffset=w.offset=static_cast<std::ptrdiff_t>(startCell);

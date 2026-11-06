@@ -13,7 +13,7 @@ bool Simulation::conservativeLongitudinalHandoff(const ParticleBoundaryHit& hit,
  return true;
 }
 void Simulation::solveConservativeSourceStep() {
- auto& coupling=*sourceCoupling_;coupling.begin(*fields_,localOriginBox_,particles_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]);
+ auto& coupling=*sourceCoupling_;const Double cacheStart=performanceNow();coupling.begin(*fields_,localOriginBox_,particles_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1]);performanceSeconds_[CouplingCacheStage]+=performanceNow()-cacheStart;
  // Only the zero-current electric curl is evaluated. The reversible boundary
  // preview keeps its phase and CPML histories for the one later real commit.
  movingWindow_->particleHalo->clear(*fields_);
@@ -39,7 +39,7 @@ void Simulation::solveConservativeSourceStep() {
   for(unsigned n=0;n<8;++n){if(n)coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();coupling.beginTrial();coupling.exchangeCandidate();pushDepositAndMigrate();coupling.completeCurrent();
    if(config_.mesh.movingWindow.referenceSurfaceCurrent){applyMovingTransverseReferenceCurrent();finishMovingTransverseReferenceCurrent();}
    halo_->sumSharedTangentialCurrent(*fields_);coupling.applyCurrentSource(-1.);coupling.exchangeCandidate();
-   const auto r=coupling.localResidual();const Double local[3]={r[1],r[2],r[3]};Double total[3]={};
+   const Double residualStart=performanceNow();const auto r=coupling.localResidual();performanceSeconds_[CouplingResidualStage]+=performanceNow()-residualStart;const Double local[3]={r[1],r[2],r[3]};Double total[3]={};
    MPI_Allreduce(&r[0],&force,1,MPI_DOUBLE,MPI_MAX,communicator_);MPI_Allreduce(local,total,3,MPI_DOUBLE,MPI_SUM,communicator_);
    work=total[2]==0.?0.:(total[1]>0.?total[0]/total[1]:total[0]);iterations=n+1;
    if(iterations>=(total[2]>0.?2u:1u)&&force<1e-13&&work<1e-8){converged=true;break;}

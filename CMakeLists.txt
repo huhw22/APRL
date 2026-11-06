@@ -135,6 +135,7 @@ set(DIRECT_EB_SOURCES
   src/simulation_energy_work.cpp
   src/source_coupling.cpp
   src/simulation_source_coupling.cpp
+  src/simulation_particle_balance.cpp
   src/teardown_trace.cpp
   src/trajectory_writer.cpp
 )

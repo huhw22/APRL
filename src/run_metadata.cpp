@@ -261,6 +261,13 @@ namespace aprl
               stream << "  longitudinal_shape: linear-binomial3\n"
                      << "  binomial3_coefficients: [0.25, 0.5, 0.25]\n"
                      << "  binomial3_response: cos(kz*dz/2)^2\n";
+            if(config.mesh.particleBalance.enabled)
+              stream << "  mpi_particle_balance: true\n"
+                     << "  mpi_balance_interval_steps: " << config.mesh.particleBalance.intervalSteps << '\n'
+                     << "  mpi_balance_minimum_cells: " << config.mesh.particleBalance.minimumCells << '\n'
+                     << "  mpi_balance_minimum_improvement: " << config.mesh.particleBalance.minimumImprovement << '\n'
+                     << "  mpi_balance_source_halo_layers: " << (config.mesh.longitudinalBinomial3?3:(config.mesh.wideLongitudinalSource()?8:1)) << '\n'
+                     << "  mpi_balance_partition_log: stdout-particle-balance-cuts\n";
             if(config.mesh.movingWindow.particleCollarCells)
               stream << "  moving_particle_collar_cells: "
                      << config.mesh.movingWindow.particleCollarCells << "\n";

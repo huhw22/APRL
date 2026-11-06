@@ -73,7 +73,8 @@ class MovingWindowFields {
 public:
   MovingWindowFields(const EBGridGeometry& localGeometry, std::size_t globalNz,
       std::size_t localOffset, MPI_Comm communicator,
-      const EBCPMLParameters& parameters, MovingWindowReference reference);
+      const EBCPMLParameters& parameters, MovingWindowReference reference,
+      bool allowNonuniformIntegerSlabs = false);
   ~MovingWindowFields();
   MovingWindowFields(const MovingWindowFields&) = delete;
   MovingWindowFields& operator=(const MovingWindowFields&) = delete;
@@ -113,6 +114,14 @@ public:
   MovingWindowFieldShiftReport shift(EBFieldGrid& fields,
       std::size_t newStep, std::ptrdiff_t newWindowOffset,
       bool resetCurrent = true);
+  // Collective exact ownership change after a completed shift (Idle only).
+  // The global native state is copied by integer z index, including all nine
+  // E/B/J components and each transverse CPML convolution history. New and
+  // old grids must remain alive until this returns; each owns its own boundary.
+  // Physical parameters, reference phase, cumulative diagnostics and callbacks
+  // are preserved. This operation introduces no field-energy source/sink.
+  std::unique_ptr<MovingWindowFields> repartition(const EBFieldGrid& oldFields,
+      EBFieldGrid& nextFields, std::size_t newLocalOffset) const;
   std::size_t memoryBytes() const;
   std::uint64_t referenceValues() const;
 

@@ -379,11 +379,19 @@ namespace aprl
         geometryAuditDirectory || gridAuditDirectory || stageAuditDirectory))
       throw std::invalid_argument("conservative-source requires moving Cowan, feedback, unfiltered current and no retirement/checkpoint/ballistic/legacy work probes");
     {const int local=config_.mesh.longitudinalQuintic?1:(config_.mesh.longitudinalNotch?2:(config_.mesh.longitudinalBinomial3?3:0));int lo=0,hi=0;MPI_Allreduce(&local,&lo,1,MPI_INT,MPI_MIN,communicator_);MPI_Allreduce(&local,&hi,1,MPI_INT,MPI_MAX,communicator_);if(lo!=hi)throw std::invalid_argument("longitudinal_shape must agree on every MPI rank");if(local&&!config_.mesh.conservativeSourceCoupling)throw std::invalid_argument("Wide longitudinal shapes require conservative-source");}
+    {const int local=config_.mesh.particleBalance.enabled?1:0;int lo=0,hi=0;
+      MPI_Allreduce(&local,&lo,1,MPI_INT,MPI_MIN,communicator_);MPI_Allreduce(&local,&hi,1,MPI_INT,MPI_MAX,communicator_);
+      if(lo!=hi)throw std::invalid_argument("mpi_particle_balance must agree on every MPI rank");
+      if(hi){const auto& b=config_.mesh.particleBalance;const double values[]={double(b.intervalSteps),double(b.minimumCells),b.minimumImprovement,b.frozenWeight,b.fieldCellWeight,double(computeThreadCount())};double low[6],high[6];
+        MPI_Allreduce(values,low,6,MPI_DOUBLE,MPI_MIN,communicator_);MPI_Allreduce(values,high,6,MPI_DOUBLE,MPI_MAX,communicator_);
+        for(unsigned k=0;k<6;++k)if(low[k]!=high[k])throw std::invalid_argument("MPI balancing settings/threads must agree on every rank");
+        if(high[5]!=1. || !config_.mesh.conservativeSourceCoupling || !config_.mesh.movingWindow.enabled || geometryAuditDirectory || gridAuditDirectory || stageAuditDirectory || std::getenv("APRL_INLET_CONSTRAINT_PROBE"))
+          throw std::invalid_argument("MPI particle balance requires single-thread conservative-source moving window without legacy geometry probes");}}
     const Double initializationStart = performanceNow();
     initialize();
     if(config_.mesh.conservativeSourceCoupling) {
       if(incident_)throw std::invalid_argument("conservative-source does not support incident waves");
-      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3));
+      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.particleBalance.enabled));
       if(config_.mesh.longitudinalNotch)logRoot(communicator_,"[source-coupling] linear-notch: matched seven-point charge/current/electric source shape and magnetic gather; F=1-sin^6(kz*dz/2); Cowan curls/dt unchanged");
       if(config_.mesh.longitudinalBinomial3)logRoot(communicator_,"[source-coupling] linear-binomial3: matched three-point charge/current/electric source shape and magnetic gather; F=cos^2(kz*dz/2); Cowan curls/dt unchanged");
       logRoot(communicator_,"[source-coupling] conservative-source; original release/migration/detectors; transactional trials and converged substep replay; original Cowan curls and committed CPML history once per step");
@@ -458,6 +466,9 @@ namespace aprl
         performanceSeconds_[ControlStage] += performanceNow() - stageStart;
         if (requestedStop) break;
 
+        if(maybeBalanceParticles() && discreteLedger)
+          discreteLedger->reconfigurePartition(localGeometry_,localZOffset_);
+
         if(gridWorkAudit) gridWorkAudit->begin(*fields_,step_);
         if(particleWorkGeometry_)particleWorkGeometry_->beginStep();
         if(discreteLedger)discreteLedger->begin(*fields_,step_);
@@ -498,7 +509,7 @@ namespace aprl
           halo_->communicationSeconds() - communicationStart;
 
         if(particleWorkGeometry_)particleWorkGeometry_->exchangeFields(*fields_,communicator_);
-        if(sourceCoupling_)solveConservativeSourceStep();
+        if(sourceCoupling_){const Double coupledStart=performanceNow();solveConservativeSourceStep();performanceSeconds_[CouplingTotalStage]+=performanceNow()-coupledStart;}
         else pushDepositAndMigrate();
         if(particleWorkGeometry_)particleWorkGeometry_->finishStep(step_+1);
         if(config_.mesh.movingWindow.referenceSurfaceCurrent)
@@ -3981,6 +3992,7 @@ namespace aprl
 
   Simulation::Slab Simulation::slabForRank(int rank) const
   {
+    if(!slabCuts_.empty())return Slab{slabCuts_[rank],slabCuts_[rank+1]-slabCuts_[rank]};
     const std::size_t base = globalGeometry_.nz /
       static_cast<std::size_t>(size_);
     const std::size_t remainder = globalGeometry_.nz %
@@ -4008,6 +4020,7 @@ namespace aprl
     std::size_t cell = coordinate >= static_cast<Double>(globalGeometry_.nz) ?
       globalGeometry_.nz - 1 :
       static_cast<std::size_t>(std::max(0.0, std::floor(coordinate)));
+    if(!slabCuts_.empty())return static_cast<int>(std::upper_bound(slabCuts_.begin(),slabCuts_.end(),cell)-slabCuts_.begin()-1);
     const std::size_t base = globalGeometry_.nz /
       static_cast<std::size_t>(size_);
     const std::size_t remainder = globalGeometry_.nz %
@@ -5709,7 +5722,8 @@ namespace aprl
         static const char* names[PerformanceStageCount] = {
           "field_total", "particle_prepare", "particle_deposit", "particle_migration_total",
           "diagnostics", "control", "field_communication", "particle_communication",
-          "pending_admission", "moving_window_total", "pending_statistics"
+          "pending_admission", "moving_window_total", "pending_statistics",
+          "coupling_total", "coupling_cache", "coupling_residual"
         };
         for (int stage = 0; stage < PerformanceStageCount; ++stage)
           {

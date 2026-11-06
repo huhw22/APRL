@@ -44,6 +44,15 @@ public:
     oldB_[0]=f.bx();oldB_[1]=f.by();oldB_[2]=f.bz();
     record_=Record();const auto u=energy(f);record_.begin=u[0]+u[1];step_=step+1;phase_=1;
   }
+  // Integer MPI ownership changes happen between complete physical steps.
+  // Only local addressing changes; there is no added physical source work.
+  void reconfigurePartition(const EBGridGeometry& g,std::size_t offset) {
+    expect(0);
+    if(g.nx!=g_.nx||g.ny!=g_.ny||g.dx!=g_.dx||g.dy!=g_.dy||g.dz!=g_.dz||g.dt!=g_.dt||
+       g.solver!=g_.solver||offset+g.nz>globalNz_)
+      throw std::invalid_argument("Discrete ledger repartition changed the global mesh");
+    g_=g;offset_=offset;
+  }
   static void observe(void* context,const char* stage,const EBFieldGrid& f,const EBElectricHaloView* h) {
     auto& self=*static_cast<DiscreteFieldLedger*>(context);const std::string s(stage);
     if(s=="magnetic_curl")self.magnetic(f,*h);
