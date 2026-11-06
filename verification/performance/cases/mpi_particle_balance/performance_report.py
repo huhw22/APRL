@@ -10,6 +10,7 @@ import math
 import os
 from pathlib import Path
 import re
+import sys
 
 import numpy as np
 import yaml
@@ -197,6 +198,14 @@ def read_case(case, plan):
     card = yaml.safe_load((directory / 'run.yaml').read_text())
     text = (directory / 'aprl.log').read_text()
     if prefix:
+        # Standalone reports use the campaign's frozen close-proof reader and
+        # its helpers, just as the original prefix runner did.
+        scripts = Path(plan['directory']) / 'scripts'
+        require(all((scripts / name).is_file() for name in
+                    ['prefix_closed.py', 'common.py', 'duration_review.py', 'report_discrete.py']),
+                'Missing frozen duration-prefix readers')
+        if str(scripts) not in sys.path:
+            sys.path.insert(0, str(scripts))
         from prefix_closed import duration_status
         duration_status(directory, case, runtime)
     else:
@@ -358,9 +367,9 @@ def plot(output, cases, comparison, scope):
         axes[1, 0].plot([row['step'] for row in steps],
             [row['ranks_with_committed_pushes'] for row in steps], style,
             color=color, linewidth=1.3, label=label)
-    for ax, title, ylabel in [(axes[0, 0], 'Measured time between resource log reports', 'Interval mean (s / field step)'),
+    for ax, title, ylabel in [(axes[0, 0], 'Time per log interval', 'Interval mean (s / field step)'),
                               (axes[0, 1], 'Actual committed particle calls', 'Maximum rank / all-rank mean'),
-                              (axes[1, 0], 'Ranks committing dynamic particle pushes', 'Number of ranks')]:
+                              (axes[1, 0], 'Ranks with committed pushes', 'Number of ranks')]:
         ax.set_title(title, fontsize=10.5)
         ax.set_xlabel('Maxwell step')
         ax.set_ylabel(ylabel)
@@ -378,7 +387,7 @@ def plot(output, cases, comparison, scope):
            linewidth=1.5, label='Solver loop')
     ax.set_xticks(positions, [case['name'].replace('perf-', '') for case in cases], rotation=20)
     ax.set_ylabel('Measured wall time (s)')
-    ax.set_title('Wall time and logged accepted balance calls', fontsize=10.5)
+    ax.set_title('Runtime and accepted balancing cost', fontsize=10.5)
     ax.grid(axis='y', alpha=.25)
     secondary = ax.twinx()
     secondary.spines['top'].set_visible(False)
@@ -395,8 +404,8 @@ def plot(output, cases, comparison, scope):
     pairs = 'one matched pair' if pair_count == 1 else f'{pair_count} repeated pairs'
     fig.suptitle(f'{scope["title"]}: {pairs} ({ranks} MPI ranks, one thread each)\n'
                  + scope['plot_note'], fontsize=10.5)
-    fig.savefig(output / 'performance.png', dpi=240)
-    fig.savefig(output / 'performance.pdf')
+    fig.savefig(output / 'performance.png', dpi=240, bbox_inches='tight', pad_inches=.12)
+    fig.savefig(output / 'performance.pdf', bbox_inches='tight', pad_inches=.12)
     plt.close(fig)
 
 
