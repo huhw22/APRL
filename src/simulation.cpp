@@ -370,8 +370,13 @@ namespace aprl
         config_.mesh.currentFilter!=EBCurrentFilter::None || checkpointEnabled_ ||
         !config_.checkpoint.restartFrom.empty()))
       throw std::invalid_argument("APRL_GRID_WORK_AUDIT requires a directory, moving window, ledger, unfiltered current and no checkpoint");
+    {const int local=config_.mesh.oneWaySourceDiagnostic?1:0;int lo=0,hi=0;
+      MPI_Allreduce(&local,&lo,1,MPI_INT,MPI_MIN,communicator_);MPI_Allreduce(&local,&hi,1,MPI_INT,MPI_MAX,communicator_);
+      if(lo!=hi)throw std::invalid_argument("one_way_source_diagnostic must agree on every MPI rank");
+      if(hi && (!config_.mesh.conservativeSourceCoupling || config_.mesh.selfFieldFeedback || !config_.energyLedger.enabled || !config_.energyLedger.discreteOperatorAudit))
+        throw std::invalid_argument("one_way_source_diagnostic requires conservative-source, self_field_feedback=false, enabled ledger and discrete_operator_audit");}
     if(config_.mesh.conservativeSourceCoupling &&
-       (!config_.mesh.movingWindow.enabled || !config_.mesh.selfFieldFeedback ||
+       (!config_.mesh.movingWindow.enabled || (!config_.mesh.selfFieldFeedback && !config_.mesh.oneWaySourceDiagnostic) ||
         config_.mesh.fieldSolver!=EBMaxwellSolver::CowanZ ||
         config_.mesh.currentFilter!=EBCurrentFilter::None ||
         config_.mesh.ballisticOutsideTransverse || config_.particleRetirement.enabled ||
@@ -391,10 +396,11 @@ namespace aprl
     initialize();
     if(config_.mesh.conservativeSourceCoupling) {
       if(incident_)throw std::invalid_argument("conservative-source does not support incident waves");
-      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.particleBalance.enabled));
+      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.particleBalance.enabled,config_.mesh.oneWaySourceDiagnostic));
       if(config_.mesh.longitudinalNotch)logRoot(communicator_,"[source-coupling] linear-notch: matched seven-point charge/current/electric source shape and magnetic gather; F=1-sin^6(kz*dz/2); Cowan curls/dt unchanged");
       if(config_.mesh.longitudinalBinomial3)logRoot(communicator_,"[source-coupling] linear-binomial3: matched three-point charge/current/electric source shape and magnetic gather; F=cos^2(kz*dz/2); Cowan curls/dt unchanged");
       logRoot(communicator_,"[source-coupling] conservative-source; original release/migration/detectors; transactional trials and converged substep replay; original Cowan curls and committed CPML history once per step");
+      if(config_.mesh.oneWaySourceDiagnostic)logRoot(communicator_,"[one-way-source] VALIDATION ONLY: prescribed device forces and real F3/Maxwell current remain active; grid E/B do not act on particles. Passive grid work and equal-opposite controller work are recorded separately after field commit; original closed-system ledger is not a physical conservation gate.");
     }
     if(geometryAuditDirectory) {
       if(incident_)throw std::invalid_argument("Particle geometry audit does not support incident fields");

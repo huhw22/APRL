@@ -132,7 +132,7 @@ namespace aprl
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
             "resolution", "ballistic_outside_transverse",
-            "self_field_feedback", "moving_window", "particle_coupling", "longitudinal_shape", "mpi_particle_balance"
+            "self_field_feedback", "one_way_source_diagnostic", "moving_window", "particle_coupling", "longitudinal_shape", "mpi_particle_balance"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
           if (mesh["mpi_particle_balance"])
@@ -711,6 +711,7 @@ namespace aprl
       fieldSolver(EBMaxwellSolver::CowanZ),
       currentFilter(EBCurrentFilter::None),
       selfFieldFeedback(true),
+      oneWaySourceDiagnostic(false),
       conservativeSourceCoupling(false),
       longitudinalQuintic(false),
       longitudinalNotch(false),
@@ -1038,6 +1039,9 @@ namespace aprl
     if (mesh["self_field_feedback"])
       result.mesh.selfFieldFeedback =
         mesh["self_field_feedback"].as<bool>();
+    if (mesh["one_way_source_diagnostic"])
+      result.mesh.oneWaySourceDiagnostic =
+        mesh["one_way_source_diagnostic"].as<bool>();
     const YAML::Node movingWindow = mesh["moving_window"];
     if (const YAML::Node balance = mesh["mpi_particle_balance"])
       {

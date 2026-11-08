@@ -87,6 +87,9 @@ namespace aprl
     /* Diagnostic control: keep evolving/depositing fields, but omit their
      * force on particles. Prescribed device fields remain active. */
     bool selfFieldFeedback;
+    // Validation-only prescribed-current source: retain the conservative
+    // pusher/depositor, but omit grid E/B from the particle force.
+    bool oneWaySourceDiagnostic;
     bool conservativeSourceCoupling;
     bool longitudinalQuintic;
     bool longitudinalNotch;

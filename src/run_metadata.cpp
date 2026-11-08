@@ -254,6 +254,12 @@ namespace aprl
                        "true" : "false") << "\n";
             if(config.mesh.conservativeSourceCoupling)
               stream << "  particle_coupling: conservative-source\n";
+            if(config.mesh.oneWaySourceDiagnostic)
+              stream << "  one_way_source_diagnostic: true\n"
+                     << "  energy_exchange_scope: prescribed-current-validation-with-controller\n"
+                     << "  passive_grid_work: separate-one-way-source-rank-csv\n"
+                     << "  controller_work: minus-passive-grid-work\n"
+                     << "  virtual_selected_force: separate-one-way-virtual-force-rank-csv\n";
             if(config.mesh.longitudinalNotch)
               stream << "  longitudinal_shape: linear-notch\n"
                      << "  notch_response: 1-sin(kz*dz/2)^6\n";

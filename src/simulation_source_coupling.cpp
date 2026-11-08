@@ -42,7 +42,7 @@ void Simulation::solveConservativeSourceStep() {
    const Double residualStart=performanceNow();const auto r=coupling.localResidual();performanceSeconds_[CouplingResidualStage]+=performanceNow()-residualStart;const Double local[3]={r[1],r[2],r[3]};Double total[3]={};
    MPI_Allreduce(&r[0],&force,1,MPI_DOUBLE,MPI_MAX,communicator_);MPI_Allreduce(local,total,3,MPI_DOUBLE,MPI_SUM,communicator_);
    work=total[2]==0.?0.:(total[1]>0.?total[0]/total[1]:total[0]);iterations=n+1;
-   if(iterations>=(total[2]>0.?2u:1u)&&force<1e-13&&work<1e-8){converged=true;break;}
+   if(iterations>=(config_.mesh.oneWaySourceDiagnostic?1u:(total[2]>0.?2u:1u))&&force<1e-13&&work<1e-8){converged=true;break;}
   }
  }catch(...){config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);throw;}
  config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);
