@@ -134,15 +134,30 @@ def particle_difference(full, control, target_angle):
     }
 
 
+def fields_identical(left, right):
+    """Compare committed field-plane samples without loading both files at once."""
+    with h5py.File(left, "r") as first, h5py.File(right, "r") as second:
+        a, b = first["field_plane"], second["field_plane"]
+        if not np.array_equal(a["time_s"][:], b["time_s"][:]):
+            return False
+        if a["fields"].shape != b["fields"].shape or a["fields"].dtype != b["fields"].dtype:
+            return False
+        for start in range(0, len(a["fields"]), 8):
+            stop = min(len(a["fields"]), start + 8)
+            if not np.array_equal(a["fields"][start:stop], b["fields"][start:stop]):
+                return False
+    return True
+
+
 def main(root):
     root = Path(root).resolve()
     campaign = json.loads((root / "campaign.json").read_text())
-    full_root = Path(campaign["full_feedback_root"])
+    full_root = Path(campaign["accepted_full_feedback_root"])
     frozen = json.loads((root / "FROZEN.json").read_text())
     require(all(sha(path) == digest for path, digest in frozen.items()),
             "Frozen inputs changed")
     require(all((root / f"ARRAY_COMPLETE_{index}.json").is_file()
-                for index in range(4)), "No-feedback array is incomplete")
+                for index in range(4)), "Feedback-attribution array is incomplete")
     require(campaign["shapes"] == SHAPES, "Unexpected shapes")
     common = campaign["common"]
     first = common["screen_first_relative_u_s"]
@@ -153,33 +168,53 @@ def main(root):
     require(np.array_equal(srw_energy, full_table["photon_eV"]),
             "SRW/full frequency grids differ")
 
-    spectra, particle_checks = {}, {}
+    spectra = {mode: {} for mode in campaign["modes"]}
+    particle_checks, reproduction_checks = {}, {}
     reference_time = None
     for shape in SHAPES:
-        pair = {}
-        for kind in ["straight", "bend"]:
-            control = load_axis(root / shape / kind / "detectors/screen.h5")
-            full = load_axis(full_root / shape / kind / "detectors/screen.h5")
-            require(np.array_equal(control["time"], full["time"]),
-                    "Full/no-feedback timestamps differ")
-            if reference_time is None:
-                reference_time = control["time"]
-            else:
-                require(np.array_equal(control["time"], reference_time),
-                        "Control timestamps differ between cases")
-            energy, electric, magnetic = fourier(control, first)
-            pair[kind] = (electric, magnetic)
-        electric = pair["bend"][0] - pair["straight"][0]
-        magnetic = pair["bend"][1] - pair["straight"][1]
-        density = spectral_density(electric, magnetic, len(reference_time))
-        selected = (energy >= 4.) & (energy <= 12.)
-        require(np.array_equal(energy[selected], srw_energy),
-                "Control frequency grid differs from SRW")
-        spectra[shape] = density[selected]
+        for mode in campaign["modes"]:
+            pair = {}
+            for kind in ["straight", "bend"]:
+                result = load_axis(root / shape / mode / kind /
+                                   "detectors/screen.h5")
+                accepted_axis = load_axis(full_root / shape / kind /
+                                          "detectors/screen.h5")
+                require(np.array_equal(result["time"], accepted_axis["time"]),
+                        "Attribution/accepted timestamps differ")
+                if reference_time is None:
+                    reference_time = result["time"]
+                else:
+                    require(np.array_equal(result["time"], reference_time),
+                            "Attribution timestamps differ between cases")
+                energy, electric, magnetic = fourier(result, first)
+                pair[kind] = (electric, magnetic)
+            electric = pair["bend"][0] - pair["straight"][0]
+            magnetic = pair["bend"][1] - pair["straight"][1]
+            density = spectral_density(electric, magnetic, len(reference_time))
+            selected = (energy >= 4.) & (energy <= 12.)
+            require(np.array_equal(energy[selected], srw_energy),
+                    "Attribution frequency grid differs from SRW")
+            spectra[mode][shape] = density[selected]
         particle_checks[shape] = particle_difference(
-            load_particles(full_root / shape / "bend/detectors/bend-exit.h5"),
-            load_particles(root / shape / "bend/detectors/bend-exit.h5"),
+            load_particles(root / shape /
+                           "full-feedback/bend/detectors/bend-exit.h5"),
+            load_particles(root / shape /
+                           "no-feedback/bend/detectors/bend-exit.h5"),
             common["parameters"]["theta"])
+        accepted_particles = load_particles(
+            full_root / shape / "bend/detectors/bend-exit.h5")
+        reproduced_particles = load_particles(
+            root / shape / "full-feedback/bend/detectors/bend-exit.h5")
+        reproduction_checks[shape] = {
+            "accepted_full_fields_bitwise_identical": all(
+                fields_identical(
+                    full_root / shape / kind / "detectors/screen.h5",
+                    root / shape / "full-feedback" / kind /
+                    "detectors/screen.h5")
+                for kind in ["straight", "bend"]),
+            "accepted_full_bend_exit_particles_bitwise_identical":
+                bool(np.array_equal(accepted_particles, reproduced_particles)),
+        }
 
     band = ((srw_energy >= common["registered_band_eV"][0]) &
             (srw_energy <= common["registered_band_eV"][1]))
@@ -188,28 +223,34 @@ def main(root):
     srw_band = integrate(srw)
     rows = []
     for shape in SHAPES:
-        full = full_table[shape]
-        control = spectra[shape]
+        accepted_full = full_table[shape]
+        full = spectra["full-feedback"][shape]
+        control = spectra["no-feedback"][shape]
+        accepted_band = integrate(accepted_full)
         full_band, control_band = integrate(full), integrate(control)
         gap = full_band - srw_band
         feedback_shift = full_band - control_band
         row = {
             "shape": shape,
             "SRW_band_J_per_m2": srw_band,
-            "full_feedback_band_J_per_m2": full_band,
+            "accepted_full_feedback_band_J_per_m2": accepted_band,
+            "paired_full_feedback_band_J_per_m2": full_band,
             "no_feedback_band_J_per_m2": control_band,
+            "paired_full_over_accepted_full": full_band / accepted_band,
             "full_over_SRW": full_band / srw_band,
             "no_feedback_over_SRW": control_band / srw_band,
             "full_over_no_feedback": full_band / control_band,
             "removing_feedback_change_percent": 100 * (control_band / full_band - 1),
             "feedback_shift_over_full_minus_SRW": (
                 feedback_shift / gap if abs(gap) > 1e-300 else float("nan")),
+            "paired_full_vs_accepted_full_registered_L2":
+                relative_l2(full[band], accepted_full[band]),
             "full_vs_no_feedback_registered_L2":
                 relative_l2(full[band], control[band]),
             "full_vs_SRW_registered_L2": relative_l2(full[band], srw[band]),
             "no_feedback_vs_SRW_registered_L2":
                 relative_l2(control[band], srw[band]),
-            **particle_checks[shape],
+            **particle_checks[shape], **reproduction_checks[shape],
         }
         rows.append(row)
 
@@ -222,8 +263,9 @@ def main(root):
                "finite_arc_LW_J_per_eV_m2":
                    full_table["theory_J_per_eV_m2"]}
     for shape in SHAPES:
-        columns[shape + "_full"] = full_table[shape]
-        columns[shape + "_no_feedback"] = spectra[shape]
+        columns[shape + "_accepted_full"] = full_table[shape]
+        columns[shape + "_paired_full"] = spectra["full-feedback"][shape]
+        columns[shape + "_no_feedback"] = spectra["no-feedback"][shape]
     with (root / "feedback_spectra.csv").open("w", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(columns)
@@ -233,9 +275,11 @@ def main(root):
     fig, axes = plt.subplots(2, 2, figsize=(12, 8), layout="constrained")
     axes[0, 0].plot(srw_energy, srw * 1e9, "k-", lw=2.5, label="SRW")
     for shape in SHAPES:
-        axes[0, 0].plot(srw_energy, full_table[shape] * 1e9, color=COLORS[shape],
+        axes[0, 0].plot(srw_energy, spectra["full-feedback"][shape] * 1e9,
+                        color=COLORS[shape],
                         marker="o", ms=3, alpha=.6, label=LABELS[shape] + " full")
-        axes[0, 0].plot(srw_energy, spectra[shape] * 1e9, color=COLORS[shape],
+        axes[0, 0].plot(srw_energy, spectra["no-feedback"][shape] * 1e9,
+                        color=COLORS[shape],
                         ls="--", lw=2, label=LABELS[shape] + " no feedback")
     axes[0, 0].set(title="Exact +z-axis spectra",
                    ylabel=r"nJ / (eV m$^2$)")
@@ -277,7 +321,7 @@ def main(root):
     axes[0, 0].axvspan(*common["registered_band_eV"], color="grey", alpha=.1)
     for axis in [axes[0, 1], axes[1, 0], axes[1, 1]]:
         axis.set_xticks(x, [LABELS[s] for s in SHAPES], rotation=15)
-    fig.suptitle("Full APRL vs prescribed-external-field particle motion; no fitted normalization")
+    fig.suptitle("Same-binary full APRL vs prescribed-external-field particle motion; no normalization")
     fig.savefig(root / "feedback_decomposition.png", dpi=200)
     fig.savefig(root / "feedback_decomposition.pdf")
     plt.close(fig)
@@ -286,8 +330,10 @@ def main(root):
         "complete": True,
         "status": "NO_GRID_FIELD_FEEDBACK_CAUSAL_CONTROL",
         "comparison_definition": {
-            "full": "existing closed paired APRL result with grid E/B acting on particles",
-            "no_feedback": ("same input/card/binary except mesh.self_field_feedback=false; "
+            "accepted_full": "previous closed paired APRL result",
+            "paired_full": ("new executable with one-way capability present but disabled; "
+                            "grid E/B acts on particles"),
+            "no_feedback": ("same new executable/input/card except one-way mode; "
                             "particle deposition and Maxwell evolution remain active"),
             "reference": "independent SRW point spectrum with analytic coherent bunch mapping",
         },
@@ -296,8 +342,9 @@ def main(root):
         "bend_straight_complex_field_subtraction": True,
         "normalization": "none; absolute spectral fluence and band sums",
         "all_no_feedback_grid_work_exactly_zero": True,
+        "accepted_full_reproduction": reproduction_checks,
         "interpretation_contract": (
-            "full minus no-feedback isolates the response mediated by grid-field force on "
+            "paired-full minus no-feedback isolates the response mediated by grid-field force on "
             "particle trajectories in this discrete calculation. No-feedback minus SRW still "
             "contains source deposition, Maxwell propagation, finite grid/boundaries, detector "
             "sampling, and the explicitly documented small transverse mapping correction."),
@@ -306,11 +353,13 @@ def main(root):
     save(root / "FINAL.json", final)
     save(root / "VALIDATION.json", {
         "passed": True,
-        "closed_control_cases": 8,
+        "closed_control_cases": 16,
+        "same_binary_for_full_and_no_feedback": True,
         "identical_full_control_time_axes": True,
         "identical_SRW_full_control_frequency_grid": True,
         "finite_all_spectra": bool(all(np.isfinite(value).all()
-                                           for value in spectra.values())),
+                                           for mode in spectra.values()
+                                           for value in mode.values())),
         "frozen_inputs_unchanged": True,
         "all_control_particle_grid_work_exactly_zero": True,
         "png_bytes": (root / "feedback_decomposition.png").stat().st_size,
