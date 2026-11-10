@@ -151,6 +151,8 @@ def fields_identical(left, right):
 
 def main(root):
     root = Path(root).resolve()
+    output = (Path(sys.argv[2]).resolve() if len(sys.argv) > 2 else root)
+    output.mkdir(parents=True, exist_ok=True)
     campaign = json.loads((root / "campaign.json").read_text())
     full_root = Path(campaign["accepted_full_feedback_root"])
     frozen = json.loads((root / "FROZEN.json").read_text())
@@ -197,14 +199,14 @@ def main(root):
             spectra[mode][shape] = density[selected]
         particle_checks[shape] = particle_difference(
             load_particles(root / shape /
-                           "full-feedback/bend/detectors/bend-exit.h5"),
+                           "full-feedback/bend/detectors/exit.h5"),
             load_particles(root / shape /
-                           "no-feedback/bend/detectors/bend-exit.h5"),
+                           "no-feedback/bend/detectors/exit.h5"),
             common["parameters"]["theta"])
         accepted_particles = load_particles(
-            full_root / shape / "bend/detectors/bend-exit.h5")
+            full_root / shape / "bend/detectors/exit.h5")
         reproduced_particles = load_particles(
-            root / shape / "full-feedback/bend/detectors/bend-exit.h5")
+            root / shape / "full-feedback/bend/detectors/exit.h5")
         reproduction_checks[shape] = {
             "accepted_full_fields_bitwise_identical": all(
                 fields_identical(
@@ -212,7 +214,7 @@ def main(root):
                     root / shape / "full-feedback" / kind /
                     "detectors/screen.h5")
                 for kind in ["straight", "bend"]),
-            "accepted_full_bend_exit_particles_bitwise_identical":
+            "accepted_full_final_exit_particles_bitwise_identical":
                 bool(np.array_equal(accepted_particles, reproduced_particles)),
         }
 
@@ -254,7 +256,7 @@ def main(root):
         }
         rows.append(row)
 
-    with (root / "feedback_summary.csv").open("w", newline="") as stream:
+    with (output / "feedback_summary.csv").open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]))
         writer.writeheader()
         writer.writerows(rows)
@@ -266,7 +268,7 @@ def main(root):
         columns[shape + "_accepted_full"] = full_table[shape]
         columns[shape + "_paired_full"] = spectra["full-feedback"][shape]
         columns[shape + "_no_feedback"] = spectra["no-feedback"][shape]
-    with (root / "feedback_spectra.csv").open("w", newline="") as stream:
+    with (output / "feedback_spectra.csv").open("w", newline="") as stream:
         writer = csv.writer(stream)
         writer.writerow(columns)
         writer.writerows(zip(*columns.values()))
@@ -312,7 +314,7 @@ def main(root):
                    width, color=[COLORS[s] for s in SHAPES], hatch="//",
                    label="no feedback")
     axes[1, 1].axhline(0, color="black", lw=1)
-    axes[1, 1].set(title="Mean orbit at dipole exit",
+    axes[1, 1].set(title="Mean orbit after dipole (final particle plane)",
                    ylabel="angle − ideal [µrad]")
     axes[1, 1].legend(fontsize=8)
     for axis in axes.flat:
@@ -322,8 +324,8 @@ def main(root):
     for axis in [axes[0, 1], axes[1, 0], axes[1, 1]]:
         axis.set_xticks(x, [LABELS[s] for s in SHAPES], rotation=15)
     fig.suptitle("Same-binary full APRL vs prescribed-external-field particle motion; no normalization")
-    fig.savefig(root / "feedback_decomposition.png", dpi=200)
-    fig.savefig(root / "feedback_decomposition.pdf")
+    fig.savefig(output / "feedback_decomposition.png", dpi=200)
+    fig.savefig(output / "feedback_decomposition.pdf")
     plt.close(fig)
 
     final = {
@@ -343,6 +345,9 @@ def main(root):
         "normalization": "none; absolute spectral fluence and band sums",
         "all_no_feedback_grid_work_exactly_zero": True,
         "accepted_full_reproduction": reproduction_checks,
+        "particle_orbit_plane": ("final exit plane after the hard-edge dipole; the "
+                                  "bend-exit crossing momentum is not used because "
+                                  "crossing interpolation is not an on-shell orbit sample"),
         "interpretation_contract": (
             "paired-full minus no-feedback isolates the response mediated by grid-field force on "
             "particle trajectories in this discrete calculation. No-feedback minus SRW still "
@@ -350,8 +355,8 @@ def main(root):
             "sampling, and the explicitly documented small transverse mapping correction."),
         "physical_accuracy_accepted": False,
     }
-    save(root / "FINAL.json", final)
-    save(root / "VALIDATION.json", {
+    save(output / "FINAL.json", final)
+    save(output / "VALIDATION.json", {
         "passed": True,
         "closed_control_cases": 16,
         "same_binary_for_full_and_no_feedback": True,
@@ -362,8 +367,9 @@ def main(root):
                                            for value in mode.values())),
         "frozen_inputs_unchanged": True,
         "all_control_particle_grid_work_exactly_zero": True,
-        "png_bytes": (root / "feedback_decomposition.png").stat().st_size,
-        "pdf_bytes": (root / "feedback_decomposition.pdf").stat().st_size,
+        "particle_orbit_plane": "final exit",
+        "png_bytes": (output / "feedback_decomposition.png").stat().st_size,
+        "pdf_bytes": (output / "feedback_decomposition.pdf").stat().st_size,
     })
     require(all(sha(path) == digest for path, digest in frozen.items()),
             "Frozen inputs changed during analysis")
