@@ -490,6 +490,12 @@ def main(output, specifications):
             "bend_PIC": bend_pic_i, "bend_LW": bend_lw_i,
             "straight_PIC": straight_pic_i,
             "straight_LW": straight_lw_i,
+            "bend_PIC_E": bend_pic_e,
+            "bend_PIC_B": bend_pic_b,
+            "acceleration_LW_E": radiation_e,
+            "acceleration_LW_B": radiation_b,
+            "bend_LW_E": bend_theory_e,
+            "bend_LW_B": bend_theory_b,
             "metrics": metrics, "bend_metrics": bend_metrics,
             "straight_metrics": straight_metrics,
         })
@@ -513,10 +519,15 @@ def main(output, specifications):
         "straight_PIC", "straight_LW")
     np.savez_compressed(
         output / "transverse_maps_8eV.npz", x_m=x, y_m=y,
+        dt_s=reference["dt"],
         **{f"{case['label']}_{key}_J_per_eV_m2": case[key]
            for case in results for key in
            ("radiation_PIC", "radiation_LW", "raw_PIC", "full_LW",
-            "bend_PIC", "bend_LW", "straight_PIC", "straight_LW")})
+            "bend_PIC", "bend_LW", "straight_PIC", "straight_LW")},
+        **{f"{case['label']}_{key}": case[key]
+           for case in results for key in
+           ("bend_PIC_E", "bend_PIC_B", "acceleration_LW_E",
+            "acceleration_LW_B", "bend_LW_E", "bend_LW_B")})
     with (output / "transverse_metrics.csv").open("w", newline="") as stream:
         rows = [{"label": case["label"], **case["metrics"]}
                 for case in results]
