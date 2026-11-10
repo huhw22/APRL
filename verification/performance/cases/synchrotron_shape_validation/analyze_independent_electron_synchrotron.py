@@ -29,10 +29,19 @@ def main(root, srw_csv, output):
     audit = json.loads((root / "SOURCE_AUDIT.json").read_text())
     srw = np.genfromtxt(srw_csv, delimiter=",", names=True)
     energies = np.asarray(srw["photon_eV"])
-    continuum = np.asarray(srw["SRW_gaussian_J_per_eV_m2"])
     sample_ff = np.asarray(audit["sample_longitudinal_form_factor_power"])
     analytic_ff = np.asarray(audit["analytic_longitudinal_form_factor_power"])
     require(len(energies) == len(sample_ff), "Source/SRW energy grids differ")
+    represented = float(campaign["represented_electrons"])
+    continuum = (np.asarray(srw["SRW_point_per_electron_J_per_eV_m2"]) *
+                 represented**2 *
+                 np.asarray(srw["longitudinal_form_factor_squared"]) *
+                 np.asarray(srw["transverse_correction_interpolated"]))
+    if represented == 10_000:
+        require(np.allclose(continuum,
+                            np.asarray(srw["SRW_gaussian_J_per_eV_m2"]),
+                            rtol=3e-15, atol=0.),
+                "Generic continuum reconstruction changed the registered 10k curve")
     sample_theory = continuum * sample_ff / analytic_ff
     values = {}
     for plane in campaign["planes"]:

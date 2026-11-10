@@ -60,9 +60,9 @@ def load_physical_sampler(here):
     return random_by_id, source_dir / "source_math.py"
 
 
-def generate_input(path, here):
+def generate_input(path, here, count, seed):
     random_by_id, sampler_path = load_physical_sampler(here)
-    uniform, normal = random_by_id(SEED, 0, COUNT)
+    uniform, normal = random_by_id(seed, 0, count)
     beta = math.sqrt((GAMMA - 1) * (GAMMA + 1)) / GAMMA
     dtype = np.dtype([
         ("plane_position_m", "<f8", (2,)),
@@ -71,17 +71,17 @@ def generate_input(path, here):
         ("source_id", "<u8"),
         ("macro_weight", "<f8"),
     ])
-    records = np.zeros(COUNT, dtype=dtype)
+    records = np.zeros(count, dtype=dtype)
     records["plane_position_m"][:, 0] = SIGMA_XY * normal[:, 0]
     records["plane_position_m"][:, 1] = SIGMA_XY * normal[:, 2]
     records["arrival_time_offset_s"] = (SIGMA_Z / (beta * c)) * ndtri(uniform)
     records["proper_velocity"][:, 2] = math.sqrt((GAMMA - 1) * (GAMMA + 1))
-    records["source_id"] = np.arange(1, COUNT + 1, dtype=np.uint64)
+    records["source_id"] = np.arange(1, count + 1, dtype=np.uint64)
     records["macro_weight"] = 1.0
     require(np.isfinite(records["plane_position_m"]).all() and
             np.isfinite(records["arrival_time_offset_s"]).all(),
             "Nonfinite independent sample")
-    require(len(np.unique(records["plane_position_m"], axis=0)) == COUNT,
+    require(len(np.unique(records["plane_position_m"], axis=0)) == count,
             "A transverse position was duplicated")
     with h5py.File(path, "x") as handle:
         group = handle.create_group("particles")
@@ -89,16 +89,16 @@ def generate_input(path, here):
         group.attrs["scope"] = (
             "Independent physical unit-electron cold Gaussian sample; no tensor-product "
             "Gauss-Hermite rods and no forced sample moments")
-        group.attrs["electron_count"] = COUNT
-        group.attrs["charge_C"] = COUNT * 1.602176634e-19
+        group.attrs["electron_count"] = count
+        group.attrs["charge_C"] = count * 1.602176634e-19
         group.create_dataset("records", data=records)
         generation = handle.create_group("generation")
         generation["complete"] = np.uint8(1)
-        generation["committed_records"] = np.uint64(COUNT)
+        generation["committed_records"] = np.uint64(count)
         generation.attrs["schema"] = "APRL_physical_electron_source_v1"
         generation.attrs["algorithm"] = (
             "fixed-n-independent-gaussian-philox4x64-boxmuller-v1")
-        generation.attrs["seed"] = np.uint64(SEED)
+        generation.attrs["seed"] = np.uint64(seed)
         generation.attrs["sampler_source_sha256"] = sha(sampler_path)
         generation.attrs["record_payload_sha256"] = hashlib.sha256(
             records.tobytes()).hexdigest()
@@ -140,7 +140,7 @@ def source_audit(records):
     }
 
 
-def main(output):
+def main(output, count=COUNT, seed=SEED):
     output = Path(output).resolve()
     require(not output.exists(), "Output already exists")
     require((SOURCE / "PIC_COMPLETE.json").is_file(), "Source campaign incomplete")
@@ -148,8 +148,8 @@ def main(output):
     here = Path(__file__).resolve().parent
     inputs = output / "inputs"
     inputs.mkdir()
-    input_path = inputs / "independent_gaussian_10000_electrons.h5"
-    records, sampler_path = generate_input(input_path, here)
+    input_path = inputs / f"independent_gaussian_{count}_electrons.h5"
+    records, sampler_path = generate_input(input_path, here, count, seed)
     audit = source_audit(records)
     save(output / "SOURCE_AUDIT.json", audit)
 
@@ -178,21 +178,22 @@ def main(output):
         config = rewrite(copy.deepcopy(yaml.safe_load(
             (source_case / "run.yaml").read_text())), SOURCE, output)
         config["beam"]["input"]["file"] = str(input_path)
-        config["beam"]["input"]["electrons"] = float(COUNT)
+        config["beam"]["input"]["electrons"] = float(count)
         (target / "run.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
         plan = rewrite(json.loads((source_case / "PLAN.json").read_text()),
                        SOURCE, output)
         plan.update(
             binary=str(binary), binary_sha256=sha(binary),
-            macroparticles=COUNT, represented_electrons=float(COUNT),
+            macroparticles=count, represented_electrons=float(count),
             input=str(input_path), input_sha256=sha(input_path),
-            case_directory=str(target), expected_particles=COUNT,
+            case_directory=str(target), expected_particles=count,
             source_sampling=(
-                "10000 independent unit-electron Gaussian draws; unique x/y per record; "
+                f"{count} independent unit-electron Gaussian draws; unique x/y per record; "
                 "same cold momentum; no tensor-product Gauss-Hermite replication"),
             sole_physics_input_change=(
                 "Replace weighted 8x8x16 GH source by an independent unit-electron "
-                "sample of the same Gaussian distribution and total charge"),
+                f"sample of the same Gaussian distribution; N={count}, with absolute "
+                "continuum comparison using the corresponding explicit N^2 factor"),
             continuum_reference=(
                 "N^2 Gaussian SRW continuum plus separately reported finite-N sample "
                 "longitudinal form-factor deviation; no fitted normalization"),
@@ -207,13 +208,14 @@ def main(output):
     campaign.update(
         cases=cases, source_campaign=str(SOURCE),
         input=str(input_path), input_sha256=sha(input_path),
-        particle_count=COUNT, represented_electrons=COUNT, seed=SEED,
+        particle_count=count, represented_electrons=count, seed=seed,
         sampling="independent unit-electron Gaussian Philox/Box-Muller",
         source_audit=str(output / "SOURCE_AUDIT.json"),
         scope=(
             "Exact four-plane no-feedback linear-notch bend/straight control; the only "
             "physics input change is weighted tensor-product GH -> independent physical "
-            "unit-electron sampling of the same Gaussian bunch and total charge."))
+            f"unit-electron sampling of the same Gaussian bunch with N={count}; all "
+            "reported continuum spectra use that run's explicit N^2 factor."))
     save(output / "campaign.json", campaign)
 
     frozen_paths = [output / "campaign.json", output / "SOURCE_AUDIT.json",
@@ -226,10 +228,10 @@ def main(output):
     save(output / "PREPARED.json", {
         "complete": True,
         "cases": 2,
-        "particles": COUNT,
+        "particles": count,
         "unique_transverse_positions": audit["unique_transverse_positions"],
         "all_macro_weights_one": audit["all_macro_weights_one"],
-        "same_total_electrons_as_GH_control": True,
+        "same_total_electrons_as_GH_control": count == 10_000,
         "same_grid_solver_orbit_boundaries_detectors": True,
         "sole_physics_input_change": "particle sampling realization",
         "new_PIC_submitted_by_prepare": False,
@@ -238,6 +240,9 @@ def main(output):
 
 
 if __name__ == "__main__":
-    require(len(sys.argv) == 2,
-            "usage: prepare_independent_electron_synchrotron.py OUTPUT")
-    main(sys.argv[1])
+    require(len(sys.argv) in (2, 4),
+            "usage: prepare_independent_electron_synchrotron.py OUTPUT [COUNT SEED]")
+    if len(sys.argv) == 2:
+        main(sys.argv[1])
+    else:
+        main(sys.argv[1], int(sys.argv[2]), int(sys.argv[3]))
