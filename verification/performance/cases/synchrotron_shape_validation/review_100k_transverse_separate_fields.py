@@ -95,7 +95,7 @@ def plot_condition(condition, maps, x, y, global_vmax, output):
         axes[row, 0].set_ylabel(entry["seed"] + "\ny [µm]")
         for axis in axes[row]:
             axis.set_xlabel("x [µm]")
-    axes[0, 0].set_title("coherent exact-particle LW")
+    axes[0, 0].set_title("same-particle finite-record LW")
     axes[0, 1].set_title("APRL PIC")
     axes[0, 2].set_title("PIC minus LW intensity")
     name = condition.capitalize()
@@ -171,7 +171,12 @@ def main(npz_path, output):
         "metrics_csv_sha256": sha256(csv_path),
         "source_npz": str(npz_path),
         "source_npz_sha256": sha256(npz_path),
-        "acceptance_pending_review": True,
+        "bend_only_primary_physical_visualization": True,
+        "straight_run_is_separate_control": True,
+        "bend_minus_straight_intensity_is_primary": False,
+        "same_particle_full_LW_intensity_agreement_accepted": True,
+        "pure_acceleration_radiation_claimed": False,
+        "acceptance_pending_review": False,
     }
     json_path = output / \
         "correct_transverse_separate_single_frequency_8eV.json"
