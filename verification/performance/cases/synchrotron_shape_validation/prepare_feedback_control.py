@@ -66,6 +66,8 @@ def main(workspace, full_root, output):
                  "analyze_feedback_control.py", "feedback_control.sbatch",
                  "feedback_post.sbatch", "prepare_paired.py"]:
         shutil.copy2(here / name, scripts / name)
+    # The historic launcher imports helpers under this compatibility name.
+    shutil.copy2(here / "prepare_paired.py", scripts / "prepare.py")
     # The launcher is a preserved campaign helper rather than a source template.
     shutil.copy2(full_root / "scripts/launcher.py", scripts / "launcher.py")
 
