@@ -133,6 +133,10 @@ def main(srw_csv, output, specifications):
         "aperture_average_applied": False,
         "fitted_normalization_applied": False,
         "N_squared_display_scaling_is_explicit": True,
+        "physical_accuracy_accepted": False,
+        "acceptance_note": (
+            "Visual smoothness is insufficient: acceptance requires both seed "
+            "stability and coupled particle-count/transverse-grid convergence."),
         "rows": rows,
     }
     (output / "FINAL.json").write_text(json.dumps(result, indent=2) + "\n")

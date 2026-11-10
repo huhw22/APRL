@@ -66,7 +66,13 @@ def main(root, srw_csv, output):
     output.mkdir(parents=True)
     srw = np.genfromtxt(srw_csv, delimiter=",", names=True)
     energies = np.asarray(srw["photon_eV"])
-    reference = np.asarray(srw["SRW_gaussian_J_per_eV_m2"])
+    campaign = json.loads((root / "campaign.json").read_text())
+    audit = json.loads((root / "SOURCE_AUDIT.json").read_text())
+    represented = float(campaign["represented_electrons"])
+    reference = (np.asarray(srw["SRW_point_per_electron_J_per_eV_m2"]) *
+                 represented**2 *
+                 np.asarray(srw["longitudinal_form_factor_squared"]) *
+                 np.asarray(srw["transverse_correction_interpolated"]))
     paths = {kind: root / kind / "detectors/z03524.h5"
              for kind in ("bend", "straight")}
     handles = {kind: h5py.File(path, "r") for kind, path in paths.items()}
@@ -156,6 +162,9 @@ def main(root, srw_csv, output):
         "raw_spectrum_modified": False,
         "diagnostic_source_band_definition": "k_perp * sigma_xy <= 3",
         "sigma_xy_m": SIGMA_XY,
+        "represented_electrons": represented,
+        "sample_longitudinal_form_factor_power_relative_L2_to_gaussian":
+            audit["longitudinal_form_factor_power_relative_L2_to_gaussian_4_12eV"],
         "continuous_gaussian_amplitude_at_boundary": float(np.exp(-4.5)),
         "continuous_gaussian_power_at_boundary": float(np.exp(-9)),
         "bands": {
