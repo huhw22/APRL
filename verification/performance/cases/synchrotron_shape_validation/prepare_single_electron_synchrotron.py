@@ -15,7 +15,7 @@ import yaml
 SOURCE = Path("/public/home/wfollowm/APRL_Workspace/results/"
               "synchrotron_independent_electron_20261110_r1")
 GAMMA = 1174.171072271572
-REFERENCE_SHIFT_CELLS = -32
+REFERENCE_PADDING_CELLS = 64
 
 
 def require(condition, message):
@@ -110,9 +110,8 @@ def main(output):
         config["beam"]["input"]["file"] = str(input_path)
         config["beam"]["input"]["electrons"] = 1.0
         dz = float(config["mesh"]["cell_size"][2])
-        old_reference_center = float(config["mesh"]["center"][2])
-        config["mesh"]["center"][2] = (
-            old_reference_center + REFERENCE_SHIFT_CELLS * dz)
+        config["mesh"]["cells"][2] = (
+            int(config["mesh"]["cells"][2]) + REFERENCE_PADDING_CELLS)
         (target / "run.yaml").write_text(yaml.safe_dump(config, sort_keys=False))
         plan = rewrite(json.loads((source_case / "PLAN.json").read_text()),
                        SOURCE, output)
@@ -130,14 +129,15 @@ def main(output):
             purpose=(
                 "Provide a no-form-factor APRL/SRW control and isolate particle "
                 "sampling from the field/detector chain"),
-            reference_source_mesh_translation_cells=REFERENCE_SHIFT_CELLS,
-            reference_source_mesh_translation_m=REFERENCE_SHIFT_CELLS * dz,
+            reference_source_mesh_padding_cells=REFERENCE_PADDING_CELLS,
+            reference_source_mesh_padding_m=REFERENCE_PADDING_CELLS * dz,
             reference_translation_note=(
-                "The explicit full reference/source mesh is translated upstream "
-                "by 32 native z cells to cover the single-event synchronization. "
-                "Because the moving-window integer start offset increases by the "
-                "same 32 cells, the compact active E/B window, physical grid "
-                "locations, resolution, magnet and detectors are unchanged."))
+                "The explicit full reference/source mesh gains 32 native z cells "
+                "on each side to cover the single-event synchronization. Because "
+                "the compact moving window retains its explicit 497 cells and its "
+                "integer start offset increases by the 32-cell lower padding, the "
+                "active E/B window physical location, resolution, magnet and "
+                "detectors are unchanged."))
         save(target / "PLAN.json", plan)
         cases.append({"kind": kind, "directory": str(target),
                       "timeout_seconds": 1800})
@@ -148,14 +148,14 @@ def main(output):
         input_sha256=sha(input_path), particle_count=1,
         represented_electrons=1, seed=None,
         sampling="one on-axis unit electron",
-        reference_source_mesh_translation_cells=REFERENCE_SHIFT_CELLS,
+        reference_source_mesh_padding_cells=REFERENCE_PADDING_CELLS,
         scope=(
             "Same four-plane no-feedback linear-notch bend/straight control with "
             "one physical electron. This isolates the APRL field/detector chain "
             "from Gaussian sampling and all bunch form factors. The finite full "
-            "reference/source mesh is translated upstream by 32 native cells; "
-            "the compact active E/B window is invariant under that paired origin/"
-            "integer-offset change."))
+            "reference/source mesh is padded by 32 native cells on each side; the "
+            "compact active E/B window remains 497 cells and is invariant under "
+            "the paired lower-origin/integer-offset change."))
     save(output / "campaign.json", campaign)
     frozen_paths = [output / "campaign.json", input_path, binary]
     frozen_paths += sorted(path for path in scripts.iterdir() if path.is_file())
@@ -169,7 +169,7 @@ def main(output):
         "particles": 1,
         "macro_weight": 1.0,
         "same_grid_solver_orbit_boundaries_detectors": True,
-        "reference_source_mesh_translation_cells": REFERENCE_SHIFT_CELLS,
+        "reference_source_mesh_padding_cells": REFERENCE_PADDING_CELLS,
         "active_moving_window_expected_unchanged": True,
         "bunch_form_factor_applied": False,
         "new_PIC_submitted_by_prepare": False,
