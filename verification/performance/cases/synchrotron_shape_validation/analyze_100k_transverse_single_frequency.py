@@ -1,11 +1,10 @@
-"""Compare 8 eV transverse radiation fields for two exact 100k samples.
+"""Compare 8 eV transverse fields for two exact 100k samples.
 
-The PIC bend-minus-straight Fourier field contains the outgoing-bunch velocity
-near field.  The registered optical comparison subtracts a same-particle,
-finite-record, first-order transverse-deposition proxy for that velocity term
-at the complex-field level.  It then compares the result with the coherent
-acceleration LW field of the exact particle realization.  The uncorrected full
-paired maps are retained separately as a diagnostic, not called optical light.
+The analysis records the bend and straight runs independently, as well as the
+historical bend-minus-straight complex field.  Individual-run maps are needed
+to distinguish the field around the bent bunch from the field around the
+straight reference bunch.  The older post-hoc analytic velocity subtraction is
+retained only as a failed method control.
 """
 import csv
 import hashlib
@@ -166,18 +165,22 @@ def load_pic_field(root):
                 phase = np.exp(1j * ENERGY_EV * e / hbar *
                                (time - time[0])) * dt
                 result = {"E": np.zeros((ny, nx, 3), complex),
-                          "B": np.zeros((ny, nx, 3), complex)}
+                          "B": np.zeros((ny, nx, 3), complex),
+                          "individual": {}}
             else:
                 require(np.array_equal(shared[0], time) and
                         np.array_equal(shared[1], x) and
                         np.array_equal(shared[2], y),
                         "Bend and straight detector grids differ")
             fields = group["fields"]
+            result["individual"][kind] = {}
             for key, name in (("E", "electric_V_per_m"),
                               ("B", "magnetic_T")):
                 values = fields[name][:]
-                result[key] += sign * np.einsum(
+                transformed = np.einsum(
                     "t,tyxd->yxd", phase, values, optimize=True)
+                result["individual"][kind][key] = transformed
+                result[key] += sign * transformed
                 del values
         require(before == (path.stat().st_size, path.stat().st_mtime_ns),
                 f"Closed detector changed while reading: {path}")
@@ -213,8 +216,8 @@ def velocity_kernel(nx, ny, dx, dy, parameters, first, span, ntime):
         points, np.array([ENERGY_EV]), parameters, time_first=first,
         time_span=span, ntime=ntime)
     shape = (2 * ny, 2 * nx, 3)
-    return ((ve - se)[0].reshape(shape),
-            (vb - sb)[0].reshape(shape))
+    return (ve[0].reshape(shape), vb[0].reshape(shape),
+            se[0].reshape(shape), sb[0].reshape(shape))
 
 
 def spectral_intensity(ef, bf):
@@ -393,13 +396,18 @@ def main(output, specifications):
         xv = x[0] - dx / 2 + np.arange(len(x) + 1) * dx
         yv = y[0] - dy / 2 + np.arange(len(y) + 1) * dy
         source_vertex = complex_source(xv, yv, sample)
-        velocity_e_kernel, velocity_b_kernel = velocity_kernel(
+        (bend_velocity_e_kernel, bend_velocity_b_kernel,
+         straight_velocity_e_kernel, straight_velocity_b_kernel) = velocity_kernel(
             len(x), len(y), dx, dy, parameters, case["first"], pic["span"],
             NTIME_MULTIPLIER * pic["samples"])
-        velocity_e = convolve_vertices_to_centres(
-            source_vertex, velocity_e_kernel, len(y), len(x))
-        velocity_b = convolve_vertices_to_centres(
-            source_vertex, velocity_b_kernel, len(y), len(x))
+        bend_velocity_e = convolve_vertices_to_centres(
+            source_vertex, bend_velocity_e_kernel, len(y), len(x))
+        bend_velocity_b = convolve_vertices_to_centres(
+            source_vertex, bend_velocity_b_kernel, len(y), len(x))
+        straight_velocity_e = convolve_vertices_to_centres(
+            source_vertex, straight_velocity_e_kernel, len(y), len(x))
+        straight_velocity_b = convolve_vertices_to_centres(
+            source_vertex, straight_velocity_b_kernel, len(y), len(x))
 
         # Convert the theory's absolute u=t-z/c Fourier phase to the detector
         # convention exp(i omega (t-t_first)).  B is stored at t-dt/2 but
@@ -410,8 +418,13 @@ def main(output, specifications):
         radiation_b *= magnetic_phase
         coarse_e *= electric_phase
         coarse_b *= magnetic_phase
-        velocity_e *= electric_phase
-        velocity_b *= magnetic_phase
+        bend_velocity_e *= electric_phase
+        bend_velocity_b *= magnetic_phase
+        straight_velocity_e *= electric_phase
+        straight_velocity_b *= magnetic_phase
+
+        velocity_e = bend_velocity_e - straight_velocity_e
+        velocity_b = bend_velocity_b - straight_velocity_b
 
         pic_radiation_e = pic["E"] - velocity_e
         pic_radiation_b = pic["B"] - velocity_b
@@ -422,6 +435,29 @@ def main(output, specifications):
         radiation_lw_i = spectral_intensity(radiation_e, radiation_b)
         raw_pic_i = spectral_intensity(pic["E"], pic["B"])
         full_lw_i = spectral_intensity(theory_full_e, theory_full_b)
+        bend_theory_e = radiation_e + bend_velocity_e
+        bend_theory_b = radiation_b + bend_velocity_b
+        straight_theory_e = straight_velocity_e
+        straight_theory_b = straight_velocity_b
+        bend_pic_e = pic["individual"]["bend"]["E"]
+        bend_pic_b = pic["individual"]["bend"]["B"]
+        straight_pic_e = pic["individual"]["straight"]["E"]
+        straight_pic_b = pic["individual"]["straight"]["B"]
+        bend_pic_i = spectral_intensity(bend_pic_e, bend_pic_b)
+        bend_lw_i = spectral_intensity(bend_theory_e, bend_theory_b)
+        straight_pic_i = spectral_intensity(straight_pic_e, straight_pic_b)
+        straight_lw_i = spectral_intensity(straight_theory_e,
+                                           straight_theory_b)
+        require(field_l2(theory_full_e, theory_full_b,
+                         bend_theory_e - straight_theory_e,
+                         bend_theory_b - straight_theory_b,
+                         np.s_[:, :]) < 2e-13,
+                "Separated LW fields do not reconstruct the paired field")
+        require(field_l2(pic["E"], pic["B"],
+                         bend_pic_e - straight_pic_e,
+                         bend_pic_b - straight_pic_b,
+                         np.s_[:, :]) < 2e-13,
+                "Separated PIC fields do not reconstruct the paired field")
         metrics = map_metrics(
             radiation_pic_i, radiation_lw_i, pic_radiation_e,
             pic_radiation_b, radiation_e, radiation_b, x, y, dx, dy)
@@ -440,12 +476,22 @@ def main(output, specifications):
             "radiation_LW_negative_poynting_pixel_fraction": float(np.mean(
                 spectral_poynting(radiation_e, radiation_b)[region] < 0)),
         })
+        bend_metrics = map_metrics(
+            bend_pic_i, bend_lw_i, bend_pic_e, bend_pic_b,
+            bend_theory_e, bend_theory_b, x, y, dx, dy)
+        straight_metrics = map_metrics(
+            straight_pic_i, straight_lw_i, straight_pic_e, straight_pic_b,
+            straight_theory_e, straight_theory_b, x, y, dx, dy)
         results.append({
             "label": label, "root": str(case["root"]), "x": x, "y": y,
             "radiation_PIC": radiation_pic_i,
             "radiation_LW": radiation_lw_i,
             "raw_PIC": raw_pic_i, "full_LW": full_lw_i,
-            "metrics": metrics,
+            "bend_PIC": bend_pic_i, "bend_LW": bend_lw_i,
+            "straight_PIC": straight_pic_i,
+            "straight_LW": straight_lw_i,
+            "metrics": metrics, "bend_metrics": bend_metrics,
+            "straight_metrics": straight_metrics,
         })
         progress(f"finished {label}")
 
@@ -457,11 +503,20 @@ def main(output, specifications):
         results, output, "transverse_raw_paired_8eV",
         "8 eV raw bend-minus-straight field; velocity near field retained (diagnostic only)",
         "raw_PIC", "full_LW")
+    plot_maps(
+        results, output, "transverse_bend_full_8eV",
+        "8 eV bend run shown independently: full LW field",
+        "bend_PIC", "bend_LW")
+    plot_maps(
+        results, output, "transverse_straight_full_8eV",
+        "8 eV straight run shown independently: full LW field",
+        "straight_PIC", "straight_LW")
     np.savez_compressed(
         output / "transverse_maps_8eV.npz", x_m=x, y_m=y,
         **{f"{case['label']}_{key}_J_per_eV_m2": case[key]
            for case in results for key in
-           ("radiation_PIC", "radiation_LW", "raw_PIC", "full_LW")})
+           ("radiation_PIC", "radiation_LW", "raw_PIC", "full_LW",
+            "bend_PIC", "bend_LW", "straight_PIC", "straight_LW")})
     with (output / "transverse_metrics.csv").open("w", newline="") as stream:
         rows = [{"label": case["label"], **case["metrics"]}
                 for case in results]
@@ -489,7 +544,10 @@ def main(output, specifications):
         "CPML_cells_excluded_from_metrics": CPML_CELLS,
         "convolution_self_check": checks,
         "rows": [{"label": case["label"], "root": case["root"],
-                  **case["metrics"]} for case in results],
+                  **case["metrics"],
+                  "bend_individual": case["bend_metrics"],
+                  "straight_individual": case["straight_metrics"]}
+                 for case in results],
         "physical_accuracy_accepted": False,
         "acceptance_note": (
             "Acceptance requires reviewing the generated maps and the nested "
