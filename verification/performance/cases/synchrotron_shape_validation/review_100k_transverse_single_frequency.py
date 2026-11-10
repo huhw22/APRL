@@ -130,10 +130,11 @@ def main(npz_path, output):
         "pure_acceleration_radiation_claimed": False,
         "posthoc_velocity_subtraction_accepted": False,
         "posthoc_velocity_subtraction_reason": (
-            "The velocity peak is about 24 times the acceleration-field "
-            "peak, so small discrete-background mismatch is amplified by "
-            "subtraction. The failed subtraction is retained only as a "
-            "method negative control."),
+            "The velocity-background peak spectral intensity is about 24 "
+            "times the acceleration-field peak intensity (about 4.9 times "
+            "in field amplitude), so small discrete-background mismatch is "
+            "amplified by subtraction. The failed subtraction is retained "
+            "only as a method negative control."),
         "rows": rows,
         "same_particle_transverse_intensity_agreement_accepted": True,
         "png_sha256": sha256(png),
