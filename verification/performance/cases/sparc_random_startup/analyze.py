@@ -39,13 +39,19 @@ def pic_spectrum(path,wavelength):
         require(np.max(abs((t-t[0])/dt-ticks))<1e-4,'Irregular field sampling')
         N=int(ticks[-1]+1);missing=np.setdiff1d(np.arange(N),ticks)
         require(len(missing)<=1,'Too many missing field samples')
-        # Original40x40, six CPML cells per side: exact ±560um aperture.
+        # Use the original ±560um comparison aperture even after enlarging
+        # the physical mesh to retain all independently sampled Gaussian tails.
         area=float(g.attrs['dx_m'])*float(g.attrs['dy_m'])
+        dx=float(g.attrs['dx_m']);dy=float(g.attrs['dy_m'])
+        x=float(g.attrs['x_first_m'])+np.arange(raw.shape[2])*dx
+        y=float(g.attrs['y_first_m'])+np.arange(raw.shape[1])*dy
+        ix=np.flatnonzero(abs(x)<.00056-dx*.1);iy=np.flatnonzero(abs(y)<.00056-dy*.1)
+        require(len(ix)==len(iy)==28,'Comparison aperture changed')
         values=np.empty((N,28*28,6))
         for start in range(0,len(t),32):
             block=raw[start:start+32];stop=start+len(block)
-            values[ticks[start:stop],:,:3]=block['electric_V_per_m'][:,6:34,6:34].reshape(len(block),-1,3)
-            values[ticks[start:stop],:,3:]=block['magnetic_T'][:,6:34,6:34].reshape(len(block),-1,3)
+            values[ticks[start:stop],:,:3]=block['electric_V_per_m'][:,iy][:,:,ix].reshape(len(block),-1,3)
+            values[ticks[start:stop],:,3:]=block['magnetic_T'][:,iy][:,:,ix].reshape(len(block),-1,3)
         for k in missing:
             nodes=ticks[np.argsort(abs(ticks-k))[:8]]
             coefficients=np.array([np.prod([(k-j)/(i-j) for j in nodes if j!=i]) for i in nodes])
@@ -103,7 +109,7 @@ def analyze(root,entry):
         require(len(np.unique(a['source_id']))==len(a),'Duplicate particle crossings')
         phase=np.exp(2j*np.pi*np.longdouble(c)*(a['time_s'].astype(np.longdouble)-np.longdouble(z)/c)/plan['wavelength_m']).astype(complex)
         for label,first,last in [('all',0,231),('core',77,154)]:
-            result=moments(a['source_id'],a['weight'],phase,prefix,first,last)
+            result=moments(a['source_id'],abs(a['charge_C'])/1.602176634e-19,phase,prefix,first,last)
             rows.append(dict(program='PIC',scope=label,plane=name,z_m=z,**result))
         if name.startswith('u') and name!='und-entry':
             spectra.append(dict(program='PIC',plane=name,z_m=z,**pic_spectrum(d/'detectors'/(name+'.h5'),plan['wavelength_m'])))

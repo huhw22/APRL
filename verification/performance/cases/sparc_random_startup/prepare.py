@@ -52,7 +52,7 @@ def main(root):
         genesis_binary=str(genesis),genesis_binary_sha256=sha(genesis),
         prior_campaign=str(old),boost_gamma=prior['physics']['boost_gamma'],
         wavelength_m=wavelength,period_m=.028,K=prior['physics']['K'],
-        periods=77,source_optical_cells=231,core_generation_bins=[77,154],
+        periods=77,source_optical_cells=231,core_generation_bins=[77,154],transverse_cells=56,
         particle_planes=[['entry',0.],['und-entry',.01],
                          *[[f'u{n:02d}',.01+n*.028] for n in (7,19,37,57,77)]],
         weighted_sampling='Uniform fixed-size sampling without replacement from a conceptual independent fixed-N physical source; w512-a is nested in w64-a. Only selected records are stored.',

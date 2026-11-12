@@ -8,7 +8,7 @@ One w512 sample is nested in the w64 sample; a second physical seed supplies
 another w512 case. All samples have the same total charge.
 
 The full first77-period undulator, its one-period end ramps,151.9MeV parameters,
-40x40 grid,CPML6,20 longitudinal cells per boosted wavelength,EC+F3,80 requested
+56x56 grid at the same40um spacing,CPML6,20 longitudinal cells per boosted wavelength,EC+F3,80 requested
 particle samples/period, reference supply and600/60s MPI-free watchdog remain.
 The source is the central231 optical periods of the current full parabola;
 the fixed central77 generation bins are the primary PIC cohort. This finite
@@ -37,3 +37,12 @@ These are weighted independent samples, not unit-electron noise: entrance BF
 noise follows sum(w²)/sum(w)². A first-segment comparison of two physical seeds
 and two weights cannot establish ensemble SASE growth or eleven-segment
 saturation. Result files keep physical_acceptance=false until reviewed.
+
+The initial r1 attempt used40x40 and stored the physical macro-weight as the
+input relative weight. Its initialization checks rejected a few Gaussian tails
+inside CPML and a noninteger weight-summation error at the higher particle count;
+no physical stepping occurred. The replacement uses56x56 to retain every random
+event, and unit relative weights plus the unchanged physical total electron count.
+GENESIS current uses the actual physical macro-weight. Spectral comparison still
+uses±560um; PIC statistical charge uses actual charge/e, not raw relative weights.
+No clipping, reweighting of individual particles, moment fit or core change occurs.

@@ -46,7 +46,10 @@ def generate(root, plan):
         require(cursor==n,'Conceptual source truncated')
         prefix=np.r_[0,np.cumsum(bins['counts'])]
         for entry in entries:
-            a=arrays[entry['name']];a['macro_weight']=n/len(a)
+            a=arrays[entry['name']]
+            # v4 weights are relative. Integer unit values sum exactly in the
+            # existing reader; beam.input.electrons supplies the physical N.
+            a['macro_weight']=1.
             source_bins=np.searchsorted(prefix,a['source_id']-1,side='right')-1
             require(len(np.unique(a['plane_position_m'],axis=0))==len(a),'Copied transverse positions')
             v,t,_=recover_parameter_plane(a,cfg['phase_space'])
@@ -61,7 +64,7 @@ def generate(root, plan):
             with h5py.File(path,'x') as f:
                 g=f.create_group('particles');g.attrs.update(format_version=4,input_plane_z_m=0.,
                     electron_count=n,macro_records=len(a),scope='Independent physical source uniformly thinned; no clones',
-                    macro_weight=n/len(a),physical_seed=seed)
+                    macro_weight=n/len(a),input_relative_weight=1.,physical_seed=seed)
                 g.create_dataset('records',data=a,chunks=(min(65536,len(a)),))
                 g=f.create_group('generation');g['complete']=np.uint8(1)
                 g['committed_records']=np.uint64(len(a));g['physical_bin_counts']=bins['counts']
@@ -70,7 +73,7 @@ def generate(root, plan):
             info=dict(input=str(path),input_sha256=sha(path),macro_records=len(a),
                 physical_electrons=n,actual_weight=n/len(a),physical_seed=seed,
                 transverse_unique_positions=len(a),zero_transverse_duplicates=True,
-                source_ids_unchanged=True,phase_space_statistics=statistics,
+                source_ids_unchanged=True,input_relative_weights_all_one=True,phase_space_statistics=statistics,
                 noise_expectation='sum(w^2)/sum(w)^2=1/Nmacro; not physical one-electron shot noise',
                 profile_warning='Central231-wavelength hard crop of the original full parabola; core77 wavelengths reported separately.')
             save(Path(entry['directory'])/'INPUT_VALIDATED.json',info)
@@ -106,7 +109,10 @@ def prepare_case(root,plan,entry,a,prefix):
     d=Path(entry['directory']);info=load(d/'INPUT_VALIDATED.json');geo=geometry(a,plan)
     cfg=yaml.safe_load((Path(plan['prior_campaign'])/'energy-binomial3/run.yaml').read_text())
     cfg['output']['manifest']=str(d/'run-manifest.yaml')
-    cfg['mesh'].update(cells=[40,40,geo['reference_nz']],duration=(geo['steps']+.5)*geo['dt'])
+    cfg['mesh'].update(cells=[plan['transverse_cells'],plan['transverse_cells'],geo['reference_nz']],duration=(geo['steps']+.5)*geo['dt'])
+    require(float(np.abs(a['plane_position_m']).max())+2*cfg['mesh']['cell_size'][0]
+            < (plan['transverse_cells']/2-6)*cfg['mesh']['cell_size'][0],
+            'Random transverse tails need a larger physical mesh; do not clip particles')
     cfg['mesh']['moving_window'].update(cells=geo['active_nz'],reference_directory=str(d/'reference'),particle_collar_cells=8)
     cfg['beam']['reference']['initial_center_z']=geo['center']
     cfg['beam']['input'].update(file=info['input'],electrons=info['physical_electrons'])
@@ -136,7 +142,7 @@ def prepare_case(root,plan,entry,a,prefix):
         for j in range(ns):
             left,right=np.searchsorted(sorted_bins,[lo+j,lo+j+1]);rows=sort[left:right]
             group=f.create_group(f'slice{j+1:06d}')
-            group['current']=[float(a['macro_weight'][rows].sum())*E*C/plan['wavelength_m']]
+            group['current']=[len(rows)*info['actual_weight']*E*C/plan['wavelength_m']]
             # A single zero-current record makes empty non-one4one slices safe.
             for key,values in [('x',a['plane_position_m'][:,0]),('y',a['plane_position_m'][:,1]),
                 ('px',a['proper_velocity'][:,0]),('py',a['proper_velocity'][:,1]),('gamma',g),('theta',theta)]:
