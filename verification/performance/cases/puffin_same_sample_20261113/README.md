@@ -1,5 +1,7 @@
 # Puffin 同粒子短工况对照
 
+> 2026-11-13 后续审查已撤销下文“磁场已匹配”的资格：单段无lattice路径未初始化段类型，且启用了不适用于平滑入口的matchIn/Out。31.47pJ是历史响应，不能作匹配基准。模板现改为显式lattice及qUndEnds=true；有效同样本重算19770和取场/传播定位见 `/public/home/wfollowm/APRL_Workspace/results/puffin_aprl_source_propagation_20261113_r1/README.md`。原数据与下文历史记录保留。
+
 有效运行入口：`/public/home/wfollowm/APRL_Workspace/results/puffin_same_sample_20261113_r3/`。
 物理样本固定为已经完成 APRL / GENESIS 对照的 `w64-a`，不增加种子。
 本轮先计算原 77 周期波荡器中的前 7 周期，在实验室 z=0.206 m 比较；没有把磁场物理出口提前到第 7 周期。

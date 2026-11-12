@@ -168,6 +168,9 @@ def input_file(root):
     save(root/'INPUT_VALIDATED.json',native)
     for name,nperiods,steps,evolve in [('import-check',1,4,False),('short-u07',7,80,True)]:
         d=root/name;d.mkdir(exist_ok=True)
+        # The no-lattice path allocates zundtype_arr without assigning the
+        # requested type. A smooth custom magnet also must bypass matchIn/Out.
+        (d/'matched.latt').write_text(f"UN 'aprl-ramp77' {nperiods} 1.0 0.0 {steps} 0.0 1.0 0.0 0.0\n")
         (d/'beam.in').write_text("&NBLIST\nnbeams=1\ndtype='h5'\n/\n&BH5LIST\ndist_f='../particles.h5'\n/\n")
         deck=f"""&MDATA
 qScaled=.true.
@@ -178,13 +181,14 @@ qElectronsEvolve={'.true.' if evolve else '.false.'}
 qElectronFieldCoupling=.true.
 qDiffraction=.true.
 qFocussing=.false.
-qUndEnds=.false.
+qUndEnds=.true.
 qFMesh_G=.false.
 q_noise=.false.
 qFilter=.true.
 qMeasure=.false.
 meshType=0
 beam_file='beam.in'
+lattFile='matched.latt'
 iNumNodesX=81
 iNumNodesY=81
 nodesPerLambdar=21
