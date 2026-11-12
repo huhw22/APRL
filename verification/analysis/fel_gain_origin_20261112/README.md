@@ -39,3 +39,11 @@ claimed as a quantitative intervention on the current F3 campaign.
 New physics controls remain evidence pending until their COMPLETE files and
 postprocessing are reviewed. A successful import, bitwise diagnostic test or
 energy ledger does not establish physical FEL accuracy.
+
+review_completed.py reviews the four closed 19751 controls using frozen-input
+hashes, roundtrip evidence, native phase closure, field-dump coordinates and
+power/energy consistency. It reports global versus local BF, the common-phase
+BF projection fraction and adjacent BF amplitude multiplication. Its reviewed
+chart separates matched band/aperture energy from the original continuous
+full-envelope/full-aperture curve. It does not inspect 19743/19744 ledger data
+or submit new physical simulations.
