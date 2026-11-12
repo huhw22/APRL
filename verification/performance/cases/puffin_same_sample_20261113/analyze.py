@@ -83,7 +83,8 @@ def main(root):
         writer=csv.DictWriter(stream,fieldnames=['program','energy_J']);writer.writeheader();writer.writerows(summary)
     np.savez_compressed(out/'spectra.npz',frequency_Hz=frequency,**{name:sd for name,sd in spectra})
     fig,ax=plt.subplots(1,2,figsize=(11,4.5),layout='constrained')
-    for name,sd in spectra:ax[0].plot(100*(frequency/f0-1),sd*f0*1e10,label=name)
+    colors={'Puffin':'#32936f','PIC':'#1769a5','GENESIS':'#c46b10'}
+    for name,sd in spectra:ax[0].plot(100*(frequency/f0-1),sd*f0*1e10,label=name,color=colors[name])
     ax[0].set(xlabel='Offset from comparison carrier (%)',ylabel='Band energy density (pJ / %)',title='Same w64-a sample, 7 periods')
     ax[0].legend();ax[0].grid(alpha=.2)
     names=['Puffin','PIC','GENESIS\noriginal','GENESIS\nhalf-bucket']
