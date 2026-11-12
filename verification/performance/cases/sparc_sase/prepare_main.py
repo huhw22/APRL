@@ -3,6 +3,7 @@ import argparse,copy,shutil
 from pathlib import Path
 import yaml
 from common import *
+from loading_guard import validate_loading
 def main():
     ap=argparse.ArgumentParser();ap.add_argument('preflight',type=Path);ap.add_argument('output',type=Path);a=ap.parse_args()
     pre=a.preflight.resolve();root=a.output.resolve()
@@ -10,6 +11,8 @@ def main():
     if not marker.exists():marker=pre/'PREFLIGHT_COMPLETE.json'
     need(load(marker)['pass_preflight'],'Preflight has not passed')
     need(all(sha(p)==h for p,h in load(pre/'FROZEN_CARDS.json').items()),'Preflight cards or input changed')
+    # An old software preflight is not permission to reuse a cloned beam.
+    validate_loading(pre/'particles.h5')
     root.mkdir(exist_ok=False)
     settings=load(pre/'benchmark.json') if (pre/'benchmark.json').exists() else {}
     stage_scripts(root,settings)

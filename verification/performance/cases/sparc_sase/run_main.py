@@ -3,6 +3,7 @@ from pathlib import Path
 import h5py,numpy as np,yaml
 from common import *
 from launch import run,srun
+from loading_guard import validate_loading
 def check_fields(directory,cfg):
     records=[]
     for plane in cfg['detectors']['field_planes']:
@@ -17,6 +18,8 @@ def main():
     frozen=load(root/'FROZEN.json');need(all(sha(p)==h for p,h in frozen.items()),'Frozen identity changed')
     index=int(sys.argv[1]);need(0<=index<len(plan['cases']),'Invalid array index')
     case=plan['cases'][index];d=Path(case['directory'])
+    cfg=yaml.safe_load((d/'run.yaml').read_text())
+    validate_loading(cfg['beam']['input']['file'], report=d/'PIC_LOADING_AUDIT.json')
     ranks=plan['execution']['ranks']
     run(srun()+[str(WS/'build/cluster-tools/binding_probe'),str(ranks),'8'],d,90,'binding.log')
     marker=Path(plan['preflight'])/'PREFLIGHT_VALIDATED.json'

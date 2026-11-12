@@ -3,12 +3,18 @@ import argparse,copy,math
 from pathlib import Path
 import h5py,numpy as np,yaml
 from common import *
+from loading_guard import validate_loading
 
 DTYPE=np.dtype([('plane_position_m','<f8',(2,)),('arrival_time_offset_s','<f8'),
  ('proper_velocity','<f8',(3,)),('source_id','<u8'),('macro_weight','<f8')])
 
 def main(root):
     root=Path(root);plan=load(root/'plan.json');currents=slice_profile();n=len(currents)
+    # Native GENESIS quiet loading repeats transverse states along z. Such
+    # columns must not silently re-enter the independent 3D PIC workflow.
+    # Fail before creating either common output or any propagation cards.
+    validate_loading(root/'native-noise/initial.par.h5', 'native',
+                     report=root/'PIC_LOADING_AUDIT.json')
     records=root/'particles.h5';reference=root/'genesis/common.par.h5'
     scores={str(m):[] for m in [1,2,3]};quadrants=[[] for _ in range(4)]
     maxphase=0.;sumw=np.longdouble(0.);sumwb=np.longdouble(0.);sumwbt=np.longdouble(0.)
