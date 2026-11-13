@@ -1,0 +1,51 @@
+  ! Explicit physical magnetic lattice only; original solver paths unchanged.
+  subroutine getAPRLEleven(sx, sy, sz, bxj, byj, bzj, frame)
+    real(kind=wp), contiguous, intent(in) :: sx(:), sy(:)
+    real(kind=wp), intent(in) :: sz
+    real(kind=wp), contiguous, intent(out) :: bxj(:), byj(:), bzj(:)
+    type(tFELFrame), intent(in) :: frame
+    real(kind=wp), parameter :: phase(11) = [ &
+      @PHASES@ ]
+    real(kind=wp) :: z, local, length, ku, d, h, hp, ph, ft, fl, trans, g
+    integer :: j
+    z=sz*frame%gain_length
+    trans=sqrt(frame%gain_length*frame%cooperation_length)
+    length=77.0_wp*frame%lambda_w
+    ku=2.0_wp*acos(-1.0_wp)/frame%lambda_w
+!$OMP WORKSHARE
+    bxj=0.0_wp
+    byj=0.0_wp
+    bzj=0.0_wp
+!$OMP END WORKSHARE
+    do j=1,11
+      local=z-real(j-1,wp)*(length+0.4_wp)
+      if (local >= 0.0_wp .and. local <= length) then
+        h=1.0_wp
+        hp=0.0_wp
+        d=min(local,length-local)
+        if (d < frame%lambda_w) then
+          ph=acos(-1.0_wp)*d/frame%lambda_w
+          h=0.5_wp*(1.0_wp-cos(ph))
+          hp=0.5_wp*acos(-1.0_wp)/frame%lambda_w*sin(ph)
+          if (local >= frame%lambda_w) hp=-hp
+        end if
+        ph=ku*local+phase(j)
+        ft=h*sin(ph)-hp/ku*cos(ph)
+        fl=h*cos(ph)
+!$OMP WORKSHARE
+        byj=cosh(ku*sy*trans)*ft
+        bzj=sinh(ku*sy*trans)*fl
+!$OMP END WORKSHARE
+      end if
+      if (j < 11) then
+        local=z-(real(j-1,wp)*(length+0.4_wp)+length+0.105_wp)
+        if (local >= 0.0_wp .and. local <= 0.053_wp) then
+          g=-9.0_wp/0.78796_wp
+!$OMP WORKSHARE
+          bxj=g*sy*trans
+          byj=g*sx*trans
+!$OMP END WORKSHARE
+        end if
+      end if
+    end do
+  end subroutine getAPRLEleven
