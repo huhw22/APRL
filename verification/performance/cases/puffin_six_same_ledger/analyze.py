@@ -18,6 +18,22 @@ def table(path,rows):
         w=csv.DictWriter(f,fieldnames=list(rows[0]));w.writeheader();w.writerows(rows)
 
 
+def native_float32_trapezoid(a,dx,dy):
+    """Replay av_write.f90's default-real m_trapz accumulator, not field data.
+
+    Both m_trapz and m_trapz2D are declared `real function`, so each addition
+    rounds to float32 even though their arguments and stored fields are wp.
+    """
+    nz,ny,nx=a.shape
+    lx=dx*(nx-1);ly=dy*(ny-1)
+    x=-lx/2+np.arange(nx)*(lx/(nx-1));y=-ly/2+np.arange(ny)*(ly/(ny-1))
+    sx=np.zeros((nz,ny),dtype=np.float32)
+    for j in range(nx-1):sx=np.float32(sx.astype(float)+(x[j+1]-x[j])*(a[:,:,j+1]+a[:,:,j])/2)
+    sy=np.zeros(nz,dtype=np.float32)
+    for j in range(ny-1):sy=np.float32(sy.astype(float)+(y[j+1]-y[j])*(sx[:,j+1].astype(float)+sx[:,j].astype(float))/2)
+    return sy.astype(float)
+
+
 def particles(path,plan,info):
     with h5py.File(path) as f:
         a=f['electrons'][:];attrs=f['runInfo'].attrs
@@ -48,15 +64,34 @@ def fields(path,plan,info,out,tag):
         x=(np.arange(nx)-(nx-1)/2)*dx;y=(np.arange(ny)-(ny-1)/2)*dy
         wx=np.ones(nx);wy=np.ones(ny);wx[[0,-1]]=.5;wy[[0,-1]]=.5
         area=wy[:,None]*wx[None,:]*dx*dy;full=LD(0);edge=LD(0);front=LD(0);back=LD(0)
+        with h5py.File(path.with_name(path.name.replace('_aperp_','_integrated_'))) as nf:
+            need(int(nf['runInfo'].attrs['iCsteps'])==int(attrs['iCsteps']),'Native power physical step differs')
+            native_power=nf['powerSI'][:]
+        need(len(native_power)==nz,'Native power longitudinal mesh differs')
+        direct_profile=np.empty(nz);replayed_profile=np.empty(nz)
         # Native fPower_3D integrates nodal intensity with m_trapz2D.
         for lo in range(0,nz,256):
             a=g[:,lo:min(lo+256,nz),:,:];need(np.isfinite(a).all(),'Nonfinite full-grid field')
             t=np.sum(a*a*area[None,None,:,:],axis=(0,2,3),dtype=LD)
+            direct_profile[lo:lo+len(t)]=np.asarray(t*norm,dtype=float)
+            intensity=a[0]*a[0]+a[1]*a[1]
+            replayed_profile[lo:lo+len(t)]=native_float32_trapezoid(intensity,
+                float(attrs['sLengthOfElmX']),float(attrs['sLengthOfElmY']))*float(norm)*sc['gain_length_m']*sc['cooperation_length_m']
             full+=t.sum(dtype=LD)
             if lo==0:front+=t[:40].sum(dtype=LD)
             if lo+256>=nz:back+=t[-40:].sum(dtype=LD)
             edge+=np.sum(a[:,:,:2,:]**2,dtype=LD)+np.sum(a[:,:,-2:,:]**2,dtype=LD)+np.sum(a[:,:,:,:2]**2,dtype=LD)+np.sum(a[:,:,:,-2:]**2,dtype=LD)
         full_J=float(full*norm*LD(dt));rows=[];cache={}
+        peak=max(float(np.max(abs(native_power))),1e-300)
+        replay_error=float(np.max(abs(replayed_profile-native_power))/peak)
+        double_error=float(np.max(abs(direct_profile-native_power))/peak)
+        need(replay_error<3e-12,'Native float32 trapezoid replay differs from stored power')
+        # Positive trapezoid terms: conservative standard gamma_n roundoff
+        # bound for the two sequential default-real sums, independently of R.
+        nround=nx+ny;u32=np.finfo(np.float32).eps/2;roundoff_bound=nround*u32/(1-nround*u32)
+        need(double_error<=roundoff_bound,'Independent double integral exceeds native arithmetic bound')
+        native_J=float(np.sum(native_power,dtype=LD)*LD(dt))
+        native_energy_error=abs(full_J-native_J)/max(abs(full_J),1e-300)
         for half in plan['apertures_half_width_m']:
             ix=np.flatnonzero(abs(x)<=half+1e-12);iy=np.flatnonzero(abs(y)<=half+1e-12)
             b=np.empty((nz,len(iy),len(ix),2))
@@ -88,6 +123,11 @@ def fields(path,plan,info,out,tag):
         first40_time_nodes_energy_fraction=float(front/full) if full else 0.,
         last40_time_nodes_energy_fraction=float(back/full) if full else 0.,
         full_grid_spatial_quadrature='Native nodal trapezoid, two physical transverse polarizations',
+        native_power_integration_relative_error=native_energy_error,
+        native_float32_profile_replay_relative_error=replay_error,
+        double_vs_native_profile_relative_error=double_error,
+        native_float32_roundoff_bound=roundoff_bound,
+        native_float32_integral_J=native_J,
         transverse_edge_unweighted_square_sum=float(edge))
 
 
@@ -109,9 +149,9 @@ def integrated(root,info,out):
     table(out/'native_energy_history.csv',rows);return rows
 
 
-def main(root):
+def main(root,output=None):
     root=Path(root);need(read(root/'TRACKING_CLOSED.json')['complete'],'Refuse running H5')
-    plan=read(root/'PLAN.json');info=read(root/'INPUT_VALIDATED.json');out=root/'analysis';out.mkdir()
+    plan=read(root/'PLAN.json');info=read(root/'INPUT_VALIDATED.json');out=Path(output) if output is not None else root/'analysis';out.mkdir(parents=True)
     dense=integrated(root,info,out);rows=[];bands=[];checks={}
     # Initial full-field check also confirms the absence of an imported seed.
     initial_bands,initial=fields(dump_at(root/'main','aperp',0),plan,info,out,'initial')
@@ -135,7 +175,7 @@ def main(root):
         native=next((a for a in dense if a['step']==step),None)
         if native is not None:
             error=abs(native['all_grid_native_field_energy_J']-field['all_grid_retained_forward_field_energy_J'])/max(abs(field['all_grid_retained_forward_field_energy_J']),1e-300)
-            need(error<2e-11,'Independent full-grid integral disagrees with native power')
+            need(error<=field['native_float32_roundoff_bound'],'Independent field integral exceeds native power arithmetic bound')
             checks[tag]['native_power_integration_relative_error']=error
         print('SEGMENT_ENERGY',row,flush=True)
     table(out/'energy_gain.csv',rows);table(out/'band_statistics.csv',bands)
@@ -143,7 +183,7 @@ def main(root):
     axes[0].plot(z,[-r['mean_delta_K_eV_per_electron']/1000 for r in rows],'o-',label='Puffin mean loss')
     axes[0].set(xlabel='Lab z (m)',ylabel='Physical electron mean loss (keV)')
     axes[1].plot([r['lab_z_m'] for r in dense],[r['all_grid_native_field_energy_J']*1e6 for r in dense],label='All grid, all retained modes')
-    for key,label in [('field_energy_520um_J','Aperture ±520µm'),('Hann_resonant_energy_520um_J','Hann ±5%, aperture ±520µm')]:
+    for key,label in [('field_energy_520um_J','Aperture ±520µm'),('Rect_resonant_energy_520um_J','Rect ±5%, aperture ±520µm')]:
         axes[1].plot(z,[r[key]*1e6 for r in rows],'o-',label=label)
     axes[1].set(xlabel='Lab z (m)',ylabel='Forward field energy (µJ)')
     axes[2].plot(z,[r['particle_plus_retained_field_change_J']*1e6 for r in rows],'o-',label='Particle + retained forward field')
@@ -174,4 +214,4 @@ def main(root):
             'Output planes follow nominal exits by at most0.35mm; exact coordinates are stored.']))
 
 
-if __name__=='__main__':main(sys.argv[1])
+if __name__=='__main__':main(sys.argv[1],sys.argv[2] if len(sys.argv)>2 else None)
