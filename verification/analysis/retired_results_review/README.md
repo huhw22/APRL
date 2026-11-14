@@ -36,3 +36,30 @@ allowlist using directory descriptors and O_NOFOLLOW,with before/after journal
 records and a final preserved-file/dependency/archive check. It never removes
 whole directories. Do not reuse this fixed authorization for another plan or
 additional groups. The original review validation remains a historical record.
+
+On 2026-11-15 the user separately authorized a broader cleanup to bring
+APRL_Workspace below 500 decimal GB. `compact_workspace.py` implements only
+that dated campaign in `results/workspace_compaction_20261115_r1`. This retires
+obsolete valid raw outputs as well as failed tests; retirement does not retract
+their derived scientific conclusions. The previous group's authorization is
+not reused. The new JSON authorization, metadata inventory, exact file list,
+plan hashes and preflight are required before `execute` can run once.
+
+This policy preserves the entire active w355 campaign, immutable dependencies,
+declared and recognizable original inputs (including native electron dump 0),
+code and programs, plots, CSV/JSON, cards, logs, compact regression data, the
+selected canonical physical controls and the old six-segment worldtube/ledger.
+For the older independent 60M benchmark it keeps original inputs, the final
+substep particle plane, final optical plane and ledger; intermediate planes
+are retired. Large old H5/bin/raw/NPY/NPZ outputs are eligible elsewhere.
+All aliases of preserved inodes stay; reclaim requires observing and selecting
+every hardlink. No directories or symbolic links are removed.
+
+Run `compact_workspace.py plan`, inspect its exact manifest and protected
+scope, then `preflight`, then `execute`. Execution rechecks each inode through
+the same guarded unlink helper, journals both sides of every removal, verifies
+preserved large files and rehashes the active frozen dependencies. Verify the
+actual workspace size with `du -x -B1` afterwards: the inventory's projected
+regular-file total excludes directory overhead and ongoing output growth.
+The campaign is not an automatic retention service; a future cleanup requires
+fresh task context and authorization.
