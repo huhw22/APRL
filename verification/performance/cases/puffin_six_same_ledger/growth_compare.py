@@ -133,7 +133,7 @@ def main(root,out):
     axes[0].set(xlabel='Lab z (m)',ylabel='Hann ±5% transverse-field power proxy (W)',title='Same central high-current window; aperture ±520µm')
     axes[1].set(xlabel='Lab z (m)',ylabel='Charge-weighted local RMS |b1| (10λ bins)',title='Same Eulerian window relative to beam charge median')
     for a in axes:a.grid(alpha=.2,which='both');a.legend(fontsize=8)
-    fig.suptitle('Six-segment Puffin / APRL comparison | same historical source and macro charges\nLater-half high-current interval, fixed width, no field-peak selection or amplitude fitting')
+    fig.suptitle('Historical phase-cloned input: six-segment Puffin / APRL comparison\nNot an independent-random loading validation | same window and macro charges, no amplitude fitting')
     fig.savefig(out/'power_bf_growth.png',dpi=180);fig.savefig(out/'power_bf_growth.pdf');plt.close(fig)
     ax.set(xlabel='Lab z (m)',ylabel='Global full-available-beam |b1|',title='Global BF: separate observable from local RMS')
     ax.grid(alpha=.2,which='both');ax.legend();fig2.savefig(out/'global_bf_growth.png',dpi=180);fig2.savefig(out/'global_bf_growth.pdf');plt.close(fig2)

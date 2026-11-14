@@ -20,7 +20,8 @@ def main(out):
     methods=['Puffin','energy-binomial3','energy-momentum'];labels=['Puffin','APRL 能量守恒＋三点核','APRL 能量守恒＋动量匹配']
     last={m:next(x for x in rows if x['method']==m and x['segment']==6) for m in methods}
     low,high=r['fixed_window_relative_to_charge_median_s']
-    lines=['# 六段Puffin与APRL：功率及BF增长对照','',
+    lines=['# 旧克隆加载六段Puffin与APRL：功率及BF增长对照','',
+        '**适用范围：这里复用19743/19744修正前的冻结克隆输入，不是此前已验的独立随机束流复测；不能据此判断修正后加载的增益是否一致。**','',
         '只读后处理19793已COMPLETED0:0，用时3分钟。使用19783、19743和19744已闭合的同一历史束流数据，没有新物理仿真。图中功率是六个波荡器出口的采样点；BF还包含磁入口，连线用于读图，不代表连续采样。','',
         '![功率与局部BF增长](data/power_bf_growth.png)','',
         '| 第六段 | Hann ±5%中央功率（MW） | 中央10λ RMS BF | 全束可用粒子global BF |',
