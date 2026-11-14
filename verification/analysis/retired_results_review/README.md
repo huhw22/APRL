@@ -61,5 +61,8 @@ the same guarded unlink helper, journals both sides of every removal, verifies
 preserved large files and rehashes the active frozen dependencies. Verify the
 actual workspace size with `du -x -B1` afterwards: the inventory's projected
 regular-file total excludes directory overhead and ongoing output growth.
+`validate_compaction.py` independently checks the exact journal, absent paths,
+all unselected historical file paths, preserved large-file identities, current
+frozen dependency hashes and both retained small evidence archives.
 The campaign is not an automatic retention service; a future cleanup requires
 fresh task context and authorization.
