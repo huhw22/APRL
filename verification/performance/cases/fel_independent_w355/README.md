@@ -54,3 +54,23 @@ After submission and available startup checks,stop proactive monitoring until
 the user wakes the task. Never read running H5. Retain all raw fields,particles
 and diagnostics; closed-run analysis waits for the user. Neither successful
 preparation nor normal runtime completion implies physical acceptance.
+
+`compare_closed_six.py CAMPAIGN OUTPUT` compares only the closed independent
+six-segment Puffin and EC+F3 outputs. It reuses the established central Eulerian
+window, RMS-Hann +/-5% physical band, +/-520um aperture and local10-lambda RMS
+BF definitions from `puffin_six_same_ledger/growth_compare.py`; its source
+qualification and plots explicitly refer to the new independent input.
+Archive that helper and `puffin_eleven_four_slip/common.py` beside the analysis
+script when running a frozen copy. It never opens momentum or eleven-segment
+scientific outputs.
+
+For the completed19796_0 case the physical solver returned0 at the configured
+stop with28199 steps, while its frozen driver expected28198 and asserted.
+The comparison requires that exact known discrepancy and driver failure,
+successful solver/finalize markers, all detector/ledger completion records,
+worldtube and every rank audit at the actual28199 steps, plus original frozen
+hashes. It does not alter the original failed batch or frozen completion card,
+and is not a general waiver for failed jobs. `summarize_closed_six.py REVIEW`
+checks the resulting tables, time denominator, aperture, charge coverage and
+output identities and documents this distinction. Run it after visually
+reviewing both PNG figures; its report records that review.
