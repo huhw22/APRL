@@ -78,3 +78,23 @@ and is not a general waiver for failed jobs. `summarize_closed_six.py REVIEW`
 checks the resulting tables, time denominator, aperture, charge coverage and
 output identities and documents this distinction. Run it after visually
 reviewing both PNG figures; its report records that review.
+
+`eleven_saturation.py ELEVEN_ROOT OUTPUT` reads only the normally completed
+single-node19799 run. It retains the fractional high-current-window rule from
+the six-segment comparison, giving a0.993252546ps gate for the four-slip bunch.
+The eleven exit spectra use the same physical+/-5% band and+/-520um aperture.
+Per-period native power is a separate full-grid/all-retained-frequency quantity;
+its charge median is interpolated within one-wavelength slices. Native local
+maxima are candidates with explicit10%-prominence and0.5m-separation criteria,
+not automatic proof of a universal saturation length.
+
+`present_eleven_saturation.py REVIEW` checks the eleven full-charge exits,
+all991 regular period states, CSV, denominator/aperture/BF/Parseval, and original
+output identities. It presents the aperture-band exit curve and dense native
+curve in separate panels, with their different power definitions visible.
+After inspecting the final saturation and bunching PNGs, record that visual
+check in the delivery validation; PDF files are same-source exports.
+Physical dump steps must match exactly. Iteratively accumulated zbar differs
+from analytic exit coordinates by tens of pm late in this run; its position
+check allows1nm, far below the350um physical integration displacement. This
+does not change the stored coordinates or resample the fields.
