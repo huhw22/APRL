@@ -2,7 +2,7 @@
 import copy,json,math,shutil,sys
 from pathlib import Path
 import h5py,yaml
-from common import sha,save
+from common import sha,save,duration_steps
 
 W=Path('/public/home/wfollowm/APRL_Workspace');T=Path(__file__).resolve().parent
 def main(root):
@@ -48,7 +48,7 @@ def main(root):
     card['energy_ledger'].update(enabled=True,directory=str(d/'ledger'),sample_interval_steps=1,discrete_operator_audit=True)
     (d/'run.yaml').write_text(yaml.safe_dump(card,sort_keys=False))
     case=dict(name=f'{shape}-seed{seed}-{kind}',shape=shape,seed=seed,kind=kind,directory=str(d),input=str(input_file),input_sha256=campaign['input_sha256'],
-       particle_count=100000,expected_steps=original_plan['expected_steps'],timeout_seconds=5400,original_case=str(source),lab_base_z_m=.02,
+       particle_count=100000,legacy_expected_steps=original_plan['expected_steps'],duration_step_budget=duration_steps(card)[0],timeout_seconds=5400,original_case=str(source),lab_base_z_m=.02,
        restore_original_lab_x_by_adding_m=shift,feedback=True)
     save(d/'CASE.json',case);cases.append(case)
     if first_card is None:first_card=card
@@ -65,7 +65,8 @@ def main(root):
   base=Path(cases[0]['directory']);card=yaml.safe_load((base/'run.yaml').read_text().replace(str(base),str(d)))
   card['mesh']['longitudinal_shape']=shape;card['mesh']['duration']=40.5*dt
   (d/'run.yaml').write_text(yaml.safe_dump(card,sort_keys=False))
-  preflight.append(dict(name=name,shape=shape,observer=observer,directory=str(d),expected_steps=40,particle_count=100000,timeout_seconds=600))
+  preflight.append(dict(name=name,shape=shape,observer=observer,directory=str(d),expected_steps=duration_steps(card)[0],
+   duration_step_budget=duration_steps(card)[0],particle_count=100000,timeout_seconds=600))
  plan=dict(complete_preparation=True,binary=str(binary),binary_sha256=sha(binary),binding_probe=str(W/'build/cluster-tools/binding_probe'),
    reused_observer_validation=str(proof/'PREFLIGHT_COMPLETE.json'),mpi=16,threads=8,exclusive_cpus_per_job=128,
    cases=cases,preflight=preflight,input_files=inputs,self_field_feedback=True,
@@ -77,7 +78,10 @@ def main(root):
    source_support_upper_bound_m=9*gamma*first_card['mesh']['cell_size'][2],
    worldtube_source_exclusion='0.02m starts downstream of frozen-source support; transverse surface-current sheets are one cell outside observer faces; devices are static lab magnetic fields.',
    no_CXX_changes=True,no_build=True,no_default_changes=True,new_physics_results_accepted=False,
-   full_bunch_job_19731_unchanged=True,queued_short_preflight_required=True)
+   queued_short_preflight_required=True,preflight_duration_in_dt=40.5,
+   preflight_expected_steps=duration_steps(card)[0],
+   step_validation='Preflight follows binary64 repeated-addition duration bound; formal runs require physical stop and complete mutually consistent records.',
+   prior_failed_campaign=str(W/'results/synchrotron_full_ledger_20261112_r1'))
  assert plan['source_support_upper_bound_m']<.02
  save(root/'PLAN.json',plan);save(root/'CARD_AUDIT.json',dict(complete=True,cases=audit))
  protected[str(W/'cluster.env')]=sha(W/'cluster.env');save(root/'PROTECTED.json',protected)

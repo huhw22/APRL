@@ -1,7 +1,7 @@
 """Frozen inputs, bounded MPI launches, and closed-output checks."""
 import hashlib,json,os,re,subprocess,time
 from pathlib import Path
-import h5py
+import h5py,yaml
 import numpy as np
 
 def sha(path):
@@ -11,6 +11,29 @@ def sha(path):
  return h.hexdigest()
 def save(path,value):
  p=Path(path);q=p.with_suffix(p.suffix+'.tmp');q.write_text(json.dumps(value,ensure_ascii=False,indent=2,allow_nan=False)+'\n');q.replace(p)
+def duration_steps(card):
+ assert card['mesh']['field_solver']=='cowan-z'
+ dt=card['mesh']['cell_size'][2]/299792458.
+ assert dt>0 and card['mesh']['duration']>0
+ t=0.;steps=0
+ while t<card['mesh']['duration']:
+  t+=dt;steps+=1
+  assert steps<10000000,'Unbounded diagnostic duration'
+ return steps,t,dt
+def completed_steps(case,log,physical):
+ card=yaml.safe_load((Path(case['directory'])/'run.yaml').read_text())
+ budget,final_time,dt=duration_steps(card)
+ assert budget==case['duration_step_budget'],(budget,case['duration_step_budget'])
+ matches=re.findall(r'^Moving window completed: steps=(\d+)\b',log,re.M)
+ assert len(matches)==1,'Missing or ambiguous completed-step report'
+ steps=int(matches[0]);assert 0<steps<=budget,(steps,budget)
+ if physical:
+  assert 'Configured stop reached:' in log
+  assert 'mesh.duration was exhausted before the configured physical stop' not in log
+ else:
+  assert steps==budget,(steps,budget)
+  assert 'Configured stop reached:' not in log
+ return steps,dt
 def frozen(root):
  assert os.environ.get('SLURM_JOB_ID'),'Run on Slurm'
  for path,digest in json.loads((root/'FROZEN.json').read_text()).items():assert sha(path)==digest,path
@@ -41,18 +64,22 @@ def launch(plan,case,observer=True):
  record=dict(exit_code=result.returncode,seconds=time.monotonic()-start,job_id=os.environ['SLURM_JOB_ID'])
  save(d/'LAUNCH.json',record);return record
 def validate(case,physical=True,observer=True):
- d=Path(case['directory']);log=(d/'aprl.log').read_text();steps=case['expected_steps']
- assert f'Moving window completed: steps={steps}' in log
+ d=Path(case['directory']);log=(d/'aprl.log').read_text();steps,dt=completed_steps(case,log,physical)
  assert not re.search('Segmentation fault|OpenFabrics device|DUE TO TIME LIMIT',log)
  if physical:
   assert 'Configured stop reached:' in log and 'phase=solve-complete' in log and 'phase=mpi-finalize-complete' in log
+  assert 'Simulation failure' not in log
  else:
   assert 'mesh.duration was exhausted before the configured physical stop' in log
   assert 'phase=duration-exhaustion-readiness-sync-complete' in log
  assert 'self_field_feedback is disabled' not in log and '[one-way-source]' not in log
  with h5py.File(d/'ledger/energy-ledger.h5') as f:
   g=f['energy_ledger'];assert int(g['complete'][()])==int(physical)
-  assert int(g['records'][-1]['step'])==steps and len(g['records'])==steps+1
+  assert int(g['committed_records'][()])==len(g['records'])==steps+1
+  assert int(g['records'][-1]['step'])==steps
+  assert np.array_equal(g['records']['step'],np.arange(steps+1))
+  assert np.all(np.diff(g['records']['time_box_s'])>0)
+  assert abs(float(g['records'][-1]['time_box_s'])-steps*dt)<1e-10*dt*max(1,steps)
  samples={};particle_records={}
  for path in sorted((d/'detectors').glob('*.h5')):
   with h5py.File(path) as f:
@@ -76,4 +103,6 @@ def validate(case,physical=True,observer=True):
    for prefix in ['lab-field','paired-momentum','whole-cowan']:
     assert (d/'lab-audit'/f'{prefix}-rank-{rank:05d}.complete').read_text().split()==[str(int(physical)),str(steps)]
    assert (d/'ledger'/f'discrete-field-rank-{rank:05d}.complete').read_text().split()==[str(int(physical)),str(steps)]
- return dict(complete=physical,actual_steps=steps,all_outputs_closed=True,field_samples=samples,particle_plane_records=particle_records,physical_precision_accepted=False)
+ return dict(complete=physical,actual_steps=steps,duration_step_budget=case['duration_step_budget'],
+  legacy_expected_steps=case.get('legacy_expected_steps'),step_gate='actual physical stop plus mutually consistent closed records',
+  all_outputs_closed=True,field_samples=samples,particle_plane_records=particle_records,physical_precision_accepted=False)

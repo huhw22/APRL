@@ -7,7 +7,8 @@ from common import frozen,binding,launch,validate,save,sha
 R=Path(sys.argv[1]).resolve();P=frozen(R);bound=binding(R,P,'preflight-binding.log');results=[]
 for case in P['preflight']:
  run=launch(P,case,case['observer']);assert run['exit_code'] not in [0,124,137]
- result=validate(case,False,case['observer']);results.append(dict(case=case['name'],diagnostic_preflight_passed=True,physical_run_complete=False,run=run))
+ result=validate(case,False,case['observer']);results.append(dict(case=case['name'],diagnostic_preflight_passed=True,
+  physical_run_complete=False,actual_steps=result['actual_steps'],run=run))
  print(case['name'],'SHORT_GATE_PASSED',flush=True)
 a=Path(P['preflight'][0]['directory']);b=Path(P['preflight'][1]['directory']);same=[]
 for p in sorted((a/'detectors').glob('*.h5')):
