@@ -72,11 +72,15 @@ def main(root,archive):
         'boost_discrete_sum':('boost_discrete_sum_J',1e18)}
     for tag_index,tag in enumerate(['F3','MM']):
         saved=np.genfromtxt(root/'data'/(tag+'_time_curves.csv'),delimiter=',',names=True,dtype=LD)
+        # Parse the original binary64 time column directly: going through
+        # genfromtxt long-double parsing first can double-round two values.
+        with (root/'data'/(tag+'_time_curves.csv')).open() as f:
+            saved_time_ps=np.asarray([float(r['time_box_s']) for r in csv.DictReader(f)])*1e12
         for language in ['zh-CN','en']:
             for name,(key,scale) in specs.items():
                 p=next(p for p in plots if p['name']==name and p['language']==language)
                 assert np.array_equal(p['series'][tag_index]['y'],np.asarray(saved[key]*scale,float)),(tag,name)
-                assert np.array_equal(p['series'][tag_index]['x'],np.asarray(saved['time_box_s'],float)*1e12),(tag,name)
+                assert np.array_equal(p['series'][tag_index]['x'],saved_time_ps),(tag,name)
     fields=[('final_energy_pairing_J',1e9,'电功配对差 nJ'),
         ('final_longitudinal_current_pairing_J',1e6,'粒子/电流纵向配对差 µJ'),
         ('final_longitudinal_force_pairing_J',1e6,'计入原生电荷电力后的纵向差 µJ'),
