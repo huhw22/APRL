@@ -70,8 +70,11 @@ def budget(raw,out,case,binary):
         front_outward_minus_injection_J=faces[:,4]-a('moving_inserted_field_J')-a('inlet_overwrite_work_J'),
         back_outward_plus_cropped_J=faces[:,5]+a('moving_cropped_field_J'),side_outward_J=faces[:,:4].sum(axis=1),
         moving_interface_J=-a('moving_remap_interface_correction_J'),
-        external_and_constraint_work_signed_J=-a('prescribed_work_J'))
+        external_and_constraint_work_signed_J=-a('prescribed_boris_work_J')-a('boundary_source_work_J')-a('frozen_constraint_work_J')-a('carrier_constraint_work_J'))
     phys['physical_component_sum_J']=sum(phys.values())
+    phys.update(external_prescribed_work_signed_J=-a('prescribed_boris_work_J'),boundary_source_work_signed_J=-a('boundary_source_work_J'),
+        frozen_constraint_work_signed_J=-a('frozen_constraint_work_J'),carrier_constraint_work_signed_J=-a('carrier_constraint_work_J'))
+    assert np.max(abs(phys['physical_component_sum_J']-a('balance_residual_boris_J')))<LD('1e-21')
     table(o/'boost/physical_components.csv',dict(time_box_s=a('time_box_s'),**phys))
     values,wr=whole.one(raw,out/'whole',case['directory_relative'])
     table(o/'boost/lab_slice_components.csv',dict(time_box_s=a('time_box_s'),**values))
