@@ -1,0 +1,15 @@
+# Reproduce the presentation revision
+
+Run `package.py prepare WORKSPACE` once to copy the exact reviewed November 16 r2 delivery into a new November 17 r1 directory. It checks the old ZIP SHA and all copied member hashes. The old ZIP and directory stay intact.
+
+Submit `render.sbatch TEMPLATE OUTPUT` for the read-only CSV plots and NPZ movie exports. The script uses four CPUs on Slurm; it opens no scientific H5 and runs no physical simulation. Do not edit render.py, movies.py or render.sbatch during that job. The original failed display attempt 19823 is retained outside the delivery in `results/physics_display_review_20261117_r1/attempt1/`; it stopped on an overlong English legend. The corrected attempt wraps legends before export.
+
+The completed full export 19824 exposed literal math-format ticks in the energy movies during visual review. Its source, log and example frame are preserved under `attempt2/`. The focused polish job 19825 redraws only the 24 spherical theory pages with non-obstructing legends and the four overview/energy movies with plain log tick labels. `polish.py` requires byte-identical plotted theory arrays and unchanged source hashes. The original physical simulation outputs are not involved. For a fresh full export, the corrected render.py and movies.py already contain these presentation fixes; the optional polish stage can still verify that a repeat changes no theory data.
+
+Run `validate.py OUTPUT` after rendering. It independently reconstructs signed budgets from decimal CSV strings, checks that the spherical model parameters and evaluation rule are identical between methods, verifies all channels are assigned once, and compares the plotted numerical arrays between languages. Existing nonzero residuals are preserved.
+
+Inspect representative Chinese/English plots, all three size plots, and movie frames including propagation, absorption and the final state. Save the actual review record as `07_readable_figures/VISUAL_REVIEW.json`. Do not claim every exported page was manually inspected if only representative samples were inspected. Canvas extent checks run for every static figure; ffprobe checks run on every new movie.
+
+Commit only this new template directory. Leave the existing untracked physics_presentation_zh directory, the energy_ledger_test_record modifications and the other user edits intact. Then run `package.py finish WORKSPACE`. It writes current navigation, the glossary and theory explanation, the PPT asset index, unchanged-scientific-record validation, all-file SHA manifest and a new checked ZIP. The latest pointer is updated only after the archive CRC and every archived member SHA pass.
+
+The generated `LEDGERS.json` records the two-panel partition (18% maximum-amplitude threshold) and the sum identity. Original source tables remain in their existing modules. The reference line in spherical plots is the F3-event sampling of the one physical model; the grey envelope spans both event-sampling values. The lower panel retains each method's own event-matched error.
