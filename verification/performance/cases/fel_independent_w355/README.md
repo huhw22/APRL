@@ -55,17 +55,21 @@ the user wakes the task. Never read running H5. Retain all raw fields,particles
 and diagnostics; closed-run analysis waits for the user. Neither successful
 preparation nor normal runtime completion implies physical acceptance.
 
-`compare_closed_six.py CAMPAIGN OUTPUT` compares only the closed independent
-six-segment Puffin and EC+F3 outputs. It reuses the established central Eulerian
+`compare_closed_six.py CAMPAIGN OUTPUT [PREVIOUS_REVIEW]` compares the closed
+independent six-segment Puffin, EC+F3 and EC+momentum-matching outputs. It reuses
+the established central Eulerian
 window, RMS-Hann +/-5% physical band, +/-520um aperture and local10-lambda RMS
 BF definitions from `puffin_six_same_ledger/growth_compare.py`; its source
 qualification and plots explicitly refer to the new independent input.
 Archive that helper and `puffin_eleven_four_slip/common.py` beside the analysis
-script when running a frozen copy. It never opens momentum or eleven-segment
-scientific outputs.
+script when running a frozen copy. It never opens eleven-segment scientific
+outputs. The optional previous two-method review is accepted only after its
+artifact hashes, original output identities, input, window and source parameters
+match. Its twelve baseline rows are reused exactly; only the new momentum
+particle and field statistics are calculated. The previous review stays intact.
 
-For the completed19796_0 case the physical solver returned0 at the configured
-stop with28199 steps, while its frozen driver expected28198 and asserted.
+For the completed19796_0/19796_1 cases the physical solvers returned0 at the
+configured stop with28199 steps, while their frozen driver expected28198 and asserted.
 The comparison requires that exact known discrepancy and driver failure,
 successful solver/finalize markers, all detector/ledger completion records,
 worldtube and every rank audit at the actual28199 steps, plus original frozen

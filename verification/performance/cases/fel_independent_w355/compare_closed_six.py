@@ -28,9 +28,10 @@ def identity(path):
     return dict(size=s.st_size, mtime_ns=s.st_mtime_ns, inode=s.st_ino)
 
 
-def close_check(root):
+def close_check(root, case='energy-binomial3'):
+    need(case in ['energy-binomial3', 'energy-momentum'], 'Unknown PIC case')
     puffin = root / 'six'
-    pic = root / 'six-aprl/energy-binomial3'
+    pic = root / 'six-aprl' / case
     plan = read(root / 'six-aprl/PLAN.json')
     need(read(puffin / 'TRACKING_CLOSED.json')['complete'], 'Unclosed Puffin')
     need(read(puffin / 'COMPLETE.json')['complete'], 'Incomplete Puffin')
@@ -46,7 +47,7 @@ def close_check(root):
          'PIC runtime error')
     steps = int(re.search(r'Moving window completed: steps=(\d+)', log)[1])
     need(steps == plan['steps'] + 1, 'Unexpected production step discrepancy')
-    driver = (root / 'six-aprl/driver-energy-binomial3.log').read_text()
+    driver = (root / 'six-aprl' / f'driver-{case}.log').read_text()
     need(driver.rstrip().endswith('AssertionError: Moving window completed: steps=' + str(plan['steps'])),
          'Unexpected driver failure')
     closed = {}
@@ -71,7 +72,7 @@ def close_check(root):
         for prefix in ['lab-field', 'paired-momentum', 'whole-cowan']:
             need((pic / 'lab-audit' / f'{prefix}-rank-{rank:05d}.complete').read_text().split()
                  == ['1', str(steps)], 'Unclosed audit rank')
-    return dict(physical_tracking_complete=True, pic_process_exit_code=0,
+    return dict(case=case, physical_tracking_complete=True, pic_process_exit_code=0,
                 original_pic_batch_state='FAILED 1:0 in post-run expected-step assertion',
                 expected_pic_steps=plan['steps'], actual_pic_steps=steps,
                 all_detector_groups_closed=closed, all_48_lab_audit_markers_closed=True,
@@ -98,28 +99,60 @@ def gamma_stats(path, kind, info):
     return mean
 
 
-def main(root, out):
+def main(root, out, previous=None):
     root, out = Path(root).resolve(), Path(out).resolve()
     need(root.name == 'fel_independent_w355_20261114_r1', 'Wrong source campaign')
     out.mkdir(parents=True, exist_ok=False)
-    closure = close_check(root)
+    closure = {case: close_check(root, case) for case in ['energy-binomial3', 'energy-momentum']}
     save(out / 'CLOSURE_REVIEW.json', closure)
     puffin = root / 'six'
-    pic = root / 'six-aprl/energy-binomial3'
     plan, info = read(puffin / 'PLAN.json'), read(puffin / 'INPUT_VALIDATED.json')
     ap = read(root / 'six-aprl/PLAN.json')
     need(info['input_sha256'] == ap['input_sha256'], 'Different input events')
     need(info['independent_fixed_N_source'] and info['zero_transverse_duplicates']
          and info['no_clones'], 'Unqualified source')
-    card = yaml.safe_load((pic / 'run.yaml').read_text())
-    need(plan['magnetic_lattice'] == card['sources']['magnetic_elements'], 'Different magnets')
+    for case in closure:
+        card = yaml.safe_load((root / 'six-aprl' / case / 'run.yaml').read_text())
+        need(plan['magnetic_lattice'] == card['sources']['magnetic_elements'], 'Different magnets')
     need(read(puffin / 'NATIVE_VALIDATED.json')['all_seven_columns_bitwise'], 'Import mismatch')
     half = LD(str(plan['duration_s'])) / 2
     low, high = LD('.1') * LD(str(math.sqrt(.2))) * half, LD('.9') * LD(str(math.sqrt(.2))) * half
     rows, initial, protected = [], [], {}
-    initial_puffin = dump_at(puffin / 'main', 'electrons', 0)
-    source_gamma = gamma_stats(initial_puffin, 'Puffin', info)
-    for name, kind in [('Puffin', 'Puffin'), ('APRL EC+F3', 'PIC')]:
+    methods = [('Puffin', 'Puffin', None), ('APRL EC+F3', 'PIC', 'energy-binomial3'),
+               ('APRL EC+MM', 'PIC', 'energy-momentum')]
+    reused = None
+    if previous:
+        previous = Path(previous).resolve()
+        prior = read(previous / 'data/RESULT.json')
+        validation = read(previous / 'VALIDATION.json')
+        need(prior['complete'] and prior['independent_source'] and validation['passed'], 'Unverified baseline')
+        need(prior['methods'] == ['Puffin', 'APRL EC+F3'] and len(prior['rows']) == 12,
+             'Wrong baseline methods')
+        need(prior['input_sha256'] == info['input_sha256'] and prior['source_records'] == plan['sample_records'],
+             'Baseline input differs')
+        need(prior['source_weight'] == info['actual_weight'] and prior['wavelength_m'] == plan['wavelength_m'],
+             'Baseline physical parameters differ')
+        need(prior['fixed_window_relative_to_charge_median_s'] == [float(low), float(high)]
+             and prior['fixed_window_duration_s'] == float(high-low), 'Baseline window differs')
+        for name, digest in validation['hashes'].items():
+            need(sha(previous / 'data' / name) == digest, 'Baseline artifact changed: ' + name)
+        protected = read(previous / 'data/PROTECTED_OUTPUTS.json')
+        for path, before in protected.items():
+            need(identity(path) == before, 'Baseline raw output changed')
+        rows, initial = list(prior['rows']), list(prior['initial'])
+        source_gamma = LD(prior['source_gamma_mean'])
+        methods = methods[2:]
+        reused = dict(directory=str(previous), rows=12, methods=prior['methods'],
+                      result_sha256=sha(previous / 'data/RESULT.json'),
+                      protected_original_outputs=len(protected), baseline_rows_unchanged=True)
+        print('REUSED_VERIFIED_BASELINE', reused, flush=True)
+    else:
+        initial_puffin = dump_at(puffin / 'main', 'electrons', 0)
+        source_gamma = gamma_stats(initial_puffin, 'Puffin', info)
+    for name, kind, case in methods:
+        pic = root / 'six-aprl' / case if case else None
+        if kind == 'Puffin':
+            initial_puffin = dump_at(puffin / 'main', 'electrons', 0)
         pin = initial_puffin if kind == 'Puffin' else pic / 'detectors/und-entry-particles-substeps.h5'
         protected[str(pin)] = identity(pin)
         g0 = gamma_stats(pin, kind, info)
@@ -148,7 +181,7 @@ def main(root, out):
     table(out / 'initial_bunching.csv', initial)
     fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), layout='constrained')
     fig2, ea = plt.subplots(figsize=(7.5, 4.6), layout='constrained')
-    for name, color in [('Puffin', '#2679ae'), ('APRL EC+F3', '#d37b28')]:
+    for name, color in [('Puffin', '#2679ae'), ('APRL EC+F3', '#d37b28'), ('APRL EC+MM', '#57916f')]:
         rr = [r for r in rows if r['method'] == name]
         bb = [r for r in initial if r['method'] == name] + rr
         axes[0].semilogy([r['actual_z_m'] for r in rr], [r['Hann_pm5pct_power_Eproxy_W'] for r in rr],
@@ -175,7 +208,8 @@ def main(root, out):
     save(out / 'RESULT.json', dict(complete=True, physical_acceptance=False, rows=rows, initial=initial,
          closure=closure, source_gamma_mean=str(source_gamma), source_weight=info['actual_weight'],
          input_sha256=info['input_sha256'], fixed_window_relative_to_charge_median_s=[float(low), float(high)],
-         fixed_window_duration_s=float(high-low), methods=['Puffin', 'APRL EC+F3'],
+         fixed_window_duration_s=float(high-low), methods=['Puffin', 'APRL EC+F3', 'APRL EC+MM'],
+         reused_baseline=reused,
          independent_source=True, source_records=plan['sample_records'], wavelength_m=plan['wavelength_m'],
          max_Parseval_relative=max(r['Parseval_relative_error'] for r in rows),
          protected_closed_outputs=len(protected), no_new_physics=True,
