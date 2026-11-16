@@ -1,4 +1,4 @@
-"""Read-only full-ledger review of completed independent-w355 momentum case."""
+"""Read-only full-ledger review of a completed independent-w355 six-segment case."""
 import json
 import sys
 import subprocess
@@ -16,9 +16,9 @@ def save(path, value):
     path.write_text(json.dumps(value, indent=2, allow_nan=False) + '\n')
 
 
-def main(parent, out):
+def main(parent, out, case='energy-momentum'):
     parent, out = Path(parent).resolve(), Path(out).resolve()
-    case = 'energy-momentum'
+    assert case in ['energy-momentum', 'energy-binomial3']
     d = parent / case
     assert json.loads((d / 'aprl.log.launch.json').read_text())['exit_code'] == 0
     assert 'phase=mpi-finalize-complete' in (d / 'aprl.log').read_text()
@@ -72,7 +72,7 @@ def main(parent, out):
     lab.geometry_test(laboratory, binary)
     _, _, physical = lab.analyze_case(parent, laboratory, case, binary)
     unchanged()
-    result = dict(complete=True, physics_job='19796_1', case=case,
+    result = dict(complete=True, physics_job={'energy-momentum':'19796_1', 'energy-binomial3':'19796_0'}[case], case=case,
         independent_random_source=True, no_new_physics=True,
         boost=boost_result, lab_on_boost_slices=numerical, fixed_lab_worldtube=physical,
         original_output_identities_unchanged=len(identities))

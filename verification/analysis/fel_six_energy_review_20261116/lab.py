@@ -200,6 +200,6 @@ def analyze_case(parent,out,case,binary):
         maximum_abs_complete_residual_percent=float(max(abs(r['physical_lab_sum_J']) for r in valid)*100/D),
         maximum_surface_coverage_error=float(max(r['maximum_coverage_relative_error'] for r in rows)),
         numerical_Cowan_terms_added=False,residual_derived_missing_terms=False,physical_acceptance=False,
-        source_scope='Independent w355 source, same events as Puffin19795; only energy-momentum19796_1 analyzed.')
+        source_scope=f'Independent w355 source, same events as Puffin19795; only {case} analyzed.')
     save(o/'LAB_RESULT.json',summary)
     return rows,relative,summary

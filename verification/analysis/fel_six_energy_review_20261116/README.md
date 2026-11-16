@@ -17,3 +17,8 @@ Submit a frozen `scripts` copy through `review.sbatch`, with a separate result
 directory and `PROTECTED_OUTPUTS.json` inode/size/mtime guard. `present.py` makes
 only single-axis standalone figures; the physical and numerical ledgers retain
 different geometries and normalization definitions.
+
+The two-method follow-up can call `review.py PARENT OUTPUT energy-binomial3`
+to analyze the closed three-point case. Omitting the final case argument keeps
+the original momentum-case default. Each case writes to its own result folder;
+the earlier frozen scripts and numerical results remain unchanged.
