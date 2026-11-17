@@ -77,6 +77,15 @@ def validate(root):
     assert len(rendering['figures'])==figure_count and len(rendering['videos'])==4
     for v in rendering['figures']+rendering['videos']:assert sha(root/v['path'])==v['sha256']
     assert rendering['arrays_sha256']==sha(data/'visual_arrays.npz')
+    if (root/'PRESENTATION.json').is_file():
+        assert rendering['title_and_plot_only']
+        assert len(rendering['background_figures'])==10
+        for v in rendering['background_figures']:assert sha(root/v['path'])==v['sha256']
+        prior_visual=json.loads((root/'metadata/VISUAL_REVISION_SOURCE.json').read_text())
+        assert sha(prior_visual['previous_zip'])==prior_visual['previous_zip_sha256']
+        for path,hsh in prior_visual['data_hashes'].items():assert sha(root/path)==hsh,path
+        assert sha(root/'SUMMARY.json')==prior_visual['summary_sha256']
+        for v in rendering['videos']:assert (v['width'],v['height'])==(1280,720)
     assets=list(csv.DictReader((root/'PPT_ASSET_MAP.csv').open()))
     for r in assets:
         assert (root/r['asset']).is_file()
@@ -99,6 +108,9 @@ def validate(root):
        video_source_frames_and_scales='61 native source frames in order; fixed linear/log scales, no per-frame normalization.',
        no_new_physical_simulation=True,production_FEL_impact_not_measured=True,
        PDFs_same_source_not_separately_rendered=True)
+    if (root/'PRESENTATION.json').is_file():
+        result.update(title_and_plot_only=True,all_scientific_data_files_byte_identical_to_previous=True,
+            background_figures=10,axes_colorbars_legends_annotations_and_footers_removed=True)
     if not selected:result['periodic_image_check']=s['periodic_image_validation']
     save(root/'VALIDATION.json',result);return result
 
@@ -106,7 +118,9 @@ def package(root):
     root=Path(root).resolve();validate(root)
     assert json.loads((root/'VISUAL_REVIEW.json').read_text())['complete']
     target=root.with_suffix('.zip');assert not target.exists()
-    paths=[p for p in root.rglob('*') if p.is_file() and p.name not in ['PACKAGE.json','SHA256SUMS']]
+    minimal=(root/'PRESENTATION.json').is_file()
+    paths=[p for p in root.rglob('*') if p.is_file() and p.name not in ['PACKAGE.json','SHA256SUMS']
+           and not (minimal and 'visual_review' in p.parts)]
     manifest={str(p.relative_to(root)):sha(p) for p in sorted(paths)}
     (root/'SHA256SUMS').write_text(''.join(v+'  '+k+'\n' for k,v in manifest.items()))
     with zipfile.ZipFile(target,'x',zipfile.ZIP_DEFLATED,compresslevel=6) as z:

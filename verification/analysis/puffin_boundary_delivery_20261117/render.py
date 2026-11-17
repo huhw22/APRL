@@ -19,6 +19,7 @@ BLUE='#1769a0';ORANGE='#cf661f';GREEN='#308367'
 def main(root,mode='all'):
     root=Path(root);s=json.loads((root/'SUMMARY.json').read_text())
     selected=(root/'SELECTION.json').is_file()
+    minimal=(root/'PRESENTATION.json').is_file()
     d=np.load(root/'data/visual_arrays.npz');z=d['snapshot_z_m'];xz=d['z_m'];x=d['x_m']*1e6
     a=np.genfromtxt(root/'data/comparison.csv',names=True,delimiter=',',dtype=None,encoding='utf-8')
     h=np.genfromtxt(root/'data/history.csv',names=True,delimiter=',',dtype=None,encoding='utf-8')
@@ -46,7 +47,8 @@ def main(root,mode='all'):
         fig.canvas.draw();ren=fig.canvas.get_renderer()
         texts=list(fig.texts)
         for ax in fig.axes:
-            texts += [ax.title,ax.xaxis.label,ax.yaxis.label]
+            texts.append(ax.title)
+            if ax.axison:texts += [ax.xaxis.label,ax.yaxis.label]
             if ax.get_legend():texts+=list(ax.get_legend().texts)
         for obj in texts:
             assert '$' not in obj.get_text(),obj.get_text()
@@ -64,6 +66,9 @@ def main(root,mode='all'):
               '06_native_return_zoom':'05_native_return_zoom','07_interior_field_feedback':'06_interior_field_feedback',
               '08_reverse_x_modes':'07_reverse_x_modes','09_native_return_xy':'08_native_return_xy',
               '10_reference_xy':'09_reference_xy','11_central_error_xy':'10_central_error_xy'}.get(name,name)
+        if minimal:
+            from style_clean import clean_figure
+            clean_figure(fig)
         check_bounds(fig);fig.savefig(out/(name+'.png'),dpi=150);fig.savefig(out/(name+'.pdf'))
         plots.append(dict(path=str((out/(name+'.png')).relative_to(root)),sha256=sha(out/(name+'.png'))))
         plt.close(fig)
@@ -190,6 +195,9 @@ def main(root,mode='all'):
                 'Linear scale: watch the main beam disappear' if view=='linear' else 'Fixed log scale: reveal the weak returning field')
             footer(fig,mode_label+('；同一尺度、无逐帧缩放；无粒子；只测试横向边界。' if zh else '; one common scale, no per-frame rescaling; no particles, transverse boundaries only.'))
             path=out/('native_propagation_'+view+'.mp4')
+            if minimal:
+                from style_clean import clean_figure
+                clean_figure(fig)
             writer=FFMpegWriter(fps=5,codec='libx264',bitrate=2600,extra_args=['-pix_fmt','yuv420p','-threads','2'])
             with writer.saving(fig,str(path),100):
                 for i,zz in enumerate(z):
@@ -211,9 +219,13 @@ def main(root,mode='all'):
             assert int(probe['nb_frames'])==61 and abs(float(probe['duration'])-12.2)<1e-5
             videos.append(dict(path=str(path.relative_to(root)),sha256=sha(path),**probe,view=view,actual_native_frames=True,per_frame_rescaling=False))
             print('VIDEO',lang,view,flush=True)
-    save(root/'RENDER_VALIDATION.json',dict(complete=True,figures=plots,videos=videos,
+    backgrounds=[]
+    if minimal:
+        from style_clean import render_background
+        backgrounds=render_background(root)
+    save(root/'RENDER_VALIDATION.json',dict(complete=True,figures=plots,videos=videos,background_figures=backgrounds,
       arrays_sha256=sha(root/'data/visual_arrays.npz'),plain_numeric_log_ticks=True,
       physical_cell_pixel_edges_checked=True,figure_title_axis_legend_and_footer_bounds_checked=True,
-      PDFs_same_source_not_separately_rendered=True))
+      title_and_plot_only=minimal,PDFs_same_source_not_separately_rendered=True))
 
 if __name__=='__main__':main(*sys.argv[1:])
