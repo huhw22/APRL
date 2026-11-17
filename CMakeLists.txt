@@ -362,7 +362,7 @@ if(HAVE_ELEGANT_SDDS_CONVERTER)
 endif()
 install(PROGRAMS utilities/crop_elegant_hdf5.py DESTINATION bin)
 
-install(FILES README.md README.zh-CN.md VERSION DESTINATION share/aprl)
+install(FILES README.md README.zh-CN.md VERSION LICENSE DESTINATION share/aprl)
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/SOURCE_REVISION" DESTINATION share/aprl)
 install(DIRECTORY docs config examples
   DESTINATION share/aprl)
