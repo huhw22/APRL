@@ -34,7 +34,10 @@ option(APRL_PORTABLE_INSTALL
 option(APRL_ENABLE_OPENMP
   "Enable optional compute threading (runtime default remains one thread)" ON)
 option(APRL_ENABLE_MOVING_WINDOW
-  "Build the optional longitudinal moving window and blocked Cowan reference" OFF)
+  "Build the moving window required by both APRL 2.0 coupling algorithms" ON)
+if(NOT APRL_ENABLE_MOVING_WINDOW)
+  message(FATAL_ERROR "APRL 2.0 requires APRL_ENABLE_MOVING_WINDOW=ON for its two supported algorithms")
+endif()
 option(DIRECT_EB_BOUNDS_CHECK
   "Check Yee lattice indices consistently in the core and its consumers" OFF)
 

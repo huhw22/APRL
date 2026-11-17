@@ -36,6 +36,10 @@ mesh:
   self_field_feedback: true
 ```
 
+Both algorithms require the Cowan moving window, its matched reference supply,
+held fixed-plane HDF5 input and self-field feedback. Legacy fixed-grid/Boris
+cards and checkpoint/retirement routes are not supported production inputs.
+
 These are algorithm settings, not a complete beamline card. Start from
 [config/example.yaml](config/example.yaml), set the actual beam, mesh, magnets
 and diagnostics, and use `aprl --version` to confirm the installed version.
@@ -215,7 +219,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++ -DBUILD_TESTING=ON
 cmake --build build -j
 cmake --build build --target verify_required
-./build/aprl config/example.yaml
+mkdir demo-2.0
+cp config/example.yaml demo-2.0/run.yaml
+./build/uniform_lab_plane_bunch_generator --output demo-2.0/particles.h5 \
+  --length-m 1e-6 --current-A 0.001 --central-momentum-MeV-c 2 \
+  --emit-x-m 1e-12 --emit-y-m 1e-12 --beta-x-m 1 --beta-y-m 1 --sigma-dp 0
+(cd demo-2.0 && ../build/aprl run.yaml)
 ```
 
 Parallel HDF5 is required by default for multi-rank particle input. Complete

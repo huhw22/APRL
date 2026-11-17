@@ -1,134 +1,72 @@
-# HDF5 production-input example. Lengths and times below use the global units;
-# the particle HDF5 file itself always stores positions in SI metres.
-units:
-  length: micrometer
-  time: picosecond
-
-# Supercomputer path: no signal polling and no periodic durability flushes.
-runtime:
-  mode: throughput
-  # Teardown-only protection; it never times the physical loop or HDF5 close.
-  shutdown_watchdog:
-    enabled: true
-    timeout_seconds: 600
-    finalize_timeout_seconds: 60
-  resource_monitor:
-    enabled: true
-    progress_interval_steps: 1000
-    calibration_steps: 1
-    memory_safety_factor: 1.25
-    time_safety_factor: 1.25
-
-output:
-  # Existing scientific output is protected unless replacement is explicit.
-  overwrite: false
-  manifest: output/run-manifest.yaml
-
+# APRL 2.0 minimal moving-window bending example (not a convergence card).
+# Generate particles.h5 in the same directory; see README quick start.
+units: {length: micrometer, time: femtosecond}
+runtime: {mode: throughput, resource_monitor: {enabled: false}}
+output: {overwrite: false, manifest: output/example/run-manifest.yaml}
 mesh:
-  # z-priority Cowan/CKC stencil; use yee only for regression runs.
-  field_solver: cowan-z
-  # APRL 2.0 preferred baseline: energy-conserving coupling + three-point kernel.
   particle_coupling: conservative-source
   longitudinal_shape: linear-binomial3
   self_field_feedback: true
-  # Experimental PIC source treatment. Use compensated-bilinear only for a
-  # paired filtered/unfiltered convergence campaign; none is the default.
+  field_solver: cowan-z
   current_filter: none
-  cells: [40, 40, 60]
-  cell_size: [1.0, 1.0, 0.2]
-  center: [0.0, 0.0, 0.0]
-  duration: 0.01
-  boost_gamma: 2.0
-  # Smoke-test minimum only; production high-harmonic cards need much more.
-  particle_steps_per_undulator_period: 1
+  cells: [40, 40, 256]
+  cell_size: [5, 5, 1]
+  center: [0, 0, 0]
+  duration: 100
+  boost_gamma: 2
+  particle_steps_per_undulator_period: 32
   maximum_particle_substeps: 4096
-
-# Optional production preflight for the shortest laboratory wavelength of
-# interest. Flip enabled to true after setting the intended EUV upper energy.
-radiation_resolution:
-  enabled: false
-  maximum_photon_energy_eV: 124.0
-  warning_grid_points_per_wavelength: 8.0
-  warning_maxwell_samples_per_cycle: 8.0
-  warning_detector_samples_per_cycle: 8.0
-
+  moving_window:
+    enabled: true
+    cells: 96
+    lower_guard_cells: 8
+    upper_guard_cells: 16
+    block_layers: 16
+    reference_directory: "output/example/reference"
+    reference_surface_current: true
+    inlet_charge_match: true
 boundary:
   type: cpml
-  cells: [8, 8, 8]
-  polynomial_order: 3.0
+  cells: [4, 4, 0]
+  polynomial_order: 3
   target_reflection: 1.0e-8
-  kappa_max: 8.0
-  alpha_fraction: 0.0
-
+  kappa_max: 8
+  alpha_fraction: 0
 initial_self_field:
   enabled: true
-  model: relativistic-poisson
-  relative_tolerance: 1.0e-10
-  maximum_mean_transverse_beta: 1.0e-8
-  maximum_iterations: 10000
-
+  model: cowan-relativistic-poisson
+  maximum_mean_transverse_beta: 0.01
 beam:
   reference:
-    # Absolute coordinates shared with the Elegant lattice. HDF5-v3 offsets
-    # or v4 arrival-time events are sampled at input_plane_z and are advanced
-    # only forward to the common-time reference at initial_center_z.
-    input_plane_z: -2.0
-    initial_center_z: -1.8
+    input_plane_z: 0
+    initial_center_z: 0.2
+    frozen_lab_plane_injection: true
+    hold_transverse_until_activation: true
+    activation_plane_z: 0
   input:
     type: hdf5
-    file: ../examples/particles/example_particles.h5
-    electrons: 4.0
-    position_offset: [0.0, 0.0, 0.0]
-
+    file: "particles.h5"
+    electrons: 21
+    position_offset: [0, 0, 0]
 sources:
   incident_waves: []
   magnetic_elements:
-    - type: planar-undulator
-      characteristic: true
-      strength_parameter: 0.1
-      period: 1.0
-      periods: 1
-      entrance_z: 0.0
-      polarization_angle_rad: 0.0
-      gaussian_fringe: true
-      fringe_relative_cutoff: 1.0e-9
-
-# Both planes are zero-length laboratory-frame beamline elements.  Omit this
-# block (or set enabled: false) to allocate no detector buffers or file handles.
+    - {type: uniform-dipole, entrance_z: 0.5, length: 1, field_T: 0.1,
+       polarization_angle_rad: 0}
 detectors:
   enabled: true
   directory: output/example/detectors
   field_planes:
-    - name: exit-fields
-      z: 2.5
-      rhythm: 0.002
-      buffer_samples: 2
-      compression: 0
-      # This deliberately tiny I/O smoke-test box has no room for the
-      # gamma*rho free-drift reference region. Production radiation cards
-      # should enable this block and place the detector farther downstream.
-      particle_background:
-        enabled: false
-        buffer_records: 16384
-        compression: 0
-        validation:
-          enabled: false
-          maximum_particles: 100000
+    - {name: field, z: 5, rhythm: 0.1, buffer_samples: 4, compression: 0}
   particle_planes:
-    - name: exit-particles
-      z: 2.5
-      buffer_records: 4096
-      compression: 0
-
-stop:
-  mode: after-last-element
-
-trajectory:
-  # Full histories are a small-particle/debug path, not a production default.
-  enabled: false
-  directory: output/example
-  basename: particles
-  rhythm: 0.002
-  buffer_records: 64
-  flush_every_samples: 1
+    - {name: particles, z: 5, buffer_records: 32, compression: 0}
+stop: {mode: reference-center-z, z: 10}
+trajectory: {enabled: false}
+energy_ledger:
+  enabled: true
+  directory: output/example/ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 1
+  buffer_records: 4
   compression: 0
+  warning_relative_tolerance: 1.0e-6

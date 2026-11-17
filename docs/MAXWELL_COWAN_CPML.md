@@ -57,15 +57,13 @@ Reference: B. M. Cowan et al., [Generalized algorithm for control of numerical
 dispersion in explicit time-domain electromagnetic
 simulations](https://doi.org/10.1103/PhysRevSTAB.16.041303), 2013.
 
-## Optional deposited-current filter
+## Deposited-current filter policy in 2.0
 
-The experimental `mesh.current_filter: compensated-bilinear` path is not part
-of the Cowan curl above. It filters all three deposited current components
-before Ampere's update with a separable compensated bilinear stencil. See the
-[YAML specification](YAML_CONFIGURATION.md#mesh-and-boost) for its exact
-transfer function and validation requirements. It is default-off because it
-changes the particle source seen by the field solve; radiation and energy
-closure must be compared with an otherwise identical unfiltered run.
+The installed solver accepts only `mesh.current_filter: none`. The retired
+`compensated-bilinear` filter remains a mathematical unit-test reference; it
+is not a user algorithm. Choose `longitudinal_shape: linear-binomial3` for
+the three-point coupling kernel. See the
+[YAML specification](YAML_CONFIGURATION.md#mesh-and-boost).
 
 ## CFS-CPML coupling
 

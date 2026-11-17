@@ -17,7 +17,7 @@ Options:
   --prefix DIR          dependency/runtime prefix (default: ./aprl-runtime)
   --build-dir DIR       disposable dependency build tree
   --cache-dir DIR       verified download cache
-  --profile core|full   full additionally builds FFTW3 + threads
+  --profile core|full   both include FFTW3; full adds post-processors
   --jobs N              parallel build jobs
   --mpi-cc COMMAND      platform MPI C wrapper (default: derive from mpic++)
   --mpi-cxx COMMAND     platform MPI C++ wrapper (default: $MPICXX or mpic++)
@@ -200,7 +200,7 @@ cmake=$cmake_version
 yaml_cpp=$yaml_cpp_version
 zlib=$zlib_version
 hdf5=$hdf5_version
-fftw=$([[ "$profile" == "full" ]] && echo "$fftw_version" || echo disabled)
+fftw=$fftw_version
 mpich=$($bundle_mpi && echo "$mpich_version" || echo disabled)
 EOF
 
@@ -672,7 +672,8 @@ if [[ ! -f "$hdf5_marker" || ! -e "$prefix/lib/libhdf5.so" ||
   : > "$hdf5_marker"
 fi
 
-if [[ "$profile" == "full" ]]; then
+# Both 2.0 algorithms require the moving-reference FFTW library.
+{
   fftw_effective_cflags="${APRL_FFTW_CFLAGS:--O3 -fomit-frame-pointer}"
   fftw_build_identity="$(printf '%s\n%s\n%s\n' \
     "$fftw_sha256" "$toolchain_identity" "$fftw_effective_cflags" | sha256_text)"
@@ -708,7 +709,7 @@ if [[ "$profile" == "full" ]]; then
       ! -name "$(basename -- "$fftw_marker")" -delete
     : > "$fftw_marker"
   fi
-fi
+}
 
 runtime_env="$prefix/share/aprl/runtime-env.sh"
 cat > "$runtime_env" <<'EOF'
@@ -746,7 +747,7 @@ zlib_sha256=$zlib_sha256
 hdf5_version=$hdf5_version
 hdf5_url=$hdf5_url
 hdf5_sha256=$hdf5_sha256
-fftw_version=$([[ "$profile" == "full" ]] && echo "$fftw_version" || echo disabled)
+fftw_version=$fftw_version
 fftw_url=$fftw_url
 fftw_sha256=$fftw_sha256
 mpi_provider=$($bundle_mpi && echo bundled-mpich || echo platform)

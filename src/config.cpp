@@ -712,10 +712,18 @@ namespace aprl
       currentFilter(EBCurrentFilter::None),
       selfFieldFeedback(true),
       oneWaySourceDiagnostic(false),
+#ifdef APRL_INTERNAL_REFERENCE_ALGORITHMS
+      conservativeSourceCoupling(false),
+#else
       conservativeSourceCoupling(true),
+#endif
       longitudinalQuintic(false),
       longitudinalNotch(false),
+#ifdef APRL_INTERNAL_REFERENCE_ALGORITHMS
+      longitudinalBinomial3(false),
+#else
       longitudinalBinomial3(true),
+#endif
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -1055,6 +1063,19 @@ namespace aprl
         if(b.minimumCells<2 || b.minimumImprovement<0 || b.minimumImprovement>=1 || b.frozenWeight<0 || b.fieldCellWeight<0)
           throw configError(balance,"mpi_particle_balance needs minimum_cells>=2, improvement in [0,1), and nonnegative weights");
       }
+#ifdef APRL_INTERNAL_REFERENCE_ALGORITHMS
+    // Compiled only into non-installed regression executables, never aprl.
+    if (mesh["particle_coupling"])
+      result.mesh.conservativeSourceCoupling =
+        mesh["particle_coupling"].as<std::string>() == "conservative-source";
+    if (mesh["longitudinal_shape"])
+      {
+        const std::string shape = mesh["longitudinal_shape"].as<std::string>();
+        result.mesh.longitudinalQuintic = shape == "quintic-compensated";
+        result.mesh.longitudinalNotch = shape == "linear-notch";
+        result.mesh.longitudinalBinomial3 = shape == "linear-binomial3";
+      }
+#else
     // The installed solver exposes exactly two validated coupling choices.
     // Low-level reference kernels remain available to unit tests, never as
     // an input-card fallback or a switch on the production executable.
@@ -1075,6 +1096,7 @@ namespace aprl
         result.mesh.longitudinalQuintic = shape == "quintic-compensated";
         result.mesh.longitudinalBinomial3 = shape == "linear-binomial3";
       }
+#endif
 
     if (movingWindow)
       {
@@ -1208,11 +1230,13 @@ namespace aprl
     result.mesh.fieldSolver = fieldSolver(required(mesh, "field_solver"));
     result.mesh.currentFilter = mesh["current_filter"] ?
       currentFilter(mesh["current_filter"]) : EBCurrentFilter::None;
+#ifndef APRL_INTERNAL_REFERENCE_ALGORITHMS
     if (result.mesh.currentFilter != EBCurrentFilter::None)
       throw configError(mesh["current_filter"],
         "APRL 2.0 requires current_filter: none; select the three-point "
         "kernel with longitudinal_shape: linear-binomial3 instead of "
         "applying a separate current filter.");
+#endif
     if(result.mesh.movingWindow.inletChargeMatch&&result.mesh.currentFilter!=EBCurrentFilter::None)
       throw configError(mesh["current_filter"],"inlet_charge_match requires unfiltered current");
     if (result.mesh.currentFilter != EBCurrentFilter::None &&

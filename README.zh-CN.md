@@ -33,6 +33,9 @@ mesh:
   self_field_feedback: true
 ```
 
+两种算法均要求Cowan移动窗、配套参考供场、held固定面HDF5输入和自场反馈；
+旧固定网格/Boris卡，以及checkpoint/退休路线不属于本版正式输入。
+
 上面只是算法设置；完整工况从[示例卡](config/example.yaml)开始，按实际束流设置网格、磁铁和探测器。
 使用 `aprl --version` 确认程序版本，使用 `aprl --help` 查看这两个选项。
 
@@ -171,7 +174,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++ -DBUILD_TESTING=ON
 cmake --build build -j
 cmake --build build --target verify_required
-./build/aprl config/example.yaml
+mkdir demo-2.0
+cp config/example.yaml demo-2.0/run.yaml
+./build/uniform_lab_plane_bunch_generator --output demo-2.0/particles.h5 \
+  --length-m 1e-6 --current-A 0.001 --central-momentum-MeV-c 2 \
+  --emit-x-m 1e-12 --emit-y-m 1e-12 --beta-x-m 1 --beta-y-m 1 --sigma-dp 0
+(cd demo-2.0 && ../build/aprl run.yaml)
 ```
 
 多 rank 粒子输入默认要求 parallel HDF5。完整依赖、安装和集群运行流程见下列说明。

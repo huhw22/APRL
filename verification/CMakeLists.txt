@@ -1,6 +1,12 @@
 add_executable(aprl_boris_work_checks boris_work_checks.cpp)
 add_executable(aprl_algorithm_policy_checks algorithm_policy_checks.cpp)
 target_link_libraries(aprl_algorithm_policy_checks PRIVATE direct_eb_core)
+add_library(aprl_reference_config OBJECT ../src/config.cpp)
+target_link_libraries(aprl_reference_config PRIVATE direct_eb_core)
+target_compile_definitions(aprl_reference_config PRIVATE APRL_INTERNAL_REFERENCE_ALGORITHMS=1)
+add_executable(aprl_reference_checks ../src/main.cpp)
+target_compile_definitions(aprl_reference_checks PRIVATE APRL_VERSION="2.0.0-internal-reference")
+target_link_libraries(aprl_reference_checks PRIVATE direct_eb_core)
 add_executable(aprl_energy_plane_checks energy_plane_checks.cpp)
 foreach(target aprl_boris_work_checks aprl_energy_plane_checks)
   target_link_libraries(${target} PRIVATE direct_eb_core)
@@ -287,26 +293,33 @@ file(MAKE_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-policy"
   "${APRL_VERIFY_WORK}/algorithm-three-point"
   "${APRL_VERIFY_WORK}/algorithm-momentum-matching")
 aprl_required_test(required.algorithms.policy
-  $<TARGET_FILE:aprl_algorithm_policy_checks> "${APRL_VERIFY_CARDS}/runtime-smoke.yaml")
+  $<TARGET_FILE:aprl_algorithm_policy_checks> "${CMAKE_CURRENT_BINARY_DIR}/algorithm-policy.yaml")
 set_tests_properties(required.algorithms.policy PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-policy")
-file(READ "${APRL_VERIFY_CARDS}/runtime-smoke.yaml" APRL_ALGORITHM_SMOKE)
-string(REPLACE "mesh:\n" "mesh:\n  longitudinal_shape: quintic-compensated\n"
-  APRL_MOMENTUM_SMOKE "${APRL_ALGORITHM_SMOKE}")
-file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/momentum-matching-smoke.yaml" "${APRL_MOMENTUM_SMOKE}")
-aprl_required_test(required.algorithms.three-point-smoke
-  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/runtime-smoke.yaml")
-set_tests_properties(required.algorithms.three-point-smoke PROPERTIES
-  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-three-point")
-aprl_required_test(required.algorithms.momentum-matching-smoke
-  $<TARGET_FILE:aprl> "${CMAKE_CURRENT_BINARY_DIR}/momentum-matching-smoke.yaml")
-set_tests_properties(required.algorithms.momentum-matching-smoke PROPERTIES
-  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-momentum-matching")
+set(PARTICLE_FILE "${APRL_VERIFY_WORK}/algorithm-policy/particles.h5")
+set(REFERENCE_DIR "${APRL_VERIFY_WORK}/algorithm-policy/reference")
+set(ALGORITHM "")
+configure_file("${APRL_VERIFY_CARDS}/release-algorithm.yaml.in"
+  "${CMAKE_CURRENT_BINARY_DIR}/algorithm-policy.yaml" @ONLY)
+set_tests_properties(required.algorithms.policy PROPERTIES
+  # Production parser, with an otherwise valid moving-window card.
+  REQUIRED_FILES "${CMAKE_CURRENT_BINARY_DIR}/algorithm-policy.yaml")
+foreach(pair "three-point|linear-binomial3" "momentum-matching|quintic-compensated")
+  string(REPLACE "|" ";" fields "${pair}")
+  list(GET fields 0 name)
+  list(GET fields 1 shape)
+  aprl_required_test(required.algorithms.${name}-smoke
+    ${CMAKE_COMMAND} "-DAPRL=$<TARGET_FILE:aprl>"
+      "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
+      "-DCARD=${APRL_VERIFY_CARDS}/release-algorithm.yaml.in"
+      "-DWORK=${APRL_VERIFY_WORK}/algorithm-${name}" "-DSHAPE=${shape}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/check_release_algorithm.cmake")
+endforeach()
 aprl_required_test(required.cli.version $<TARGET_FILE:aprl> --version)
 set_tests_properties(required.cli.version PROPERTIES PASS_REGULAR_EXPRESSION "APRL 2\\.0\\.0")
 
 add_test(NAME required.runtime.smoke
-  COMMAND $<TARGET_FILE:aprl>
+  COMMAND $<TARGET_FILE:aprl_reference_checks>
           "${APRL_VERIFY_CARDS}/runtime-smoke.yaml")
 set_tests_properties(required.runtime.smoke PROPERTIES
   LABELS "required;smoke"
@@ -316,7 +329,7 @@ set_tests_properties(required.runtime.smoke PROPERTIES
 
 add_test(NAME required.runtime.teardown-trace
   COMMAND ${CMAKE_COMMAND}
-          "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl>"
+          "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl_reference_checks>"
           "-DTRACE_CARD=${APRL_VERIFY_CARDS}/runtime-smoke.yaml"
           "-DTRACE_WORK=${APRL_VERIFY_WORK}/teardown"
           -P "${CMAKE_CURRENT_BINARY_DIR}/check_teardown_trace.cmake")
@@ -337,7 +350,7 @@ set_tests_properties(required.runtime.shutdown-watchdog PROPERTIES
 if(TARGET aprl_duration_close_delay)
   add_test(NAME required.runtime.duration-close
     COMMAND ${CMAKE_COMMAND}
-      "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl>"
+      "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl_reference_checks>"
       "-DDURATION_DELAY_LIBRARY=$<TARGET_FILE:aprl_duration_close_delay>"
       "-DOUTPUT_CHECKER=$<TARGET_FILE:aprl_output_checks>"
       "-DDURATION_CARD=${APRL_VERIFY_CARDS}/duration-close.yaml"
@@ -348,7 +361,7 @@ if(TARGET aprl_duration_close_delay)
 
   add_test(NAME required.runtime.duration-barrier-watchdog
     COMMAND ${CMAKE_COMMAND}
-      "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl>"
+      "-DAPRL_EXECUTABLE=$<TARGET_FILE:aprl_reference_checks>"
       "-DMPI_FAULT_LIBRARY=$<TARGET_FILE:aprl_duration_barrier_fault>"
       "-DOUTPUT_CHECKER=$<TARGET_FILE:aprl_output_checks>"
       "-DDURATION_CARD=${APRL_VERIFY_CARDS}/duration-close.yaml"
@@ -382,7 +395,7 @@ set_tests_properties(required.frozen-plane.free-drift-mpi PROPERTIES
 aprl_required_mpi_test(required.frozen-plane.activation-slab-transfer
   ${CMAKE_COMMAND}
   "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
-  "-DAPRL=$<TARGET_FILE:aprl>"
+  "-DAPRL=$<TARGET_FILE:aprl_reference_checks>"
   "-DMPIEXEC=${MPIEXEC_EXECUTABLE}"
   "-DMPIEXEC_NUMPROC_FLAG=${MPIEXEC_NUMPROC_FLAG}"
   "-DCARD=${CMAKE_CURRENT_BINARY_DIR}/frozen-mpi-release.yaml"
@@ -476,7 +489,7 @@ if(APRL_BUILD_SASE_BUNCH_GENERATOR)
 endif()
 
 aprl_required_test(required.detector-stop.run
-  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/detector-stop.yaml")
+  $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/detector-stop.yaml")
 set_tests_properties(required.detector-stop.run PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/detector")
 
@@ -489,19 +502,19 @@ set_tests_properties(required.detector-stop.check PROPERTIES
   DEPENDS required.detector-stop.run)
 
 aprl_required_test(required.stop.invalid-empty-beamline
-  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/invalid-empty-stop.yaml")
+  $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/invalid-empty-stop.yaml")
 set_tests_properties(required.stop.invalid-empty-beamline PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/invalid-stop"
   WILL_FAIL TRUE)
 
 aprl_required_test(required.yaml.unknown-key
-  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/invalid-unknown-key.yaml")
+  $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/invalid-unknown-key.yaml")
 set_tests_properties(required.yaml.unknown-key PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/invalid-key"
   WILL_FAIL TRUE)
 
 aprl_required_test(required.runtime.shutdown-watchdog-invalid-timeout
-  $<TARGET_FILE:aprl>
+  $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/invalid-shutdown-watchdog.yaml")
 set_tests_properties(
   required.runtime.shutdown-watchdog-invalid-timeout PROPERTIES
@@ -509,7 +522,7 @@ set_tests_properties(
   WILL_FAIL TRUE)
 
 aprl_required_test(required.runtime.shutdown-watchdog-invalid-finalize-timeout
-  $<TARGET_FILE:aprl>
+  $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/invalid-shutdown-watchdog-finalize.yaml")
 set_tests_properties(
   required.runtime.shutdown-watchdog-invalid-finalize-timeout PROPERTIES
@@ -521,13 +534,13 @@ aprl_required_test(required.output-safety.cleanup
   "${APRL_VERIFY_WORK}/output-safety/protected-manifest.yaml")
 
 aprl_required_test(required.output-safety.first-run
-  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/output-safety.yaml")
+  $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/output-safety.yaml")
 set_tests_properties(required.output-safety.first-run PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/output-safety"
   DEPENDS required.output-safety.cleanup)
 
 aprl_required_test(required.output-safety.refuses-overwrite
-  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/output-safety.yaml")
+  $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/output-safety.yaml")
 set_tests_properties(required.output-safety.refuses-overwrite PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/output-safety"
   DEPENDS required.output-safety.first-run
@@ -535,14 +548,14 @@ set_tests_properties(required.output-safety.refuses-overwrite PROPERTIES
 
 aprl_required_mpi_test(required.mpi.one-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/mpi-consistency.yaml" ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.mpi.one-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/mpi-one")
 
 aprl_required_mpi_test(required.ballistic-boundary-injection
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/ballistic-boundary-injection.yaml"
   ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.ballistic-boundary-injection PROPERTIES
@@ -551,7 +564,7 @@ set_tests_properties(required.ballistic-boundary-injection PROPERTIES
 
 aprl_required_mpi_test(required.ballistic-boundary-injection-two-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/ballistic-boundary-injection.yaml"
   ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.ballistic-boundary-injection-two-rank PROPERTIES
@@ -569,7 +582,7 @@ set_tests_properties(required.ballistic-boundary-ledger PROPERTIES
 
 aprl_required_mpi_test(required.ballistic-boundary-mixed-poisson
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/ballistic-boundary-mixed.yaml"
   ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.ballistic-boundary-mixed-poisson PROPERTIES
@@ -578,7 +591,7 @@ set_tests_properties(required.ballistic-boundary-mixed-poisson PROPERTIES
 
 aprl_required_mpi_test(required.ballistic-boundary-cpml-initial
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/ballistic-boundary-cpml-initial.yaml"
   ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.ballistic-boundary-cpml-initial PROPERTIES
@@ -587,7 +600,7 @@ set_tests_properties(required.ballistic-boundary-cpml-initial PROPERTIES
 
 aprl_required_mpi_test(required.ballistic-boundary-cpml-initial-two-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/ballistic-boundary-cpml-initial.yaml"
   ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.ballistic-boundary-cpml-initial-two-rank PROPERTIES
@@ -596,7 +609,7 @@ set_tests_properties(required.ballistic-boundary-cpml-initial-two-rank PROPERTIE
 
 aprl_required_mpi_test(required.mpi.two-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/mpi-consistency.yaml" ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.mpi.two-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/mpi-two")
@@ -610,14 +623,14 @@ set_tests_properties(required.mpi.compare PROPERTIES
 
 aprl_required_mpi_test(required.auto-z.one-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/auto-longitudinal.yaml" ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.auto-z.one-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/auto-z-one")
 
 aprl_required_mpi_test(required.auto-z.two-rank
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/auto-longitudinal.yaml" ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.auto-z.two-rank PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/auto-z-two")
@@ -635,14 +648,14 @@ set_tests_properties(required.auto-z.rank-independent PROPERTIES
 
 aprl_required_mpi_test(required.auto-z.reference-center
   ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 1
-  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl>
+  ${MPIEXEC_PREFLAGS} $<TARGET_FILE:aprl_reference_checks>
   "${APRL_VERIFY_CARDS}/auto-longitudinal-reference.yaml"
   ${MPIEXEC_POSTFLAGS})
 set_tests_properties(required.auto-z.reference-center PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/auto-z-reference")
 
 aprl_required_test(required.energy-ledger-k0.run
-  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/energy-ledger-k0.yaml")
+  $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/energy-ledger-k0.yaml")
 set_tests_properties(required.energy-ledger-k0.run PROPERTIES
   WORKING_DIRECTORY "${APRL_VERIFY_WORK}/ledger")
 
@@ -662,12 +675,12 @@ if(APRL_BUILD_POSTPROCESSORS)
   endforeach()
 
   aprl_required_test(required.postprocess.signal-run
-    $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/postprocess-run.yaml")
+    $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/postprocess-run.yaml")
   set_tests_properties(required.postprocess.signal-run PROPERTIES
     WORKING_DIRECTORY "${APRL_VERIFY_WORK}/postprocess/signal")
 
   aprl_required_test(required.postprocess.baseline-run
-    $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/postprocess-run.yaml")
+    $<TARGET_FILE:aprl_reference_checks> "${APRL_VERIFY_CARDS}/postprocess-run.yaml")
   set_tests_properties(required.postprocess.baseline-run PROPERTIES
     WORKING_DIRECTORY "${APRL_VERIFY_WORK}/postprocess/baseline")
 
@@ -691,7 +704,7 @@ if(APRL_BUILD_POSTPROCESSORS)
     DEPENDS "required.postprocess.signal-run;required.postprocess.baseline-run")
 
   aprl_required_test(required.postprocess.ballistic-run
-    $<TARGET_FILE:aprl>
+    $<TARGET_FILE:aprl_reference_checks>
     "${APRL_VERIFY_CARDS}/postprocess-ballistic-run.yaml")
   set_tests_properties(required.postprocess.ballistic-run PROPERTIES
     WORKING_DIRECTORY "${APRL_VERIFY_WORK}/postprocess/ballistic")
@@ -747,7 +760,7 @@ endif()
 
 if(APRL_ENABLE_PHYSICS_ANALYSIS)
   add_test(NAME analysis.energy-budget.k0
-    COMMAND $<TARGET_FILE:aprl>
+    COMMAND $<TARGET_FILE:aprl_reference_checks>
             "${APRL_VERIFY_CARDS}/physics-energy-k0.yaml")
   set_tests_properties(analysis.energy-budget.k0 PROPERTIES
     LABELS "physics;analysis"
@@ -755,7 +768,7 @@ if(APRL_ENABLE_PHYSICS_ANALYSIS)
     TIMEOUT 120)
 
   add_test(NAME analysis.energy-budget.signal
-    COMMAND $<TARGET_FILE:aprl>
+    COMMAND $<TARGET_FILE:aprl_reference_checks>
             "${APRL_VERIFY_CARDS}/physics-energy-signal.yaml")
   set_tests_properties(analysis.energy-budget.signal PROPERTIES
     LABELS "physics;analysis"
@@ -790,7 +803,7 @@ if(APRL_ENABLE_OPENMP AND OpenMP_CXX_FOUND)
   add_test(NAME required.parallel.held-end-to-end
     COMMAND ${CMAKE_COMMAND}
       "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
-      "-DAPRL=$<TARGET_FILE:aprl>"
+      "-DAPRL=$<TARGET_FILE:aprl_reference_checks>"
       "-DCOMPARATOR=$<TARGET_FILE:aprl_hybrid_output_checks>"
       "-DMPIEXEC=${MPIEXEC_EXECUTABLE}"
       "-DMPIEXEC_NUMPROC_FLAG=${MPIEXEC_NUMPROC_FLAG}"
@@ -856,3 +869,15 @@ if(APRL_ENABLE_PHYSICS_ANALYSIS)
     USES_TERMINAL
   )
 endif()
+
+# The reference parser is linked only to internal verification executables.
+# It has no install rule and is never linked to the production aprl target.
+get_property(APRL_INTERNAL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+foreach(target IN LISTS APRL_INTERNAL_TARGETS)
+  get_target_property(kind ${target} TYPE)
+  if(kind STREQUAL "EXECUTABLE" AND NOT target STREQUAL "aprl_algorithm_policy_checks")
+    target_sources(${target} PRIVATE $<TARGET_OBJECTS:aprl_reference_config>)
+  endif()
+endforeach()
+add_dependencies(verify_required aprl_reference_checks)
+add_dependencies(verify_required_no_mpi aprl_reference_checks)
