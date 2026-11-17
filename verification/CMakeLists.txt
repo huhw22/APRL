@@ -1,4 +1,6 @@
 add_executable(aprl_boris_work_checks boris_work_checks.cpp)
+add_executable(aprl_algorithm_policy_checks algorithm_policy_checks.cpp)
+target_link_libraries(aprl_algorithm_policy_checks PRIVATE direct_eb_core)
 add_executable(aprl_energy_plane_checks energy_plane_checks.cpp)
 foreach(target aprl_boris_work_checks aprl_energy_plane_checks)
   target_link_libraries(${target} PRIVATE direct_eb_core)
@@ -280,6 +282,28 @@ function(aprl_required_mpi_test name)
     TIMEOUT 60
   )
 endfunction()
+
+file(MAKE_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-policy"
+  "${APRL_VERIFY_WORK}/algorithm-three-point"
+  "${APRL_VERIFY_WORK}/algorithm-momentum-matching")
+aprl_required_test(required.algorithms.policy
+  $<TARGET_FILE:aprl_algorithm_policy_checks> "${APRL_VERIFY_CARDS}/runtime-smoke.yaml")
+set_tests_properties(required.algorithms.policy PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-policy")
+file(READ "${APRL_VERIFY_CARDS}/runtime-smoke.yaml" APRL_ALGORITHM_SMOKE)
+string(REPLACE "mesh:\n" "mesh:\n  longitudinal_shape: quintic-compensated\n"
+  APRL_MOMENTUM_SMOKE "${APRL_ALGORITHM_SMOKE}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/momentum-matching-smoke.yaml" "${APRL_MOMENTUM_SMOKE}")
+aprl_required_test(required.algorithms.three-point-smoke
+  $<TARGET_FILE:aprl> "${APRL_VERIFY_CARDS}/runtime-smoke.yaml")
+set_tests_properties(required.algorithms.three-point-smoke PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-three-point")
+aprl_required_test(required.algorithms.momentum-matching-smoke
+  $<TARGET_FILE:aprl> "${CMAKE_CURRENT_BINARY_DIR}/momentum-matching-smoke.yaml")
+set_tests_properties(required.algorithms.momentum-matching-smoke PROPERTIES
+  WORKING_DIRECTORY "${APRL_VERIFY_WORK}/algorithm-momentum-matching")
+aprl_required_test(required.cli.version $<TARGET_FILE:aprl> --version)
+set_tests_properties(required.cli.version PROPERTIES PASS_REGULAR_EXPRESSION "APRL 2\\.0\\.0")
 
 add_test(NAME required.runtime.smoke
   COMMAND $<TARGET_FILE:aprl>
@@ -804,6 +828,8 @@ if(APRL_BUILD_SASE_BUNCH_GENERATOR)
 endif()
 
 add_dependencies(verify_required aprl_threaded_fields aprl_mpi_overlap_checks)
+add_dependencies(verify_required aprl_algorithm_policy_checks aprl_boris_work_checks)
+add_dependencies(verify_required_no_mpi aprl_algorithm_policy_checks aprl_boris_work_checks)
 add_dependencies(verify_required aprl_detector_sampling_checks)
 if(TARGET aprl_duration_close_delay)
   add_dependencies(verify_required aprl_duration_close_delay)

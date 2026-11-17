@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-The frozen release is **APRL 2.0.0**, tagged `v2.0.0`. The preferred baseline is
+The release is **APRL 2.0.0**, tagged `v2.0.0`. The default and preferred baseline is
 **energy-conserving coupling with the longitudinal three-point kernel**
 (`conservative-source + linear-binomial3`). See the [release record](docs/releases/2.0.0.md)
 and [explicit configuration fragment](config/profiles/v2.0-three-point.yaml).
@@ -11,6 +11,58 @@ APRL is a C++/MPI program for accelerator-particle and radiation simulations
 in Lorentz-boosted frames. The primary executable is `aprl`. Electromagnetic
 evolution uses SI electric and magnetic fields directly; scalar and vector
 potentials are not part of the time-advance state.
+
+## Algorithms in 2.0
+
+The installed solver accepts exactly two particle–field coupling algorithms:
+
+| Choice | `mesh.longitudinal_shape` | Use |
+|---|---|---|
+| Energy-conserving three-point | `linear-binomial3` | Default; preferred baseline |
+| Energy-conserving quintic compensation (historically “momentum matching”) | `quintic-compensated` | Alternative comparison; no guarantee of strict total momentum conservation |
+
+Both use `particle_coupling: conservative-source` and `current_filter: none`.
+Omitting the algorithm keys selects the three-point method. Explicit Boris,
+plain linear, seven-point/notch, unknown methods and the separate experimental
+current filter fail during configuration loading; there is no legacy-mode CLI
+switch. Low-level reference kernels remain in the verification code.
+
+```yaml
+mesh:
+  field_solver: cowan-z
+  particle_coupling: conservative-source
+  longitudinal_shape: linear-binomial3  # or quintic-compensated
+  current_filter: none
+  self_field_feedback: true
+```
+
+These are algorithm settings, not a complete beamline card. Start from
+[config/example.yaml](config/example.yaml), set the actual beam, mesh, magnets
+and diagnostics, and use `aprl --version` to confirm the installed version.
+
+## Validated applicability and limits
+
+The release separates executable/software acceptance from physical accuracy.
+The following conclusions summarize the accepted tests; the README deliberately
+does not embed the complete figure archive.
+
+| Test or use | Supported conclusion | Limit |
+|---|---|---|
+| Vacuum propagation, CPML, short drift and cold-charge benchmarks | The numerical and diagnostic paths have bounded reference/regression checks; cold spherical expansion uses the same relativistic shell theory sampled at each particle’s crossing event. | Accuracy still depends on grid, time step, domain, boundary and particle sampling. |
+| Self-consistent bending radiation, two independent 100k unit-electron inputs | Three-point and quintic results agree closely with the prescribed-trajectory Liénard–Wiechert reference when the same finite window, coordinates, aperture and field definition are used. Three-point complete fixed-lab-tube residuals are about −0.262% and −0.313% in those tests. | Full near-field-inclusive intensity, radiation-only aperture intensity, axis spectrum and total-frequency energy balance are different observables; the reference is not the exact self-consistent trajectory. |
+| Six-segment FEL with independent random input, w≈355 | The corrected loading removes the previously identified artificial startup enhancement from longitudinal phase clones. Both algorithms support this workflow and comparison with Puffin. | The complete fixed-lab energy-budget residual remains **26.51% (three-point)** and **37.56% (quintic)**. This release does not establish quantitative lab-energy closure or universal saturated-FEL accuracy. |
+| Radiation diagnostics | Raw E/B can be compared with a reference including particle velocity fields; away from the beam, radiation-only agreement can be assessed separately. | There is no generally validated automatic near-field subtraction. A forward spectrum alone is not a complete energy ledger. |
+
+Use independently sampled six-dimensional input for the random PIC baseline;
+do not clone transverse phase-space points along z. Macro-particle weight has
+no universal accepted upper bound: the w≈355 campaign is a specific resource
+choice, not proof of preserved one-electron shot noise. Converge the quantity
+you intend to report. Retain signed field ports, side flux, time caps, particle
+transport and recorded source/numerical channels when checking energy; a closed
+boost-frame discrete sum is not proof of laboratory physical closure.
+
+See [release notes](docs/releases/2.0.0.md), [acceptance procedure](docs/RELEASE_ACCEPTANCE_2.0.md)
+and [release audit](docs/RELEASE_AUDIT.md) for scope and reproduction.
 
 ## Scope
 
@@ -40,8 +92,9 @@ require that boundary source are outside the validated scope.
 - The default `cowan-z` stencil removes vacuum phase error on the axial
   propagation direction; the standard Yee update is retained for regression.
 - The preferred coupling is `conservative-source` with the `linear-binomial3`
-  longitudinal kernel. Boris and other kernels remain available for explicitly
-  selected comparisons; analytical magnetic devices support optional subcycling.
+  longitudinal kernel. The alternative is `quintic-compensated`; retired Boris,
+  linear and seven-point input choices are rejected. Analytical magnetic devices
+  retain their prescribed-field substeps.
 - HDF5-v4 fixed-lab-plane input offers legacy synchronization, frozen
   three-dimensional ballistic startup, and frozen held-transverse startup.
   For high-boost input where back-projection puts many particles outside a

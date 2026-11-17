@@ -174,15 +174,15 @@ if(APRL_ENABLE_MOVING_WINDOW)
 endif()
 target_compile_definitions(direct_eb_core
   PUBLIC OMPI_SKIP_MPICXX MPICH_SKIP_MPICXX
-  PRIVATE
-    APRL_SOURCE_REVISION="${APRL_SOURCE_REVISION}"
-    APRL_BUILD_DESCRIPTION="${APRL_BUILD_DESCRIPTION}"
 )
+set_source_files_properties(src/run_metadata.cpp PROPERTIES COMPILE_DEFINITIONS
+  "APRL_SOURCE_REVISION=\"${APRL_SOURCE_REVISION}\";APRL_VERSION=\"${PROJECT_VERSION}\";APRL_BUILD_DESCRIPTION=\"${APRL_BUILD_DESCRIPTION}\"")
 target_compile_options(direct_eb_core PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O3;-Wall;-Wextra;-Wpedantic>
 )
 
 add_executable(aprl src/main.cpp)
+target_compile_definitions(aprl PRIVATE APRL_VERSION="${PROJECT_VERSION}")
 target_link_libraries(aprl PRIVATE direct_eb_core)
 
 add_executable(particle_text_to_hdf5

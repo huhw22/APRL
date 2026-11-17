@@ -54,12 +54,11 @@ mesh:
   maximum_particle_substeps: 4096
 ```
 
-APRL 2.0 recommends the explicit algorithm settings shown above. The three-point
-kernel is `longitudinal_shape: linear-binomial3`, not `current_filter:
-compensated-bilinear`. Legacy parser fallbacks remain unchanged: omitting
-`particle_coupling` selects Boris and omitting `longitudinal_shape` selects
-linear. Use explicit keys for the 2.0 baseline; see the
-[release record](releases/2.0.0.md).
+APRL 2.0 defaults to `conservative-source + linear-binomial3` even when the
+algorithm keys are omitted. The only other supported shape is
+`quintic-compensated`. Explicit Boris, linear, linear-notch and unknown values
+are errors. `current_filter` accepts only `none`; the three-point kernel is
+selected by `longitudinal_shape`. See the [release record](releases/2.0.0.md).
 
 `field_solver` is required. Use `cowan-z` for the z-priority controlled-
 dispersion stencil or `yee` for the original regression path. Both operate on
@@ -82,32 +81,10 @@ configuration that combines `cowan-z` with a nonempty `incident_waves` list is
 rejected before particle input. Use `yee` for seed-injection regression until
 the generalized Cowan TF/SF correction is implemented.
 
-`current_filter` is optional and defaults to `none`. The experimental
-`compensated-bilinear` choice is accepted only with `cowan-z`. After
-charge-conserving current deposition and MPI summation it applies, separately
-on x, y and z, the compact stencil
-
-```text
-J_i^f = (-J_{i-2} + 4 J_{i-1} + 10 J_i + 4 J_{i+1} - J_{i+2}) / 16.
-```
-
-This is one bilinear pass followed by its compensation pass. Its one-axis
-gain is `H(k)=1-sin^4(k*cell_size/2)`: the Nyquist source is zero, while the
-long-wavelength error starts at fourth order. The 3-D gain is the product of
-the three axis gains. Each one-dimensional pass leaves the first and last two
-physical-grid samples unchanged rather than inventing source values outside
-the box. Two-plane z halos make the result independent of MPI slab seams.
-
-This switch filters deposited `Jx/Jy/Jz`; it does not alter the Cowan curl
-coefficients, the initial Poisson charge, or particle field gather. It is
-therefore an explicitly experimental noise/instability discriminator, not a
-new default. A credible run must compare `none` and `compensated-bilinear` at
-identical random seed and check both the target radiation band and the complete
-particle-plus-field-plus-boundary energy ledger. The exact run card in the
-manifest and the startup filter line make the choice auditable. The stencil is
-the compensated three-point PIC filter described in the
-[WarpX filtering theory](https://warpx.readthedocs.io/en/24.08/theory/pic.html#filtering);
-it is distinct from Cowan's controlled-dispersion Maxwell stencil.
+`current_filter` is optional and its only accepted value is `none`. The old
+`compensated-bilinear` current filter is no longer accepted. It is distinct
+from the longitudinal three-point kernel and must not be layered over either
+release algorithm. Its mathematical reference routine remains internal to tests.
 
 `cells`, `cell_size`, and `center` describe the boosted computational box.
 Normally, `cells` contains the authoritative integer counts and each direction

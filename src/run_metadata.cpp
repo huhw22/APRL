@@ -18,6 +18,10 @@
 #define APRL_SOURCE_REVISION "unknown"
 #endif
 
+#ifndef APRL_VERSION
+#define APRL_VERSION "unknown"
+#endif
+
 #ifndef APRL_BUILD_DESCRIPTION
 #define APRL_BUILD_DESCRIPTION "unknown"
 #endif
@@ -171,6 +175,7 @@ namespace aprl
               throw std::runtime_error("Cannot create run manifest: " +
                 metadata.manifestPath);
             stream << "format: aprl-run-manifest-v1\n"
+                   << "aprl_version: " << APRL_VERSION << "\n"
                    << "run_id: " << quoteYaml(metadata.runId) << "\n"
                    << "source_revision: "
                    << quoteYaml(metadata.sourceRevision) << "\n"
@@ -254,6 +259,8 @@ namespace aprl
                        "true" : "false") << "\n";
             if(config.mesh.conservativeSourceCoupling)
               stream << "  particle_coupling: conservative-source\n";
+            if(config.mesh.longitudinalQuintic)
+              stream << "  longitudinal_shape: quintic-compensated\n";
             if(config.mesh.oneWaySourceDiagnostic)
               stream << "  one_way_source_diagnostic: true\n"
                      << "  energy_exchange_scope: prescribed-current-validation-with-controller\n"

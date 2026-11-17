@@ -712,10 +712,10 @@ namespace aprl
       currentFilter(EBCurrentFilter::None),
       selfFieldFeedback(true),
       oneWaySourceDiagnostic(false),
-      conservativeSourceCoupling(false),
+      conservativeSourceCoupling(true),
       longitudinalQuintic(false),
       longitudinalNotch(false),
-      longitudinalBinomial3(false),
+      longitudinalBinomial3(true),
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -1055,13 +1055,26 @@ namespace aprl
         if(b.minimumCells<2 || b.minimumImprovement<0 || b.minimumImprovement>=1 || b.frozenWeight<0 || b.fieldCellWeight<0)
           throw configError(balance,"mpi_particle_balance needs minimum_cells>=2, improvement in [0,1), and nonnegative weights");
       }
-    if(mesh["particle_coupling"]) {
-      const auto method=mesh["particle_coupling"].as<std::string>();
-      if(method!="boris"&&method!="conservative-source")
-        throw configError(mesh["particle_coupling"],"particle_coupling must be boris or conservative-source");
-      result.mesh.conservativeSourceCoupling=method=="conservative-source";
-    }
-    if(mesh["longitudinal_shape"]) {const auto shape=mesh["longitudinal_shape"].as<std::string>();if(shape!="linear"&&shape!="quintic-compensated"&&shape!="linear-notch"&&shape!="linear-binomial3")throw configError(mesh["longitudinal_shape"],"longitudinal_shape must be linear, quintic-compensated, linear-notch or linear-binomial3");result.mesh.longitudinalQuintic=shape=="quintic-compensated";result.mesh.longitudinalNotch=shape=="linear-notch";result.mesh.longitudinalBinomial3=shape=="linear-binomial3";}
+    // The installed solver exposes exactly two validated coupling choices.
+    // Low-level reference kernels remain available to unit tests, never as
+    // an input-card fallback or a switch on the production executable.
+    if (mesh["particle_coupling"] &&
+        mesh["particle_coupling"].as<std::string>() != "conservative-source")
+      throw configError(mesh["particle_coupling"],
+        "APRL 2.0 supports only particle_coupling: conservative-source; "
+        "select longitudinal_shape: linear-binomial3 (recommended) or "
+        "quintic-compensated. Boris coupling is no longer supported.");
+    if (mesh["longitudinal_shape"])
+      {
+        const std::string shape = mesh["longitudinal_shape"].as<std::string>();
+        if (shape != "linear-binomial3" && shape != "quintic-compensated")
+          throw configError(mesh["longitudinal_shape"],
+            "APRL 2.0 longitudinal_shape must be linear-binomial3 "
+            "(recommended) or quintic-compensated; linear and linear-notch "
+            "are no longer supported.");
+        result.mesh.longitudinalQuintic = shape == "quintic-compensated";
+        result.mesh.longitudinalBinomial3 = shape == "linear-binomial3";
+      }
 
     if (movingWindow)
       {
@@ -1195,6 +1208,11 @@ namespace aprl
     result.mesh.fieldSolver = fieldSolver(required(mesh, "field_solver"));
     result.mesh.currentFilter = mesh["current_filter"] ?
       currentFilter(mesh["current_filter"]) : EBCurrentFilter::None;
+    if (result.mesh.currentFilter != EBCurrentFilter::None)
+      throw configError(mesh["current_filter"],
+        "APRL 2.0 requires current_filter: none; select the three-point "
+        "kernel with longitudinal_shape: linear-binomial3 instead of "
+        "applying a separate current filter.");
     if(result.mesh.movingWindow.inletChargeMatch&&result.mesh.currentFilter!=EBCurrentFilter::None)
       throw configError(mesh["current_filter"],"inlet_charge_match requires unfiltered current");
     if (result.mesh.currentFilter != EBCurrentFilter::None &&

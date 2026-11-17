@@ -1,0 +1,9 @@
+# Configuration fragment: copy into the mesh mapping of a complete input card.
+# "Momentum matching" is the historical name for quintic compensation;
+# it does not guarantee strict total longitudinal momentum conservation.
+mesh:
+  field_solver: cowan-z
+  particle_coupling: conservative-source
+  longitudinal_shape: quintic-compensated
+  current_filter: none
+  self_field_feedback: true

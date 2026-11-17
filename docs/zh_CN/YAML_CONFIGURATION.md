@@ -40,10 +40,9 @@ mesh:
   maximum_particle_substeps: 4096
 ```
 
-2.0 首选上面的显式算法配置。三点核对应 `longitudinal_shape: linear-binomial3`，
-不是 `current_filter: compensated-bilinear`。兼容旧卡的解析缺省不变：省略
-`particle_coupling` 仍选择 Boris，省略 `longitudinal_shape` 仍选择 linear。
-2.0 基线卡必须显式写出这两个键，详见[固定说明](../releases/2.0.0.md)。
+2.0 默认并首选 `conservative-source + linear-binomial3`，即使省略算法键也不会退回旧方法。
+另一个可选核为 `quintic-compensated`。显式选择 Boris、linear、linear-notch 或其他未知值会报错。
+`current_filter` 仅允许 `none`；三点核由 `longitudinal_shape` 选择。详见[发行说明](../releases/2.0.0.md)。
 
 `field_solver` 必填：`cowan-z` 为 z 优先可控色散模板，`yee` 为原始回归路径；两者共享交错 E/B 网格，都不分配 A/phi。Cowan 在 Faraday 计算中直接应用横向平滑，不保存三份平滑体场。
 
@@ -51,26 +50,8 @@ mesh:
 
 当前 TF/SF 种子边界修正仍是 Yee 形式，因此 `cowan-z` 与非空 `incident_waves` 会在读粒子前被拒绝。通用 Cowan TF/SF 完成前，种子注入只能用于 Yee 回归；CPML 仍拒绝非空入射波。
 
-`current_filter` 可省略，默认值为 `none`；实验选项
-`compensated-bilinear` 只允许与 `cowan-z` 一起使用。电荷守恒电流沉积和
-MPI 求和之后，它分别沿 x、y、z 应用紧致模板
-
-```text
-J_i^f = (-J_{i-2} + 4 J_{i-1} + 10 J_i + 4 J_{i+1} - J_{i+2}) / 16。
-```
-
-这等价于一次双线性滤波再接一次补偿，单轴增益为
-`H(k)=1-sin^4(k*cell_size/2)`：Nyquist 源被置零，而长波误差从四阶开始；
-三维增益为三个轴向增益的乘积。每个一维滤波在物理网格首末各两点保持原值，
-不虚构盒外源；z 向使用两层 halo，MPI 分片面不会成为假边界。
-
-该开关只滤波沉积后的 `Jx/Jy/Jz`，不会改变 Cowan 旋度系数、初始 Poisson
-电荷或粒子场 gather。因此它是显式的噪声/不稳定性判别实验，不是新的默认
-物理路线。正式判断必须使用同一随机种子成对比较 `none` 与
-`compensated-bilinear`，同时检查目标辐射频带以及完整的粒子—场—边界能量账本。
-原始输入卡会进入 manifest，启动日志也会记录滤波状态。这个模板来自
-[WarpX 滤波理论](https://warpx.readthedocs.io/en/24.08/theory/pic.html#filtering)
-所述的补偿三点 PIC 滤波，与 Cowan 可控色散 Maxwell 模板是两个不同操作。
+`current_filter` 可省略，唯一支持值为 `none`。旧 `compensated-bilinear` 电流滤波不再接受；
+它不是这里的三点纵向核，不应叠加到两个发行算法上。历史滤波数学例程只供内部回归。
 
 `cells`、`cell_size`、`center` 定义计算系盒子。通常 `cells` 是权威整数数目，每轴至少 3 格；z 还要求每 MPI rank 至少 2 格。下述“观测有界”自动 z 布局是唯一例外。对所有显式给定的方向，总尺寸只由
 

@@ -12,8 +12,27 @@
 #include "simulation.h"
 #include "teardown_trace.h"
 
+#ifndef APRL_VERSION
+#define APRL_VERSION "unknown"
+#endif
+
 int main(int argc, char** argv)
 {
+  if (argc == 2 && std::string(argv[1]) == "--version")
+    {
+      std::cout << "APRL " << APRL_VERSION << std::endl;
+      return 0;
+    }
+  if (argc == 2 && (std::string(argv[1]) == "--help" ||
+                    std::string(argv[1]) == "-h"))
+    {
+      std::cout << "APRL " << APRL_VERSION << "\nUsage: aprl <configuration.yaml>\n"
+        "Particle algorithms (mesh.longitudinal_shape):\n"
+        "  linear-binomial3     energy-conserving three-point (default)\n"
+        "  quintic-compensated  energy-conserving quintic compensation\n"
+        "Both use particle_coupling: conservative-source.\n";
+      return 0;
+    }
   int providedThreadLevel = MPI_THREAD_SINGLE;
   MPI_Init_thread(&argc, &argv, MPI_THREAD_FUNNELED,
                   &providedThreadLevel);
@@ -54,7 +73,7 @@ int main(int argc, char** argv)
         aprl::RuntimeControl::installSignalHandlers();
 
       aprl::logRoot(MPI_COMM_WORLD,
-        "APRL — Accelerator Particles and Radiation in Lorentz Frames");
+        "APRL " APRL_VERSION " — Accelerator Particles and Radiation in Lorentz Frames");
       aprl::logRoot(MPI_COMM_WORLD,
         "Compute threads per MPI rank: " +
         std::to_string(aprl::computeThreadCount()) +

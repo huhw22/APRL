@@ -1,5 +1,7 @@
 # Release readiness and production requirements
 
+> 2.0 当前适用结论和已知差额以[主README](../README.md)及2.0发行说明为准；下方早期量化例子只属于各自工况，不构成当前六段FEL闭合结论。
+
 This document defines the implemented scope, unresolved limitations, and
 requirements for production calculations. A successful smoke test establishes
 software operability only; it does not establish physical convergence of every
