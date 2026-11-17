@@ -10,6 +10,13 @@ execute_process(COMMAND git rev-parse --verify HEAD
   ERROR_QUIET)
 if(NOT APRL_SOURCE_REVISION)
   set(APRL_SOURCE_REVISION "unknown")
+  if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/SOURCE_REVISION")
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/SOURCE_REVISION" APRL_ARCHIVE_REVISION LIMIT_COUNT 1)
+    string(LENGTH "${APRL_ARCHIVE_REVISION}" APRL_ARCHIVE_REVISION_LENGTH)
+    if(APRL_ARCHIVE_REVISION MATCHES "^[0-9a-f]+$" AND APRL_ARCHIVE_REVISION_LENGTH EQUAL 40)
+      set(APRL_SOURCE_REVISION "${APRL_ARCHIVE_REVISION}")
+    endif()
+  endif()
 else()
   execute_process(COMMAND git status --porcelain --untracked-files=normal
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -20,6 +27,7 @@ else()
     string(APPEND APRL_SOURCE_REVISION "-dirty")
   endif()
 endif()
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/SOURCE_REVISION" "${APRL_SOURCE_REVISION}\n")
 
 include(CTest)
 
@@ -355,6 +363,7 @@ endif()
 install(PROGRAMS utilities/crop_elegant_hdf5.py DESTINATION bin)
 
 install(FILES README.md README.zh-CN.md VERSION DESTINATION share/aprl)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/SOURCE_REVISION" DESTINATION share/aprl)
 install(DIRECTORY docs config examples
   DESTINATION share/aprl)
 install(DIRECTORY postprocess/
