@@ -18,6 +18,7 @@ BLUE='#1769a0';ORANGE='#cf661f';GREEN='#308367'
 
 def main(root,mode='all'):
     root=Path(root);s=json.loads((root/'SUMMARY.json').read_text())
+    selected=(root/'SELECTION.json').is_file()
     d=np.load(root/'data/visual_arrays.npz');z=d['snapshot_z_m'];xz=d['z_m'];x=d['x_m']*1e6
     a=np.genfromtxt(root/'data/comparison.csv',names=True,delimiter=',',dtype=None,encoding='utf-8')
     h=np.genfromtxt(root/'data/history.csv',names=True,delimiter=',',dtype=None,encoding='utf-8')
@@ -28,7 +29,8 @@ def main(root,mode='all'):
       'text.parse_math':False,'pdf.fonttype':42,'figure.facecolor':'white','savefig.facecolor':'white'})
     plt.rcParams['animation.ffmpeg_path']=str(BIN/'ffmpeg')
     plots=[];videos=[] if mode=='all' else json.loads((root/'RENDER_VALIDATION.json').read_text())['videos']
-    keys=['reference','native','no_absorption'];names=['wide-reference','small-native','small-no-absorption']
+    keys=['reference','native'] if selected else ['reference','native','no_absorption']
+    names=['wide-reference','small-native'] if selected else ['wide-reference','small-native','small-no-absorption']
     cs=[GREEN,BLUE,ORANGE];styles=['-','--','-.'];edges=np.arange(-1620,1621,40)
     zedges=np.r_[xz-.0035,xz[-1]+.0035]
     roi_peak=43;assert abs(z[roi_peak]-1.505)<1e-14
@@ -57,6 +59,11 @@ def main(root,mode='all'):
         cb.ax.yaxis.set_minor_formatter(ticker.NullFormatter())
         return cb
     def finish(fig,name,out):
+        if selected:
+            name={'04_absorption_amount':'03_absorption_amount','05_central_full_history':'04_central_full_history',
+              '06_native_return_zoom':'05_native_return_zoom','07_interior_field_feedback':'06_interior_field_feedback',
+              '08_reverse_x_modes':'07_reverse_x_modes','09_native_return_xy':'08_native_return_xy',
+              '10_reference_xy':'09_reference_xy','11_central_error_xy':'10_central_error_xy'}.get(name,name)
         check_bounds(fig);fig.savefig(out/(name+'.png'),dpi=150);fig.savefig(out/(name+'.pdf'))
         plots.append(dict(path=str((out/(name+'.png')).relative_to(root)),sha256=sha(out/(name+'.png'))))
         plt.close(fig)
@@ -66,6 +73,7 @@ def main(root,mode='all'):
         labels=['大域参考：光束从右侧离开','原生吸收：主束被削弱，仍有弱返回','关闭吸收：从左侧绕回后仍向右传播'] if zh else [
              'Wide reference: the beam leaves to the right','Native absorber: strong removal, weak returning field','No absorption: wrap-around returns from the left']
         short=['大域参考','原生吸收','关闭吸收'] if zh else ['Wide reference','Native absorber','No absorption']
+        if selected:labels=labels[:2];short=short[:2]
         for j,(key,label) in enumerate(zip(keys,labels)):
             fig,ax=figure();fig.subplots_adjust(right=.85)
             im=ax.pcolormesh(edges,zedges,np.maximum(d[key+'_line'],1e-12),norm=colors.LogNorm(1e-8,1),cmap='magma',shading='flat')
@@ -90,19 +98,24 @@ def main(root,mode='all'):
             q=h[h['case']==name];ax.plot(q['z_m'],100*q['total_norm2_over_initial'],color=c,ls=sty,lw=2,label=label)
         ax.set(xlabel='传播距离 z（m）' if zh else 'Propagation distance z (m)',ylabel='全域积分场强 / 入射值（%）' if zh else 'Whole-domain integrated intensity / input (%)',
           title='原生吸收：终点只剩入射积分场强的 0.296%' if zh else 'Native absorber: 0.296% of incident integrated intensity remains',ylim=(-2,104))
-        ax.legend(loc='lower center',bbox_to_anchor=(.5,1.01),ncol=3,frameon=False)
+        ax.legend(loc='lower center',bbox_to_anchor=(.5,1.01),ncol=len(names),frameon=False)
         ax.set_title(ax.get_title(),pad=42);ax.grid(alpha=.2)
-        footer(fig,'对应净移除 99.704%；关闭吸收时积分几乎不变，但不能据此判定内部场正确。' if zh else
-             'Net removal: 99.704%. Conservation without absorption does not establish a correct interior field.')
+        footer(fig,('对应净移除 99.704%；大域保留原光束，原生吸收例的全域积分显著下降。' if zh else
+             'Net removal: 99.704%. The wide reference retains the beam; native absorption reduces the global integral.') if selected else
+             ('对应净移除 99.704%；关闭吸收时积分几乎不变，但不能据此判定内部场正确。' if zh else
+             'Net removal: 99.704%. Conservation without absorption does not establish a correct interior field.'))
         finish(fig,'04_absorption_amount',out)
         fig,ax=figure()
         for name,label,c,sty in zip(names,short,cs,styles):
             q=h[h['case']==name];ax.plot(q['z_m'],100*q['roi_norm2_over_initial'],color=c,ls=sty,lw=2,label=label)
         ax.set(xlabel='传播距离 z（m）' if zh else 'Propagation distance z (m)',ylabel='中央积分场强 / 入射全域值（%）' if zh else 'Central integrated intensity / full input (%)',
-          title='关闭吸收时，绕回使中央积分场强重新升高' if zh else 'Without absorption, wrap-around repopulates the central aperture')
+          title=('原生吸收与大域参考的中央场强变化' if zh else 'Central intensity: native absorption and the wide reference') if selected else
+          ('关闭吸收时，绕回使中央积分场强重新升高' if zh else 'Without absorption, wrap-around repopulates the central aperture'))
         ax.legend();ax.grid(alpha=.2)
-        footer(fig,'中央观察区 x/y=±520 µm；后期绕回峰为入射值的 73.218%，不是能量凭空增加。' if zh else
-           'Aperture x/y=±520 µm. The late return peaks at 73.218% of input; no energy is created.')
+        footer(fig,('中央观察区 x/y=±520 µm；原光束离开后，原生吸收例仍有弱返回。' if zh else
+           'Aperture x/y=±520 µm. A weak field returns after the original beam has left.') if selected else
+           ('中央观察区 x/y=±520 µm；后期绕回峰为入射值的 73.218%，不是能量凭空增加。' if zh else
+           'Aperture x/y=±520 µm. The late return peaks at 73.218% of input; no energy is created.'))
         finish(fig,'05_central_full_history',out)
         fig,ax=figure()
         for name,label,c,sty in zip(names[:2],short[:2],cs[:2],styles[:2]):
@@ -130,7 +143,8 @@ def main(root,mode='all'):
         for name,label,c,sty in zip(names[1:],short[1:],cs[1:],styles[1:]):
             q=a[a['case']==name];ax.semilogy(q['z_m'],q['negative_kx_norm2_over_initial'],color=c,ls=sty,lw=2,label=label)
         plain_log(ax);ax.set(xlabel='传播距离 z（m）' if zh else 'Propagation distance z (m)',ylabel='负 kx 模式平方范数 / 入射值' if zh else 'Negative-kx squared norm / input',
-           title='主要返回现象是绕回，反向横向模式很小' if zh else 'Wrap-around dominates; reverse-x modes remain small')
+           title=('原生吸收例的反向横向模式份额很小' if zh else 'Reverse-x mode content remains small with native absorption') if selected else
+           ('主要返回现象是绕回，反向横向模式很小' if zh else 'Wrap-around dominates; reverse-x modes remain small'))
         ax.legend(loc='lower center',bbox_to_anchor=(.5,1.01),ncol=2,frameon=False)
         ax.set_title(ax.get_title(),pad=42);ax.grid(alpha=.2)
         footer(fig,'原生吸收例的负 kx 份额最大约 5.11e-8；不能称作沿 −z 的物理反射率。' if zh else
@@ -158,7 +172,7 @@ def main(root,mode='all'):
         finish(fig,'11_central_error_xy',out)
         if mode=='static':continue
         for view in ['linear','log']:
-            fig,axes=plt.subplots(1,3,figsize=(16.8,7.6));fig.subplots_adjust(left=.055,right=.89,bottom=.24,top=.78,wspace=.24)
+            fig,axes=plt.subplots(1,len(keys),figsize=(12.8,7.6) if selected else (16.8,7.6));fig.subplots_adjust(left=.065,right=.84 if selected else .87,bottom=.24,top=.78,wspace=.24)
             ims=[];stats=[]
             norm=colors.Normalize(0,1) if view=='linear' else colors.LogNorm(1e-8,1)
             for ax,key,label in zip(axes,keys,short):
@@ -170,11 +184,11 @@ def main(root,mode='all'):
                 ax.set(xlabel='x (µm)',ylabel='y (µm)',title=label+('（同一视野）' if zh and key=='reference' else ''))
                 stats.append(ax.text(.5,-.23,'',ha='center',va='top',transform=ax.transAxes,fontsize=10))
                 ims.append(im)
-            cax=fig.add_axes([.925,.30,.013,.38]);colorbar(fig,ims[0],cax=cax,linear=view=='linear',label='强度 / 入射峰值' if zh else 'Intensity / incident peak')
+            cax=fig.add_axes([.90 if selected else .925,.30,.013,.38]);colorbar(fig,ims[0],cax=cax,linear=view=='linear',label='强度 / 入射峰值' if zh else 'Intensity / incident peak')
             sup=fig.suptitle('',y=.96,fontsize=19);stage=fig.text(.5,.865,'',ha='center',fontsize=13)
             mode_label=('线性色标：观察主束被吸收' if view=='linear' else '固定对数色标：观察弱返回场') if zh else (
                 'Linear scale: watch the main beam disappear' if view=='linear' else 'Fixed log scale: reveal the weak returning field')
-            footer(fig,mode_label+('；三栏同一尺度、无逐帧缩放；无粒子；只测试横向边界。' if zh else '; one common scale, no per-frame rescaling; no particles, transverse boundaries only.'))
+            footer(fig,mode_label+('；同一尺度、无逐帧缩放；无粒子；只测试横向边界。' if zh else '; one common scale, no per-frame rescaling; no particles, transverse boundaries only.'))
             path=out/('native_propagation_'+view+'.mp4')
             writer=FFMpegWriter(fps=5,codec='libx264',bitrate=2600,extra_args=['-pix_fmt','yuv420p','-threads','2'])
             with writer.saving(fig,str(path),100):
@@ -186,7 +200,7 @@ def main(root,mode='all'):
                             f"Whole domain: {q['total_norm2_over_initial']*100:.3f}%\nAperture: {q['roi_norm2_over_initial']*100:.4f}%"))
                     if zz<.45:txt='主束向右传播' if zh else 'The main beam travels to the right'
                     elif zz<.8:txt='主束进入边缘处理区' if zh else 'The main beam reaches the boundary region'
-                    elif zz<1.2:txt='关闭吸收的场从左侧绕回；原生吸收已削弱主束' if zh else 'The unabsorbed field wraps to the left; the native absorber weakens the main beam'
+                    elif zz<1.2:txt=('原生吸收已削弱主束，检查内部弱返回' if zh else 'Native absorption weakens the beam; inspect the weak returning field') if selected else ('关闭吸收的场从左侧绕回；原生吸收已削弱主束' if zh else 'The unabsorbed field wraps to the left; the native absorber weakens the main beam')
                     else:txt='比较中央方框内的返回场：参考应已接近零' if zh else 'Compare the returning field in the aperture; the reference is nearly empty'
                     stage.set_text(txt);sup.set_text(('Puffin 原生实际传播' if zh else 'Actual native Puffin propagation')+f' | z={zz:.3f} m')
                     if i in [0,16,24,43,60]:

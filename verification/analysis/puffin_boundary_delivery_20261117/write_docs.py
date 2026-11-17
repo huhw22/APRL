@@ -5,6 +5,9 @@ from pathlib import Path
 from common import table
 
 def main(root):
+    if (Path(root)/'SELECTION.json').is_file():
+        from docs_native import main as write_selected
+        return write_selected(root)
     root=Path(root);s=json.loads((root/'SUMMARY.json').read_text());n=s['small-native'];off=s['small-no-absorption']
     text=f'''# Puffin 边界吸收与计算域内返回场
 
