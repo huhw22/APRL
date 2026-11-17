@@ -11,7 +11,7 @@ runtime under the source tree. No root privilege or system package install
 is used.
 
 Options:
-  --profile core|full    core, or core plus FFTW post-processors (default: core)
+  --profile core|full    core, or core plus field post-processors (default: core)
   --prefix DIR           private install prefix (default: ./aprl-runtime)
   --jobs N               build parallelism (default: 8; at most 16 in a job)
   --mpi-module NAME      load this site MPI module before detection

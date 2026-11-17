@@ -14,7 +14,7 @@
 | MPI | 提供 C++ 编译 wrapper 和运行器 | 不限定 Open MPI/MPICH；编译和运行必须使用同一家族 |
 | HDF5 C | 1.10 或更新 | 生产 MPI 输入要求 parallel HDF5 |
 | yaml-cpp | 0.6 或更新 | 主程序和多个独立工具需要 |
-| FFTW3 | double precision；完整安装需要 `fftw3_threads` | 仅 `full` 后处理配置需要 |
+| FFTW3 | double precision；完整安装需要 `fftw3_threads` | 两种2.0耦合算法都需要基础FFTW；`full`后处理还需要线程库 |
 | pkg-config | 可解析 FFTW3 | 仅 `full` 配置需要 |
 
 本机端到端安装测试使用 GCC 13.3、Open MPI 4.1.6、parallel HDF5 1.10.10、yaml-cpp 0.8.0 和 FFTW 3.3.10。这是已验证组合，不表示程序只能使用这些精确版本。
@@ -96,7 +96,7 @@ allocation 内检查才确认两 rank collective parallel-HDF5 与站点启动�
   --prefix "$PWD/aprl-runtime" --jobs 8
 ```
 
-该命令自动准备 CMake（主机缺少合格版本时）、yaml-cpp、zlib 和由当前 MPI C wrapper 编译且启用 deflate 的 parallel HDF5；`full` 配置还准备 FFTW3 double precision 与线程库。源码包缓存于 `.cache/aprl-dependencies`，后续重复安装不重新下载。已经填充缓存的离线机器可增加 `--offline-deps`。依赖标记同时包含源码校验值和当前 MPI/C/C++ 工具链指纹；更换 module 或编译器后不会静默复用旧 ABI 的库。
+该命令自动准备 CMake（主机缺少合格版本时）、yaml-cpp、zlib 和由当前 MPI C wrapper 编译且启用 deflate 的 parallel HDF5；两种配置都准备移动参考所需的 FFTW3 double precision 与线程库。源码包缓存于 `.cache/aprl-dependencies`，后续重复安装不重新下载。已经填充缓存的离线机器可增加 `--offline-deps`。依赖标记同时包含源码校验值和当前 MPI/C/C++ 工具链指纹；更换 module 或编译器后不会静默复用旧 ABI 的库。
 
 默认下载避免 GitHub release 大文件：CMake 使用 `cmake.org`，zlib 使用
 `zlib.net`，HDF5 使用 HDF Group 的 `support.hdfgroup.org`，yaml-cpp 使用南京大学

@@ -311,9 +311,24 @@ foreach(pair "three-point|linear-binomial3" "momentum-matching|quintic-compensat
   aprl_required_test(required.algorithms.${name}-smoke
     ${CMAKE_COMMAND} "-DAPRL=$<TARGET_FILE:aprl>"
       "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
+      "-DCHECKER=$<TARGET_FILE:aprl_output_checks>"
       "-DCARD=${APRL_VERIFY_CARDS}/release-algorithm.yaml.in"
       "-DWORK=${APRL_VERIFY_WORK}/algorithm-${name}" "-DSHAPE=${shape}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/check_release_algorithm.cmake")
+  aprl_required_mpi_test(required.algorithms.${name}-mpi2
+    ${CMAKE_COMMAND} "-DAPRL=$<TARGET_FILE:aprl>"
+      "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
+      "-DCHECKER=$<TARGET_FILE:aprl_output_checks>"
+      "-DCARD=${APRL_VERIFY_CARDS}/release-algorithm.yaml.in"
+      "-DWORK=${APRL_VERIFY_WORK}/algorithm-${name}-mpi2" "-DSHAPE=${shape}"
+      "-DRANKS=2" "-DMPIEXEC=${MPIEXEC_EXECUTABLE}" "-DMPI_FLAG=${MPIEXEC_NUMPROC_FLAG}"
+      -P "${CMAKE_CURRENT_SOURCE_DIR}/check_release_algorithm.cmake")
+  aprl_required_mpi_test(required.algorithms.${name}-compare
+    $<TARGET_FILE:aprl_output_checks> compare-particles
+      "${APRL_VERIFY_WORK}/algorithm-${name}/detectors/particles.h5"
+      "${APRL_VERIFY_WORK}/algorithm-${name}-mpi2/detectors/particles.h5" 21)
+  set_tests_properties(required.algorithms.${name}-compare PROPERTIES
+    DEPENDS "required.algorithms.${name}-smoke;required.algorithms.${name}-mpi2")
 endforeach()
 aprl_required_test(required.cli.version $<TARGET_FILE:aprl> --version)
 set_tests_properties(required.cli.version PROPERTIES PASS_REGULAR_EXPRESSION "APRL 2\\.0\\.0")
@@ -875,7 +890,9 @@ endif()
 get_property(APRL_INTERNAL_TARGETS DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
 foreach(target IN LISTS APRL_INTERNAL_TARGETS)
   get_target_property(kind ${target} TYPE)
-  if(kind STREQUAL "EXECUTABLE" AND NOT target STREQUAL "aprl_algorithm_policy_checks")
+  get_target_property(libs ${target} LINK_LIBRARIES)
+  if(kind STREQUAL "EXECUTABLE" AND libs MATCHES "direct_eb_core" AND
+     NOT target STREQUAL "aprl_algorithm_policy_checks")
     target_sources(${target} PRIVATE $<TARGET_OBJECTS:aprl_reference_config>)
   endif()
 endforeach()

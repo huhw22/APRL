@@ -156,7 +156,7 @@ seeded-FEL 与 laser-modulation 计算不属于已验证范围。
 在联网机器上可把 APRL、启用 zlib 压缩的 parallel HDF5 和 yaml-cpp 一次性安装到项目内的自包含前缀；超算默认复用平台 MPI：
 
 ```bash
-./install_online.sh --profile core
+./install_online.sh --profile full
 ```
 
 联网安装的大文件默认使用 CMake、zlib 与 HDF Group 官方下载站点，不依赖

@@ -36,7 +36,7 @@ initial_self_field:
 beam:
   reference:
     input_plane_z: 0
-    initial_center_z: 0.2
+    initial_center_z: 1
     frozen_lab_plane_injection: true
     hold_transverse_until_activation: true
     activation_plane_z: 0
@@ -48,16 +48,16 @@ beam:
 sources:
   incident_waves: []
   magnetic_elements:
-    - {type: uniform-dipole, entrance_z: 0.5, length: 1, field_T: 0.1,
+    - {type: uniform-dipole, entrance_z: 10, length: 2, field_T: 0.1,
        polarization_angle_rad: 0}
 detectors:
   enabled: true
   directory: detectors
   field_planes:
-    - {name: field, z: 5, rhythm: 0.1, buffer_samples: 4, compression: 0}
+    - {name: field, z: 20, rhythm: 0.1, buffer_samples: 4, compression: 0}
   particle_planes:
-    - {name: particles, z: 5, buffer_records: 32, compression: 0}
-stop: {mode: reference-center-z, z: 10}
+    - {name: particles, z: 20, buffer_records: 32, compression: 0}
+stop: {mode: reference-center-z, z: 30}
 trajectory: {enabled: false}
 energy_ledger:
   enabled: true

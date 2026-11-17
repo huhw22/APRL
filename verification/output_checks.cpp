@@ -223,7 +223,8 @@ namespace
                     const std::string& particleFilename,
                     std::uint64_t expectedParticles,
                     double minimumInterval,
-                    const std::string& manifestFilename)
+                    const std::string& manifestFilename,
+                    const std::string& transverseLimit = "1e-08")
   {
     hid_t file = H5Fopen(fieldFilename.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT);
     requireHandle(file, "Cannot open field-plane file: " + fieldFilename);
@@ -334,7 +335,7 @@ namespace
       "Run manifest does not preserve the input YAML");
     require(manifestText.find("resolved_initial_self_field:\n") !=
               std::string::npos &&
-            manifestText.find("  maximum_mean_transverse_beta: 1e-08\n") !=
+            manifestText.find("  maximum_mean_transverse_beta: " + transverseLimit + "\n") !=
               std::string::npos,
       "Run manifest does not preserve the resolved transverse-beta limit");
     std::cout << "detector: samples=" << committed
@@ -804,6 +805,14 @@ int main(int argc, char** argv)
           return checkDetector(argv[2], argv[3],
             static_cast<std::uint64_t>(std::stoull(argv[4])),
             std::stod(argv[5]), argv[6]);
+        }
+      if (command == "release-detector")
+        {
+          require(argc == 3, "release-detector needs RUN_DIRECTORY");
+          const std::string path(argv[2]);
+          return checkDetector(path + "/detectors/field.h5",
+            path + "/detectors/particles.h5", 21, 1e-16,
+            path + "/run-manifest.yaml", "0.01");
         }
       if (command == "compare-particles")
         {

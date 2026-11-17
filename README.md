@@ -199,7 +199,7 @@ installed into one user-owned prefix. A managed cluster reuses its site MPI
 by default:
 
 ```bash
-./install_online.sh --profile core
+./install_online.sh --profile full
 ```
 
 Large online-install archives use the official CMake, zlib, and HDF Group
