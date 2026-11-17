@@ -2,6 +2,10 @@
 
 [English](README.md)
 
+当前固定版本为 **APRL 2.0.0**，标签 `v2.0.0`。首选基线是
+**能量守恒耦合＋纵向三点核抑制**（`conservative-source + linear-binomial3`）。
+见[2.0 固定说明](docs/releases/2.0.0.md)和[推荐配置片段](config/profiles/v2.0-three-point.yaml)。
+
 APRL 的英文全称为 **Accelerator Particles and Radiation in Lorentz
 Frames**。APRL 是采用 C++/MPI 实现的加速器粒子与辐射模拟程序，主可执行
 文件为 `aprl`。电磁推进直接使用国际单位制 E/B；标量势和矢量势不属于时间推进
@@ -9,7 +13,7 @@ Frames**。APRL 是采用 C++/MPI 实现的加速器粒子与辐射模拟程序�
 
 ## 适用范围
 
-第一版提供以下计算路径：
+2.0 版本保留并提供以下计算路径：
 
 - 相对论粒子与 Maxwell 场自洽推进；
 - 沿指定 z 轴的 Cowan/CKC 可控色散传播；
@@ -22,14 +26,15 @@ Frames**。APRL 是采用 C++/MPI 实现的加速器粒子与辐射模拟程序�
 - 可在独立分析服务器运行的场面频谱、偏振、相干性和能量后处理；
 - 用于少量粒子验证的轨迹辐射工具，以及可选的全局能量账本。
 
-第一版未实现 Cowan/CPML 上的通用 TF/SF 激光或种子场注入。依赖该边界源的
+当前未实现 Cowan/CPML 上的通用 TF/SF 激光或种子场注入。依赖该边界源的
 seeded-FEL 与 laser-modulation 计算不属于已验证范围。
 
 ## 数值模型
 
 - E/B 在交错 Yee 网格上以国际单位制推进。
 - 默认 `cowan-z` 格式消除轴向真空传播的相位误差；标准 Yee 格式用于回归。
-- 粒子使用相对论 Boris 推进；解析磁元件可启用粒子子步进。
+- 2.0 首选 `conservative-source` 能量守恒耦合配合 `linear-binomial3`
+  纵向三点核；Boris 和其他核保留用于明确选择的对照。解析磁元件可启用粒子子步进。
 - HDF5-v4 固定实验室面输入可选原有同步、冻结三维直线推进和冻结横向（held）
   三种启动方式。高 boost 回推使大量粒子落出有限横向网格时，推荐优先测试
   held；这不是出口场或辐射已收敛的声明，详见

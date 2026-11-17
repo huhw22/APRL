@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # APRL: Accelerator Particles and Radiation in Lorentz Frames.
-project(APRL LANGUAGES C CXX)
+project(APRL VERSION 2.0.0 LANGUAGES C CXX)
 
 execute_process(COMMAND git rev-parse --verify HEAD
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -351,7 +351,7 @@ if(HAVE_ELEGANT_SDDS_CONVERTER)
 endif()
 install(PROGRAMS utilities/crop_elegant_hdf5.py DESTINATION bin)
 
-install(FILES README.md README.zh-CN.md DESTINATION share/aprl)
+install(FILES README.md README.zh-CN.md VERSION DESTINATION share/aprl)
 install(DIRECTORY docs config examples
   DESTINATION share/aprl)
 install(DIRECTORY postprocess/

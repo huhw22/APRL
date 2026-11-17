@@ -27,6 +27,10 @@ output:
 mesh:
   # z-priority Cowan/CKC stencil; use yee only for regression runs.
   field_solver: cowan-z
+  # APRL 2.0 preferred baseline: energy-conserving coupling + three-point kernel.
+  particle_coupling: conservative-source
+  longitudinal_shape: linear-binomial3
+  self_field_feedback: true
   # Experimental PIC source treatment. Use compensated-bilinear only for a
   # paired filtered/unfiltered convergence campaign; none is the default.
   current_filter: none

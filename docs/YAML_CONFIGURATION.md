@@ -41,6 +41,9 @@ input identity. The same identity is embedded in all output HDF5 groups. See
 ```yaml
 mesh:
   field_solver: cowan-z
+  particle_coupling: conservative-source
+  longitudinal_shape: linear-binomial3
+  self_field_feedback: true
   current_filter: none
   cells: [40, 40, 60]
   cell_size: [1.0, 1.0, 0.2]
@@ -50,6 +53,13 @@ mesh:
   particle_steps_per_undulator_period: 32
   maximum_particle_substeps: 4096
 ```
+
+APRL 2.0 recommends the explicit algorithm settings shown above. The three-point
+kernel is `longitudinal_shape: linear-binomial3`, not `current_filter:
+compensated-bilinear`. Legacy parser fallbacks remain unchanged: omitting
+`particle_coupling` selects Boris and omitting `longitudinal_shape` selects
+linear. Use explicit keys for the 2.0 baseline; see the
+[release record](releases/2.0.0.md).
 
 `field_solver` is required. Use `cowan-z` for the z-priority controlled-
 dispersion stencil or `yee` for the original regression path. Both operate on

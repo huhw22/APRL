@@ -27,6 +27,9 @@ output:
 ```yaml
 mesh:
   field_solver: cowan-z
+  particle_coupling: conservative-source
+  longitudinal_shape: linear-binomial3
+  self_field_feedback: true
   current_filter: none
   cells: [40, 40, 60]
   cell_size: [1.0, 1.0, 0.2]
@@ -36,6 +39,11 @@ mesh:
   particle_steps_per_undulator_period: 32
   maximum_particle_substeps: 4096
 ```
+
+2.0 首选上面的显式算法配置。三点核对应 `longitudinal_shape: linear-binomial3`，
+不是 `current_filter: compensated-bilinear`。兼容旧卡的解析缺省不变：省略
+`particle_coupling` 仍选择 Boris，省略 `longitudinal_shape` 仍选择 linear。
+2.0 基线卡必须显式写出这两个键，详见[固定说明](../releases/2.0.0.md)。
 
 `field_solver` 必填：`cowan-z` 为 z 优先可控色散模板，`yee` 为原始回归路径；两者共享交错 E/B 网格，都不分配 A/phi。Cowan 在 Faraday 计算中直接应用横向平滑，不保存三份平滑体场。
 

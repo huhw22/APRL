@@ -1,0 +1,10 @@
+# APRL 2.0 preferred algorithm settings.
+# This is a configuration fragment, not a complete runnable input card.
+# Copy these keys into the mesh mapping of a case-specific complete card.
+# APRL does not automatically merge this file or load named profiles.
+mesh:
+  field_solver: cowan-z
+  particle_coupling: conservative-source
+  longitudinal_shape: linear-binomial3
+  current_filter: none
+  self_field_feedback: true

@@ -2,6 +2,11 @@
 
 [中文说明](README.zh-CN.md)
 
+The frozen release is **APRL 2.0.0**, tagged `v2.0.0`. The preferred baseline is
+**energy-conserving coupling with the longitudinal three-point kernel**
+(`conservative-source + linear-binomial3`). See the [release record](docs/releases/2.0.0.md)
+and [explicit configuration fragment](config/profiles/v2.0-three-point.yaml).
+
 APRL is a C++/MPI program for accelerator-particle and radiation simulations
 in Lorentz-boosted frames. The primary executable is `aprl`. Electromagnetic
 evolution uses SI electric and magnetic fields directly; scalar and vector
@@ -9,7 +14,7 @@ potentials are not part of the time-advance state.
 
 ## Scope
 
-Version 1 provides the following computation paths:
+Version 2.0 retains and provides the following computation paths:
 
 - self-consistent relativistic particle and Maxwell evolution;
 - Cowan/CKC controlled-dispersion propagation along the configured z axis;
@@ -26,7 +31,7 @@ Version 1 provides the following computation paths:
 - optional small-particle trajectory radiation and global energy accounting.
 
 The general Cowan/CPML TF/SF laser or seed-field injection path is not
-implemented in version 1. Seeded-FEL and laser-modulation calculations that
+implemented in this release. Seeded-FEL and laser-modulation calculations that
 require that boundary source are outside the validated scope.
 
 ## Numerical model
@@ -34,8 +39,9 @@ require that boundary source are outside the validated scope.
 - E and B are advanced on a staggered Yee lattice in SI units.
 - The default `cowan-z` stencil removes vacuum phase error on the axial
   propagation direction; the standard Yee update is retained for regression.
-- Relativistic particles use a Boris pusher with optional subcycling for
-  analytical magnetic devices.
+- The preferred coupling is `conservative-source` with the `linear-binomial3`
+  longitudinal kernel. Boris and other kernels remain available for explicitly
+  selected comparisons; analytical magnetic devices support optional subcycling.
 - HDF5-v4 fixed-lab-plane input offers legacy synchronization, frozen
   three-dimensional ballistic startup, and frozen held-transverse startup.
   For high-boost input where back-projection puts many particles outside a
