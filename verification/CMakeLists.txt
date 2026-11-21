@@ -345,7 +345,8 @@ foreach(pair "three-point|linear-binomial3" "momentum-matching|quintic-compensat
     DEPENDS "required.algorithms.${name}-smoke;required.algorithms.${name}-mpi2")
 endforeach()
 aprl_required_test(required.cli.version $<TARGET_FILE:aprl> --version)
-set_tests_properties(required.cli.version PROPERTIES PASS_REGULAR_EXPRESSION "APRL 2\\.0\\.0")
+string(REPLACE "." "[.]" APRL_VERSION_REGEX "${PROJECT_VERSION}")
+set_tests_properties(required.cli.version PROPERTIES PASS_REGULAR_EXPRESSION "APRL ${APRL_VERSION_REGEX}([\r\n]|$)")
 
 add_test(NAME required.runtime.smoke
   COMMAND $<TARGET_FILE:aprl_reference_checks>
