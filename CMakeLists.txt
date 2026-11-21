@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 # APRL: Accelerator Particles and Radiation in Lorentz Frames.
-project(APRL VERSION 2.0.0 LANGUAGES C CXX)
+project(APRL VERSION 2.1.0 LANGUAGES C CXX)
 
 execute_process(COMMAND git rev-parse --verify HEAD
   WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

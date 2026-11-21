@@ -222,6 +222,16 @@ struct MovingWindowFields::Impl {
         for(std::size_t j=0;j<c.ny();++j)for(std::size_t i=0;i<c.nx();++i)
           lower[a][j*c.nx()+i]=reference(a,i,j,k-1,n);
       }
+      if(owner.rank==0 && owner.centerNormalReference) {
+        const auto& ez=f.ez();
+        const auto& cpml=owner.parameters.cells;
+        // Ez is half a cell inside the inlet. Extend only its departure
+        // from the reference oddly across the face for the magnetic curl.
+        // These are precisely the nodes touched by ChargeMatchedInlet.
+        for(std::size_t j=cpml[1]+1;j<owner.geometry.ny-cpml[1];++j)
+          for(std::size_t i=cpml[0]+1;i<owner.geometry.nx-cpml[0];++i)
+            lower[2][j*ez.nx()+i]-=ez(i,j,0)-reference(2,i,j,k,n);
+      }
       phase=Phase::Magnetic;
     }
     EBElectricHaloView halos(std::size_t n) const {
@@ -314,6 +324,7 @@ struct MovingWindowFields::Impl {
   void* discreteContext = nullptr;
   NewLayerCompletion layerCompletion = nullptr;
   void* layerContext = nullptr;
+  bool centerNormalReference = false;
 
   Impl(const EBGridGeometry& g,std::size_t nz,std::size_t local,
        MPI_Comm comm,const EBCPMLParameters& p,MovingWindowReference r,
@@ -537,8 +548,10 @@ void MovingWindowFields::setBeforeInletObserver(
   impl_->beforeInletObserver=observer;
   impl_->beforeInletContext=context;
 }
-void MovingWindowFields::setNewLayerCompletion(NewLayerCompletion completion,void* context) {
+void MovingWindowFields::setNewLayerCompletion(NewLayerCompletion completion,void* context,
+                                               bool centerNormalReference) {
   impl_->layerCompletion=completion;impl_->layerContext=context;
+  impl_->centerNormalReference=completion && centerNormalReference;
 }
 void MovingWindowFields::setStageObserver(StageObserver observer,void* context) {
   impl_->stageObserver=observer;impl_->stageContext=context;
@@ -609,6 +622,7 @@ std::unique_ptr<MovingWindowFields> MovingWindowFields::repartition(
   next.stageObserver=old.stageObserver;next.stageContext=old.stageContext;
   next.discreteObserver=old.discreteObserver;next.discreteContext=old.discreteContext;
   next.layerCompletion=old.layerCompletion;next.layerContext=old.layerContext;
+  next.centerNormalReference=old.centerNormalReference;
   next.boundary->phase=old.boundary->phase;
   next.boundary->established=old.boundary->established;
   next.boundary->step=old.boundary->step;next.boundary->offset=old.boundary->offset;

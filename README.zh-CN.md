@@ -2,16 +2,14 @@
 
 [English](README.md)
 
-当前发行版本为 **APRL 2.0.0**，标签 `v2.0.0`。首选基线是
-**能量守恒耦合＋纵向三点核抑制**（`conservative-source + linear-binomial3`）。
-见[2.0 固定说明](docs/releases/2.0.0.md)和[推荐配置片段](config/profiles/v2.0-three-point.yaml)。
+当前发行版为 **APRL 2.1.0**（`v2.1.0`）。默认三点核在 x 和 z 方向配对平滑。移动窗的电荷匹配入口在几何面上居中法向电场。随版十万电子算例默认加载四侧 CPML 的场和卷积记忆初值。[2.1 发行说明](docs/releases/2.1.0.md) · [束团启动示例](examples/beam_cpml_100k/README.zh-CN.md)
 
 APRL 的英文全称为 **Accelerator Particles and Radiation in Lorentz
 Frames**。APRL 是采用 C++/MPI 实现的加速器粒子与辐射模拟程序，主可执行
 文件为 `aprl`。电磁推进直接使用国际单位制 E/B；标量势和矢量势不属于时间推进
 状态。
 
-## 2.0 用户可选算法
+## 2.1 用户可选算法
 
 正式程序只接受下面两种粒子—场耦合方法：
 
@@ -29,6 +27,8 @@ mesh:
   field_solver: cowan-z
   particle_coupling: conservative-source
   longitudinal_shape: linear-binomial3  # 备选 quintic-compensated
+  # 省略此项时随纵向核选择默认值。
+  # transverse_x_shape: linear-binomial3
   current_filter: none
   self_field_feedback: true
 ```
@@ -54,11 +54,11 @@ mesh:
 w≈355仅是当前测试的资源取舍，不能宣称保留一电子一宏粒子的噪声。完整收支必须保留有符号端口、侧流、
 时间端盖、粒子输运及实记源/数值通道；计算系离散加和闭合不等于lab物理闭合。
 
-版本范围与复现入口见[发行说明](docs/releases/2.0.0.md)、[发布验收](docs/RELEASE_ACCEPTANCE_2.0.md)和[发布审计](docs/zh_CN/RELEASE_AUDIT.md)。
+版本范围与复现入口见[发行说明](docs/releases/2.1.0.md)、[发布验收](docs/releases/2.1.0.md#构建与核验)和[发布审计](docs/zh_CN/RELEASE_AUDIT.md)。
 
 ## 适用范围
 
-2.0 版本保留并提供以下计算路径：
+2.1 版本保留并提供以下计算路径：
 
 - 相对论粒子与 Maxwell 场自洽推进；
 - 沿指定 z 轴的 Cowan/CKC 可控色散传播；
@@ -78,7 +78,7 @@ seeded-FEL 与 laser-modulation 计算不属于已验证范围。
 
 - E/B 在交错 Yee 网格上以国际单位制推进。
 - 默认 `cowan-z` 格式消除轴向真空传播的相位误差；标准 Yee 格式用于回归。
-- 2.0 首选 `conservative-source` 能量守恒耦合配合 `linear-binomial3`
+- 2.1 首选 `conservative-source` 能量守恒耦合配合 `linear-binomial3`
   纵向三点核；另一个可选方法为五次补偿。用户输入中的 Boris、线性核和七点核会被拒绝。
   外磁处理仍保留原有子步骤。
 - HDF5-v4 固定实验室面输入可选原有同步、冻结三维直线推进和冻结横向（held）
@@ -174,12 +174,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++ -DBUILD_TESTING=ON
 cmake --build build -j
 cmake --build build --target verify_required
-mkdir demo-2.0
-cp config/example.yaml demo-2.0/run.yaml
-./build/uniform_lab_plane_bunch_generator --output demo-2.0/particles.h5 \
+mkdir demo-2.1
+cp config/example.yaml demo-2.1/run.yaml
+./build/uniform_lab_plane_bunch_generator --output demo-2.1/particles.h5 \
   --length-m 1e-6 --current-A 0.001 --central-momentum-MeV-c 2 \
   --emit-x-m 1e-12 --emit-y-m 1e-12 --beta-x-m 1 --beta-y-m 1 --sigma-dp 0
-(cd demo-2.0 && ../build/aprl run.yaml)
+(cd demo-2.1 && ../build/aprl run.yaml)
 ```
 
 多 rank 粒子输入默认要求 parallel HDF5。完整依赖、安装和集群运行流程见下列说明。

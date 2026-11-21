@@ -28,6 +28,9 @@ struct BlockedCowanReferenceReport {
   double minimumModeEigenvalue = 0.;
   double preparationSeconds = 0.;
   double sourceSeconds = 0.;
+  double openTraceSeconds = 0.;
+  std::size_t openTraceBytes = 0, openTraceChecks = 0;
+  double openTraceMaxRelativeError = 0.;
   double forwardSeconds = 0.;
   double reconstructionSeconds = 0.;
   double querySeconds = 0.;
@@ -74,7 +77,8 @@ public:
       const FieldVector<Double>& globalOrigin,
       const std::vector<RelativisticParticleSI>& particles,
       Double beta, const std::size_t guards[3], std::size_t blockLayers,
-      const std::string& directory, MPI_Comm communicator = MPI_COMM_WORLD,bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false);
+      const std::string& directory, MPI_Comm communicator = MPI_COMM_WORLD,bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false,
+      bool transverseXBinomial3 = false,bool openTransverse = false);
   // Open an already completed shared reference without modifying files or
   // allocating source/solver arrays. All parameters must match the writer
   // exactly, including requested blockLayers, even when it exceeded nz.
@@ -84,7 +88,8 @@ public:
       const EBGridGeometry& globalGeometry,
       const FieldVector<Double>& globalOrigin, Double beta,
       const std::size_t guards[3], std::size_t blockLayers,
-      const std::string& directory, MPI_Comm communicator = MPI_COMM_SELF,bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false);
+      const std::string& directory, MPI_Comm communicator = MPI_COMM_SELF,bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false,
+      bool transverseXBinomial3 = false,bool openTransverse = false);
   ~BlockedCowanReference();
   BlockedCowanReference(const BlockedCowanReference&) = delete;
   BlockedCowanReference& operator=(const BlockedCowanReference&) = delete;

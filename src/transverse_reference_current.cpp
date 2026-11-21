@@ -25,8 +25,10 @@ std::vector<Point> points(const EBGridGeometry& g,const std::size_t guard[3]) {
   for(std::size_t j=y0+1;j<y1;++j)for(auto i:{x0,x1})result.push_back({i,j,.5L});
   return result;
 }
-Header header(const EBGridGeometry& g,const std::size_t guard[3],double beta) {
-  return {magic,1,g.nx,g.ny,g.nz,guard[0],guard[1],points(g,guard).size(),g.dx,g.dy,g.dz,g.dt,beta};
+Header header(const EBGridGeometry& g,const std::size_t guard[3],double beta,bool transverseXBinomial3) {
+  // Keep legacy caches byte-compatible; x-smoothed reference B requires its own tag.
+  const std::uint64_t version=transverseXBinomial3?2:1;
+  return {magic,version,g.nx,g.ny,g.nz,guard[0],guard[1],points(g,guard).size(),g.dx,g.dy,g.dz,g.dt,beta};
 }
 void writeAll(int fd,const void* data,std::size_t size) {
   auto* p=static_cast<const char*>(data);
@@ -42,8 +44,8 @@ void readAll(int fd,void* data,std::size_t size,std::size_t offset) {
 }
 }
 void TransverseReferenceCurrent::prepare(const std::string& file,
-    verification::BlockedCowanReference& ref,const EBGridGeometry& g,const std::size_t guard[3],double beta) {
-  const auto h=header(g,guard,beta);const auto target=points(g,guard);
+    verification::BlockedCowanReference& ref,const EBGridGeometry& g,const std::size_t guard[3],double beta,bool transverseXBinomial3) {
+  const auto h=header(g,guard,beta,transverseXBinomial3);const auto target=points(g,guard);
   const int fd=::open(file.c_str(),O_WRONLY|O_CREAT|O_EXCL,0600);
   if(fd<0)throw std::runtime_error("Cannot create reference surface-current file");
   try {
@@ -65,8 +67,8 @@ struct TransverseReferenceCurrent::Impl {
   struct Cache {std::size_t start=std::numeric_limits<std::size_t>::max(),stamp=0;std::vector<double> data;};
   Header h;std::vector<Point> target;int fd=-1;std::array<Cache,2> cache;std::size_t clock=0,step=0;
   std::vector<double> current,oldElectric;std::ofstream work;long double cumulative=0.;bool audit=false,applied=false;
-  Impl(const std::string& file,const EBGridGeometry& g,const std::size_t guards[3],double beta,const std::string& output)
-      :h(header(g,guards,beta)),target(points(g,guards)) {
+  Impl(const std::string& file,const EBGridGeometry& g,const std::size_t guards[3],double beta,const std::string& output,bool transverseXBinomial3)
+      :h(header(g,guards,beta,transverseXBinomial3)),target(points(g,guards)) {
     fd=::open(file.c_str(),O_RDONLY);if(fd<0)throw std::runtime_error("Cannot open reference surface current");
     try {
       Header actual;readAll(fd,&actual,sizeof(actual),0);
@@ -96,8 +98,8 @@ struct TransverseReferenceCurrent::Impl {
     return b.data.data()+(k-start)*h.count;
   }
 };
-TransverseReferenceCurrent::TransverseReferenceCurrent(const std::string& file,const EBGridGeometry& g,const std::size_t guards[3],double beta,const std::string& work)
- :impl_(new Impl(file,g,guards,beta,work)) {}
+TransverseReferenceCurrent::TransverseReferenceCurrent(const std::string& file,const EBGridGeometry& g,const std::size_t guards[3],double beta,const std::string& work,bool transverseXBinomial3)
+ :impl_(new Impl(file,g,guards,beta,work,transverseXBinomial3)) {}
 TransverseReferenceCurrent::~TransverseReferenceCurrent()=default;
 void TransverseReferenceCurrent::apply(EBFieldGrid& f,std::ptrdiff_t offset,std::size_t step,double beta,bool collect) {
   auto& s=*impl_;if(s.applied)throw std::logic_error("Unfinished reference source step");s.step=step+1;s.audit=collect;

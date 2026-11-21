@@ -396,7 +396,8 @@ namespace aprl
     initialize();
     if(config_.mesh.conservativeSourceCoupling) {
       if(incident_)throw std::invalid_argument("conservative-source does not support incident waves");
-      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.particleBalance.enabled,config_.mesh.oneWaySourceDiagnostic));
+      sourceCoupling_.reset(new ConservativeSourceCoupling(communicator_,config_.mesh.movingWindow.referenceDirectory,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.particleBalance.enabled,config_.mesh.oneWaySourceDiagnostic,config_.mesh.transverseXBinomial3));
+      if(config_.mesh.transverseXBinomial3)logRoot(communicator_,"[x-source] x_binomial3=1; transverse current and charge weights [1,2,1]/4; matched particle and reference fields");
       if(config_.mesh.longitudinalNotch)logRoot(communicator_,"[source-coupling] linear-notch: matched seven-point charge/current/electric source shape and magnetic gather; F=1-sin^6(kz*dz/2); Cowan curls/dt unchanged");
       if(config_.mesh.longitudinalBinomial3)logRoot(communicator_,"[source-coupling] linear-binomial3: matched three-point charge/current/electric source shape and magnetic gather; F=cos^2(kz*dz/2); Cowan curls/dt unchanged");
       logRoot(communicator_,"[source-coupling] conservative-source; original release/migration/detectors; transactional trials and converged substep replay; original Cowan curls and committed CPML history once per step");

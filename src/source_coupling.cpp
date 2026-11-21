@@ -16,7 +16,7 @@ using namespace source_coupling_math;
 struct ConservativeSourceCoupling::Impl {
  struct Slot {RelativisticParticleSI first,last;Vec guess=Vec(0.),usedE=Vec(0.),usedB=Vec(0.),nextE=Vec(0.),nextB=Vec(0.);bool seen=false,initialized=false,replayed=false,nextReady=false;unsigned pushes=0;Double time=0.,dt=0.;std::vector<RelativisticParticleSI> states;std::vector<BorisWork> works;};
  struct Constraint {Vec begin,end;Double charge;bool carrier;};
- bool quintic=false,linearNotch=false,linearBinomial3=false,compact=false,oneWay=false;std::unique_ptr<longitudinal_shape::Current> shapedCurrent;
+ bool quintic=false,linearNotch=false,linearBinomial3=false,transverseXBinomial3=false,compact=false,oneWay=false;std::unique_ptr<longitudinal_shape::Current> shapedCurrent;
  bool wide()const{return quintic||linearNotch||linearBinomial3;}
  // Two layers cover exact nonzero F3 support. Retain one more native layer
  // for IEEE world/local normalization and exact-zero interpolation corners.
@@ -32,7 +32,7 @@ struct ConservativeSourceCoupling::Impl {
   const auto path=open?clipOpenOrbit(fields->geometry(),origin,a,b,&newHalo):OpenOrbit();
   const Vec& first=open?path.begin:a;const Vec& last=open?path.end:b;if(open&&!path.valid)throw std::out_of_range("Quintic active orbit outside domain");
   Vec result(0.);const YeeComponent* e[3]={&fields->ex(),&fields->ey(),&fields->ez()};
-  longitudinal_shape::weights(fields->geometry(),origin,first,last,[&](unsigned d,long long i,long long j,long long k,double w){const auto& v=*e[d];if(i<0||j<0||i>=static_cast<long long>(v.nx())||j>=static_cast<long long>(v.ny()))return;if((k<0&&!newHalo.hasLower())||(k>=static_cast<long long>(v.nz())&&!newHalo.hasUpper()))return;result[d]+=.5*w*(newHalo.value(v,d,i,j,k)+oldHalo.value(old[d],d,i,j,k));},shape());
+  longitudinal_shape::weights(fields->geometry(),origin,first,last,[&](unsigned d,long long i,long long j,long long k,double w){const auto& v=*e[d];if(i<0||j<0||i>=static_cast<long long>(v.nx())||j>=static_cast<long long>(v.ny()))return;if((k<0&&!newHalo.hasLower())||(k>=static_cast<long long>(v.nz())&&!newHalo.hasUpper()))return;result[d]+=.5*w*(newHalo.value(v,d,i,j,k)+oldHalo.value(old[d],d,i,j,k));},shape(),transverseXBinomial3);
   if(open)result*=path.last-path.first;return result;
  }
  Vec magnetic(const Vec& a,const Vec& b){
@@ -41,6 +41,8 @@ struct ConservativeSourceCoupling::Impl {
   const auto path=clipOpenOrbit(fields->geometry(),origin,a,b,&magneticHalo);
   if(!path.valid)throw std::out_of_range("Notch magnetic orbit outside domain");
   Vec middle(path.begin);middle+=path.end;middle*=.5;Vec result(0.);
+  if(transverseXBinomial3)
+    return binomialXZMagneticSample(*fields,origin,middle,magneticHalo);
   if(linearBinomial3){for(int k=-1;k<=1;++k){Vec point(middle);point[2]+=k*fields->geometry().dz;const Vec value=magneticSample(*fields,origin,point,false,&magneticHalo,true).value;result.pmv(longitudinal_shape::binomial3Coefficient(k),value);}return result;}
   for(int k=-3;k<=3;++k){Vec point(middle);point[2]+=k*fields->geometry().dz;const Vec value=magneticSample(*fields,origin,point,false,&magneticHalo,true).value;result.pmv(longitudinal_shape::notchCoefficient(k),value);}
   return result;
@@ -55,14 +57,16 @@ struct ConservativeSourceCoupling::Impl {
 #endif
  index.emplace(p.id,slots.size());slots.emplace_back();return slots.back();}
 };
-ConservativeSourceCoupling::ConservativeSourceCoupling(MPI_Comm c,const std::string& directory,bool quintic,bool linearNotch,bool linearBinomial3,bool compact,bool oneWayDiagnostic):impl_(new Impl(c,directory)){if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)throw std::invalid_argument("Ambiguous longitudinal source shape");impl_->quintic=quintic;impl_->linearNotch=linearNotch;impl_->linearBinomial3=linearBinomial3;impl_->compact=compact;impl_->oneWay=oneWayDiagnostic;
+ConservativeSourceCoupling::ConservativeSourceCoupling(MPI_Comm c,const std::string& directory,bool quintic,bool linearNotch,bool linearBinomial3,bool compact,bool oneWayDiagnostic,bool transverseXBinomial3):impl_(new Impl(c,directory)){if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)throw std::invalid_argument("Ambiguous longitudinal source shape");impl_->quintic=quintic;impl_->linearNotch=linearNotch;impl_->linearBinomial3=linearBinomial3;impl_->compact=compact;impl_->oneWay=oneWayDiagnostic;
+ if(transverseXBinomial3 && !linearBinomial3)throw std::invalid_argument("Transverse three-point source requires longitudinal linear-binomial3");
+ impl_->transverseXBinomial3=transverseXBinomial3;
  if(oneWayDiagnostic){auto& s=*impl_;std::ostringstream suffix;suffix<<std::setw(5)<<std::setfill('0')<<s.rank;s.oneWayPath=directory+"/one-way-source-rank-"+suffix.str();s.oneWayLog.open(s.oneWayPath+".csv");if(!s.oneWayLog)throw std::runtime_error("Cannot open one-way source work log");s.oneWayLog<<std::setprecision(21)<<"step,passive_grid_work_J,controller_work_J,absolute_passive_grid_work_J,passive_x_J,passive_y_J,passive_z_J,active_segments\n";
   if(ParticleForceProbe::enabled()){s.virtualForcePath=directory+"/one-way-virtual-force-rank-"+suffix.str();s.virtualForceLog.open(s.virtualForcePath+".csv");if(!s.virtualForceLog)throw std::runtime_error("Cannot open one-way virtual force log");s.virtualForceLog<<std::setprecision(21)<<"step,source_id,runtime_id,time_box_s,dt_box_s,charge_C,mass_kg,weight,x0_m,y0_m,z0_m,x1_m,y1_m,z1_m,ux0,uy0,uz0,ux1,uy1,uz1,virtual_Ex_Vpm,virtual_Ey_Vpm,virtual_Ez_Vpm,virtual_Bx_T,virtual_By_T,virtual_Bz_T,virtual_work_x_J,virtual_work_y_J,virtual_work_z_J,controller_work_J\n";}
  }
 }
 ConservativeSourceCoupling::~ConservativeSourceCoupling()=default;
 void ConservativeSourceCoupling::reconfigurePartition(){auto& s=*impl_;s.shapedCurrent.reset();s.fields=nullptr;s.index.clear();s.slots.clear();s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();}
-void ConservativeSourceCoupling::begin(EBFieldGrid& f,const Vec& origin,const std::vector<RelativisticParticleSI>& p,unsigned cx,unsigned cy){auto& s=*impl_;s.cx=cx;s.cy=cy;s.fields=&f;s.origin=origin;s.old[0]=f.ex();s.old[1]=f.ey();s.old[2]=f.ez();s.oldHalo.exchange(f,s.comm,false,s.wide()?s.depth():1);if(s.wide()&&!s.shapedCurrent)s.shapedCurrent.reset(new longitudinal_shape::Current(f,s.comm,s.shape(),s.depth()));s.magneticHalo.exchange(f,s.comm,true,(s.linearNotch||s.linearBinomial3)?s.depth():1);s.index.clear();s.slots.clear();s.slots.reserve(p.size()+32);for(const auto& q:p){s.index.emplace(q.id,s.slots.size());s.slots.emplace_back();}s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();s.trialPushes=s.committedPushes=0;s.replay=false;}
+void ConservativeSourceCoupling::begin(EBFieldGrid& f,const Vec& origin,const std::vector<RelativisticParticleSI>& p,unsigned cx,unsigned cy){auto& s=*impl_;s.cx=cx;s.cy=cy;s.fields=&f;s.origin=origin;s.old[0]=f.ex();s.old[1]=f.ey();s.old[2]=f.ez();s.oldHalo.exchange(f,s.comm,false,s.wide()?s.depth():1);if(s.wide()&&!s.shapedCurrent)s.shapedCurrent.reset(new longitudinal_shape::Current(f,s.comm,s.shape(),s.depth(),s.transverseXBinomial3));s.magneticHalo.exchange(f,s.comm,true,(s.linearNotch||s.linearBinomial3)?s.depth():1);s.index.clear();s.slots.clear();s.slots.reserve(p.size()+32);for(const auto& q:p){s.index.emplace(q.id,s.slots.size());s.slots.emplace_back();}s.constraints.clear();s.activeSegments.clear();s.longitudinalHandoffs.clear();s.trialPushes=s.committedPushes=0;s.replay=false;}
 longitudinal_shape::Current* ConservativeSourceCoupling::longitudinalCurrent(){return impl_->shapedCurrent.get();}
 void ConservativeSourceCoupling::depositFrozenSourceSupport(const Vec& begin,const Vec& end,Double charge,bool recordWork){
  auto& s=*impl_;

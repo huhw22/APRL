@@ -274,6 +274,10 @@ namespace aprl
               stream << "  longitudinal_shape: linear-binomial3\n"
                      << "  binomial3_coefficients: [0.25, 0.5, 0.25]\n"
                      << "  binomial3_response: cos(kz*dz/2)^2\n";
+            stream << "  transverse_x_shape: " << (config.mesh.transverseXBinomial3 ? "linear-binomial3" : "linear") << '\n'
+                   << "  open_transverse_reference: " << (config.mesh.movingWindow.openTransverseReference ? "true" : "false") << '\n'
+                   << "  cpml_startup: " << config.mesh.movingWindow.cpmlStartup << '\n'
+                   << "  inlet_charge_match: " << (config.mesh.movingWindow.inletChargeMatch ? "true" : "false") << '\n';
             if(config.mesh.particleBalance.enabled)
               stream << "  mpi_particle_balance: true\n"
                      << "  mpi_balance_interval_steps: " << config.mesh.particleBalance.intervalSteps << '\n'

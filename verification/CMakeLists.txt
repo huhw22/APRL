@@ -5,7 +5,7 @@ add_library(aprl_reference_config OBJECT ../src/config.cpp)
 target_link_libraries(aprl_reference_config PRIVATE direct_eb_core)
 target_compile_definitions(aprl_reference_config PRIVATE APRL_INTERNAL_REFERENCE_ALGORITHMS=1)
 add_executable(aprl_reference_checks ../src/main.cpp)
-target_compile_definitions(aprl_reference_checks PRIVATE APRL_VERSION="2.0.0-internal-reference")
+target_compile_definitions(aprl_reference_checks PRIVATE APRL_VERSION="${PROJECT_VERSION}-internal-reference")
 target_link_libraries(aprl_reference_checks PRIVATE direct_eb_core)
 add_executable(aprl_energy_plane_checks energy_plane_checks.cpp)
 foreach(target aprl_boris_work_checks aprl_energy_plane_checks)
@@ -35,6 +35,20 @@ option(APRL_BUILD_HELD_CUT_PROBE
 option(APRL_BUILD_BLOCKED_COWAN_REFERENCE
   "Build the verification-only disk-backed modal Cowan reference generator" OFF)
 if(APRL_ENABLE_MOVING_WINDOW)
+  add_executable(aprl_beam_cpml_start_checks beam_cpml_start_checks.cpp)
+  target_link_libraries(aprl_beam_cpml_start_checks PRIVATE direct_eb_core)
+  add_test(NAME required.initial-field.beam-cpml-start
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:aprl_beam_cpml_start_checks> ${MPIEXEC_POSTFLAGS})
+  set_tests_properties(required.initial-field.beam-cpml-start PROPERTIES
+    LABELS "required;mpi;moving_window" TIMEOUT 120 PROCESSORS 2)
+  add_executable(aprl_transverse_binomial_checks transverse_binomial_checks.cpp)
+  target_link_libraries(aprl_transverse_binomial_checks PRIVATE direct_eb_core)
+  add_test(NAME required.source.transverse-binomial-x
+    COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 2 ${MPIEXEC_PREFLAGS}
+            $<TARGET_FILE:aprl_transverse_binomial_checks> ${MPIEXEC_POSTFLAGS})
+  set_tests_properties(required.source.transverse-binomial-x PROPERTIES
+    LABELS "required;mpi;moving_window" TIMEOUT 120 PROCESSORS 2)
   add_executable(aprl_charge_matched_inlet_checks charge_matched_inlet_checks.cpp)
   target_link_libraries(aprl_charge_matched_inlet_checks PRIVATE direct_eb_core)
   add_test(NAME required.inlet.charge-completion COMMAND aprl_charge_matched_inlet_checks)
@@ -312,14 +326,14 @@ foreach(pair "three-point|linear-binomial3" "momentum-matching|quintic-compensat
     ${CMAKE_COMMAND} "-DAPRL=$<TARGET_FILE:aprl>"
       "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
       "-DCHECKER=$<TARGET_FILE:aprl_output_checks>"
-      "-DCARD=${APRL_VERIFY_CARDS}/release-algorithm.yaml.in"
+      "-DCARD=${APRL_VERIFY_CARDS}/release-algorithm.yaml.in" "-DVERSION=${PROJECT_VERSION}"
       "-DWORK=${APRL_VERIFY_WORK}/algorithm-${name}" "-DSHAPE=${shape}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/check_release_algorithm.cmake")
   aprl_required_mpi_test(required.algorithms.${name}-mpi2
     ${CMAKE_COMMAND} "-DAPRL=$<TARGET_FILE:aprl>"
       "-DGENERATOR=$<TARGET_FILE:uniform_lab_plane_bunch_generator>"
       "-DCHECKER=$<TARGET_FILE:aprl_output_checks>"
-      "-DCARD=${APRL_VERIFY_CARDS}/release-algorithm.yaml.in"
+      "-DCARD=${APRL_VERIFY_CARDS}/release-algorithm.yaml.in" "-DVERSION=${PROJECT_VERSION}"
       "-DWORK=${APRL_VERIFY_WORK}/algorithm-${name}-mpi2" "-DSHAPE=${shape}"
       "-DRANKS=2" "-DMPIEXEC=${MPIEXEC_EXECUTABLE}" "-DMPI_FLAG=${MPIEXEC_NUMPROC_FLAG}"
       -P "${CMAKE_CURRENT_SOURCE_DIR}/check_release_algorithm.cmake")

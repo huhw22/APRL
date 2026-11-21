@@ -316,6 +316,36 @@ int main(int argc,char** argv) {
         "Large requested block fixture did not exercise clamping");
     });
 
+    rootAction(rank,"matched F3 charge with transverse smoothing",[&] {
+      auto input=source(g,origin,guards,beta);
+      input.resize(1);
+      auto& particle=input.front();
+      particle.position[0]=origin[0]+16.25*g.dx;
+      particle.position[1]=origin[1]+17.75*g.dy;
+      particle.position[2]=origin[2]+35.125*g.dz;
+      const std::size_t sourceBlock=12;
+      BlockedCowanReference linear(g,origin,input,beta,guards,sourceBlock,root+"/linear-x",
+                                   MPI_COMM_SELF,false,false,true);
+      BlockedCowanReference smoothed(g,origin,input,beta,guards,sourceBlock,root+"/smoothed-x",
+                                     MPI_COMM_SELF,false,false,true,true);
+      auto saved=BlockedCowanReference::openPrepared(g,origin,beta,guards,sourceBlock,
+                            root+"/smoothed-x",MPI_COMM_SELF,false,false,true,true);
+      const double scale=std::abs(particle.charge/(g.dx*g.dy*g.dz));
+      for(unsigned k=30;k<=41;++k)for(unsigned j=13;j<=22;++j)for(unsigned i=12;i<=20;++i) {
+        const double expected=.25*linear.chargeDensity(i-1,j,k)+.5*linear.chargeDensity(i,j,k)
+                             +.25*linear.chargeDensity(i+1,j,k);
+        require(std::abs(smoothed.chargeDensity(i,j,k)-expected)<1.e-14*scale,
+                "Initial reference and particle source use different transverse weights");
+        require(saved->chargeDensity(i,j,k)==smoothed.chargeDensity(i,j,k),
+                "Prepared reader lost the x-smoothed charge density");
+      }
+      unsigned rejected=0;
+      expectRejected([&] {
+        BlockedCowanReference::openPrepared(g,origin,beta,guards,sourceBlock,root+"/smoothed-x",
+                                            MPI_COMM_SELF,false,false,true,false);
+      },"read smoothed charge as linear",rejected);
+    });
+
     unsigned negatives=0;
     allAction(rank,"parameter/metadata/data negative controls",[&] {
       EBGridGeometry wrongGeometry=g;

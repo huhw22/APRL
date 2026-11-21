@@ -4,6 +4,7 @@
 #include "eb_particles.h"
 #include "eb_deposition.h"
 #include "z_partition.h"
+#include "transverse_source_shape.h"
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -134,6 +135,35 @@ inline MagneticSample magneticSample(const EBFieldGrid& f,const Vec& origin,cons
   }
  }
  return result;
+}
+// Tensor product of the x,z binomials with the original midpoint
+// trilinear Yee gather. Merging identical native samples gives 32
+// transverse/longitudinal corners per component for the full 3x3 filter.
+inline Vec binomialXZMagneticSample(const EBFieldGrid& f,const Vec& origin,
+                                    const Vec& point,const NativeHalo& halo) {
+  const auto& g=f.geometry();
+  const double h[3]={g.dx,g.dy,g.dz};
+  const YeeComponent* field[3]={&f.bx(),&f.by(),&f.bz()};
+  Vec value(0.);
+  for(unsigned a=0;a<3;++a) {
+    long long cell[3];
+    double fraction[3];
+    for(unsigned d=0;d<3;++d) {
+      const double pos=(point[d]-origin[d])/h[d]-(a==d?0.:0.5);
+      cell[d]=static_cast<long long>(std::floor(pos));
+      fraction[d]=pos-cell[d];
+    }
+    const auto wx=transverse_source_shape::nodeWeights(fraction[0]);
+    const auto wz=transverse_source_shape::nodeWeights(fraction[2]);
+    const double wy[2]={1.-fraction[1],fraction[1]};
+    for(unsigned k=0;k<4;++k)for(unsigned j=0;j<2;++j) {
+      double row=0.;
+      for(unsigned i=0;i<4;++i)
+        row+=wx[i]*halo.openMagneticValue(*field[a],a,cell[0]-1+i,cell[1]+j,cell[2]-1+k);
+      value[a]+=wz[k]*wy[j]*row;
+    }
+  }
+  return value;
 }
 // A rigorous trilinear Lipschitz bound while both points use the same cell.
 // Otherwise evaluate the actual new sample. B nodes do not change in this loop.

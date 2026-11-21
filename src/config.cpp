@@ -132,7 +132,7 @@ namespace aprl
             "duration", "boost_gamma", "particle_steps_per_undulator_period",
             "maximum_particle_substeps", "longitudinal", "lengths",
             "resolution", "ballistic_outside_transverse",
-            "self_field_feedback", "one_way_source_diagnostic", "moving_window", "particle_coupling", "longitudinal_shape", "mpi_particle_balance"
+            "self_field_feedback", "one_way_source_diagnostic", "moving_window", "particle_coupling", "longitudinal_shape", "transverse_x_shape", "mpi_particle_balance"
           });
           const YAML::Node longitudinal = mesh["longitudinal"];
           if (mesh["mpi_particle_balance"])
@@ -150,7 +150,8 @@ namespace aprl
           if (moving)
             validateMapKeys(moving, "mesh.moving_window", {
               "enabled", "cells", "lower_guard_cells", "upper_guard_cells",
-              "block_layers", "particle_collar_cells", "reference_directory", "reference_through_cpml", "reference_surface_current", "inlet_charge_match"
+              "block_layers", "particle_collar_cells", "reference_directory", "reference_through_cpml", "reference_surface_current", "inlet_charge_match", "open_transverse_reference",
+              "cpml_startup", "cpml_startup_directory"
             });
         }
 
@@ -701,7 +702,8 @@ namespace aprl
 
   MovingWindowConfig::MovingWindowConfig()
     : enabled(false), cells(0), lowerGuardCells(64), upperGuardCells(128),
-      blockLayers(32), particleCollarCells(0), referenceThroughCpml(false), referenceSurfaceCurrent(false), inletChargeMatch(false), referenceDirectory()
+      blockLayers(32), particleCollarCells(0), referenceThroughCpml(false), referenceSurfaceCurrent(false), inletChargeMatch(false),
+      openTransverseReference(false), cpmlStartup("standard"), cpmlStartupDirectory(), referenceDirectory()
   {}
 
   MeshConfig::MeshConfig()
@@ -724,6 +726,7 @@ namespace aprl
 #else
       longitudinalBinomial3(true),
 #endif
+      transverseXBinomial3(longitudinalBinomial3),
       ballisticOutsideTransverse(false)
   {
     cells[0] = cells[1] = cells[2] = 0;
@@ -1082,7 +1085,7 @@ namespace aprl
     if (mesh["particle_coupling"] &&
         mesh["particle_coupling"].as<std::string>() != "conservative-source")
       throw configError(mesh["particle_coupling"],
-        "APRL 2.0 supports only particle_coupling: conservative-source; "
+        "APRL 2.1 supports only particle_coupling: conservative-source; "
         "select longitudinal_shape: linear-binomial3 (recommended) or "
         "quintic-compensated. Boris coupling is no longer supported.");
     if (mesh["longitudinal_shape"])
@@ -1090,13 +1093,28 @@ namespace aprl
         const std::string shape = mesh["longitudinal_shape"].as<std::string>();
         if (shape != "linear-binomial3" && shape != "quintic-compensated")
           throw configError(mesh["longitudinal_shape"],
-            "APRL 2.0 longitudinal_shape must be linear-binomial3 "
+            "APRL 2.1 longitudinal_shape must be linear-binomial3 "
             "(recommended) or quintic-compensated; linear and linear-notch "
             "are no longer supported.");
         result.mesh.longitudinalQuintic = shape == "quintic-compensated";
         result.mesh.longitudinalBinomial3 = shape == "linear-binomial3";
       }
 #endif
+    // The production F3 profile smooths x and z. Reference-only kernels retain
+    // their existing transverse basis unless a test explicitly selects F3 in x.
+#ifndef APRL_INTERNAL_REFERENCE_ALGORITHMS
+    result.mesh.transverseXBinomial3 = result.mesh.longitudinalBinomial3;
+#endif
+    if (const YAML::Node shape = mesh["transverse_x_shape"])
+      {
+        const std::string name = shape.as<std::string>();
+        if (name != "linear" && name != "linear-binomial3")
+          throw configError(shape, "transverse_x_shape must be linear or linear-binomial3");
+        result.mesh.transverseXBinomial3 = name == "linear-binomial3";
+        if (result.mesh.transverseXBinomial3 &&
+            (!result.mesh.longitudinalBinomial3 || !result.mesh.conservativeSourceCoupling))
+          throw configError(shape, "transverse_x_shape: linear-binomial3 requires conservative-source and longitudinal_shape: linear-binomial3");
+      }
 
     if (movingWindow)
       {
@@ -1127,6 +1145,26 @@ namespace aprl
             movingWindow["reference_surface_current"].as<bool>();
         if(movingWindow["inlet_charge_match"])
           result.mesh.movingWindow.inletChargeMatch=movingWindow["inlet_charge_match"].as<bool>();
+        auto& window = result.mesh.movingWindow;
+        if (movingWindow["open_transverse_reference"])
+          window.openTransverseReference = movingWindow["open_transverse_reference"].as<bool>();
+        if (const YAML::Node method = movingWindow["cpml_startup"])
+          {
+            window.cpmlStartup = method.as<std::string>();
+            if (window.cpmlStartup != "standard" && window.cpmlStartup != "osiris" &&
+                window.cpmlStartup != "left-20056")
+              throw configError(method, "cpml_startup must be standard, osiris or left-20056");
+          }
+        if (const YAML::Node directory = movingWindow["cpml_startup_directory"])
+          window.cpmlStartupDirectory = resolveRelativeToConfig(filename,
+            checkpointPath(directory, "cpml_startup_directory"));
+        if ((window.cpmlStartup == "standard") != window.cpmlStartupDirectory.empty())
+          throw configError(movingWindow, "osiris and left-20056 require cpml_startup_directory; standard uses no startup pack");
+        if (window.cpmlStartup != "standard" &&
+            (!window.openTransverseReference || !result.mesh.transverseXBinomial3))
+          throw configError(movingWindow, "prepared CPML startup requires open_transverse_reference and transverse_x_shape: linear-binomial3");
+        if (window.openTransverseReference && (!window.enabled || !window.referenceThroughCpml || window.referenceSurfaceCurrent))
+          throw configError(movingWindow, "open_transverse_reference requires an enabled moving window, reference_through_cpml and no reference_surface_current");
         if (movingWindow["reference_directory"])
           {
             if (!movingWindow["reference_directory"].IsScalar())
@@ -1233,7 +1271,7 @@ namespace aprl
 #ifndef APRL_INTERNAL_REFERENCE_ALGORITHMS
     if (result.mesh.currentFilter != EBCurrentFilter::None)
       throw configError(mesh["current_filter"],
-        "APRL 2.0 requires current_filter: none; select the three-point "
+        "APRL 2.1 requires current_filter: none; select the three-point "
         "kernel with longitudinal_shape: linear-binomial3 instead of "
         "applying a separate current filter.");
 #endif

@@ -2,6 +2,7 @@
 #define APRL_LONGITUDINAL_SHAPE_H
 #include "eb_field.h"
 #include "z_partition.h"
+#include "transverse_source_shape.h"
 #include <array>
 #include <algorithm>
 #include <cmath>
@@ -53,15 +54,58 @@ inline Basis basis(double z,bool edge=false,Shape shape=Shape::QuinticCompensate
  for(unsigned j=0;j<=degree;++j)for(unsigned k=0;k<7;++k)r.v[j+k]+=n[j]*c[k];return r;
 }
 inline double nodeWeight(double z,long long node,Shape shape=Shape::QuinticCompensated){const auto b=basis(z,false,shape);return node<b.first||node>=b.first+b.count?0.:b.v[node-b.first];}
+// On a single crossed cell, each face-current weight is a product of two
+// affine node weights and a constant edge weight. For a normalized segment
+// the integral of two affine weights equals their midpoint product plus
+// their endpoint changes multiplied and divided by twelve.
+template<class Visit>
+inline void binomialXZSegment(const EBGridGeometry& grid,const double start[3],
+    const double delta[3],double first,double last,Visit& visit) {
+  const double width=last-first;
+  const double mid=(first+last)*0.5;
+  const double x=start[0]+mid*delta[0], y=start[1]+mid*delta[1], z=start[2]+mid*delta[2];
+  long long i=static_cast<long long>(std::floor(x)), j=static_cast<long long>(std::floor(y));
+  const long long k=static_cast<long long>(std::floor(z));
+  if(i==static_cast<long long>(grid.nx))--i;
+  if(j==static_cast<long long>(grid.ny))--j;
+  const auto wx=transverse_source_shape::nodeWeights(x-i);
+  const auto wz=transverse_source_shape::nodeWeights(z-k);
+  const double wy[2]={1.-(y-j),y-j};
+  const double edge[3]={0.25,0.5,0.25};
+  const double slope[4]={-0.25,-0.25,0.25,0.25};
+  const double sy[2]={-1.,1.};
+  const double curvature=width*width/12.;
+  const double xy=curvature*delta[0]*delta[1];
+  const double xz=curvature*delta[0]*delta[2];
+  const double yz=curvature*delta[1]*delta[2];
+  for(unsigned c=0;c<4;++c) {
+    for(unsigned b=0;b<2;++b) {
+      const double weight=width*(wy[b]*wz[c]+yz*sy[b]*slope[c]);
+      for(unsigned a=0;a<3;++a)visit(0,i-1+a,j+b,k-1+c,weight*edge[a]);
+    }
+    for(unsigned a=0;a<4;++a)
+      visit(1,i-1+a,j,k-1+c,width*(wx[a]*wz[c]+xz*slope[a]*slope[c]));
+  }
+  for(unsigned b=0;b<2;++b)
+    for(unsigned a=0;a<4;++a) {
+      const double weight=width*(wx[a]*wy[b]+xy*slope[a]*sy[b]);
+      for(unsigned c=0;c<3;++c)visit(2,i-1+a,j+b,k-1+c,weight*edge[c]);
+    }
+}
 // Exact polynomial quadrature on each crossed tensor cell: degree <= 6.
 // Callback receives orbit-average current weights, with native Yee indices.
 template<class Visit> unsigned weights(const EBGridGeometry& g,const FieldVector<Double>& origin,
- const FieldVector<Double>& begin,const FieldVector<Double>& end,Visit visit,Shape shape=Shape::QuinticCompensated) {
+ const FieldVector<Double>& begin,const FieldVector<Double>& end,Visit visit,Shape shape=Shape::QuinticCompensated,
+ bool smoothX=false) {
  const double h[3]={g.dx,g.dy,g.dz};double x[3],v[3],cuts[64]={0.,1.};unsigned count=2;
  for(unsigned a=0;a<3;++a){x[a]=(begin[a]-origin[a])/h[a];v[a]=(end[a]-begin[a])/h[a];
   if(v[a]!=0.)for(long long j=static_cast<long long>(std::floor(std::min(x[a],x[a]+v[a])))+1;j<std::max(x[a],x[a]+v[a]);++j){if(count==64)throw std::runtime_error("Quintic orbit exceeds crossing budget");cuts[count++]=(j-x[a])/v[a];}}
  std::sort(cuts,cuts+count);const double q[4]={-.8611363115940525752,-.3399810435848562648,.3399810435848562648,.8611363115940525752},qw[4]={.3478548451374538574,.6521451548625461426,.6521451548625461426,.3478548451374538574};unsigned segments=0;
  for(unsigned s=1;s<count;++s){const double width=cuts[s]-cuts[s-1];if(width<=0.)continue;++segments;
+  if(smoothX && shape==Shape::LinearBinomial3){
+    binomialXZSegment(g,x,v,cuts[s-1],cuts[s],visit);
+    continue;
+  }
   const unsigned points=(shape==Shape::LinearNotch||shape==Shape::LinearBinomial3)?2:4;
   for(unsigned t=0;t<points;++t){const double node=points==2?(t?0.57735026918962576451:-0.57735026918962576451):q[t],weight=points==2?1.:qw[t];const double u=.5*(cuts[s]+cuts[s-1]+width*node),factor=.5*width*weight,xx=x[0]+u*v[0],yy=x[1]+u*v[1],zz=x[2]+u*v[2];
    long long i=static_cast<long long>(std::floor(xx)),j=static_cast<long long>(std::floor(yy));if(i==static_cast<long long>(g.nx))--i;if(j==static_cast<long long>(g.ny))--j;
@@ -74,7 +118,7 @@ template<class Visit> unsigned weights(const EBGridGeometry& g,const FieldVector
 // z ghost source contributions are reduced before the existing shared-plane
 // current sum. Shared node planes themselves retain the original ownership.
 class Current {
- EBFieldGrid& f_;MPI_Comm comm_;int rank_,size_;unsigned depth;Shape shape_;
+ EBFieldGrid& f_;MPI_Comm comm_;int rank_,size_;unsigned depth;Shape shape_;bool smoothX_;
  std::vector<double> lower_[3],upper_[3],receive_;
  ZPartition partition_;bool thin_;
  void completeThin() {
@@ -125,13 +169,21 @@ class Current {
   }
  }
 public:
- Current(EBFieldGrid& f,MPI_Comm c,Shape shape=Shape::QuinticCompensated,unsigned haloDepth=8):f_(f),comm_(c),depth(haloDepth),shape_(shape),partition_(ZPartition::gather(f.geometry().nz,c)),thin_(partition_.minimumCells()<depth){if(!depth||(depth<8&&(shape_!=Shape::LinearBinomial3||depth<2)))throw std::invalid_argument("Compact current collar requires binomial3 and at least two layers");MPI_Comm_rank(c,&rank_);MPI_Comm_size(c,&size_);for(unsigned a=0;a<3;++a){auto& v=component(a);const auto n=depth*v.nx()*v.ny();if(n>std::numeric_limits<int>::max())throw std::overflow_error("Quintic current halo exceeds MPI count");lower_[a].resize(n);upper_[a].resize(n);}}
+ Current(EBFieldGrid& f,MPI_Comm c,Shape shape=Shape::QuinticCompensated,unsigned haloDepth=8,bool smoothX=false):f_(f),comm_(c),depth(haloDepth),shape_(shape),smoothX_(smoothX && shape==Shape::LinearBinomial3),partition_(ZPartition::gather(f.geometry().nz,c)),thin_(partition_.minimumCells()<depth){if(!depth||(depth<8&&(shape_!=Shape::LinearBinomial3||depth<2)))throw std::invalid_argument("Compact current collar requires binomial3 and at least two layers");MPI_Comm_rank(c,&rank_);MPI_Comm_size(c,&size_);for(unsigned a=0;a<3;++a){auto& v=component(a);const auto n=depth*v.nx()*v.ny();if(n>std::numeric_limits<int>::max())throw std::overflow_error("Quintic current halo exceeds MPI count");lower_[a].resize(n);upper_[a].resize(n);}}
  YeeComponent& component(unsigned a){return a==0?f_.jx():(a==1?f_.jy():f_.jz());}
  void clear(){for(unsigned a=0;a<3;++a){std::fill(lower_[a].begin(),lower_[a].end(),0.);std::fill(upper_[a].begin(),upper_[a].end(),0.);}}
  unsigned deposit(const FieldVector<Double>& origin,const FieldVector<Double>& begin,const FieldVector<Double>& end,double charge){const auto& g=f_.geometry();
   if(depth<8){const double distance=std::abs(end[2]-begin[2]),tolerance=128*std::numeric_limits<double>::epsilon()*std::max(g.dz,std::max(std::abs(origin[2]),std::max(std::abs(begin[2]),std::abs(end[2]))));if(!std::isfinite(distance)||distance>g.dz+tolerance)throw std::out_of_range("Compact binomial3 current requires at most one-cell longitudinal motion");}
   double scale[3];for(unsigned a=0;a<3;++a)scale[a]=charge*(end[a]-begin[a])/(g.dx*g.dy*g.dz*g.dt);
-  return weights(g,origin,begin,end,[&](unsigned a,long long i,long long j,long long k,double w){if(scale[a]==0.)return;auto& v=component(a);if(i<0||j<0||i>=static_cast<long long>(v.nx())||j>=static_cast<long long>(v.ny()))throw std::out_of_range("Quintic transverse current support outside grid");const auto plane=v.nx()*v.ny();const double value=scale[a]*w;if(k>=0&&k<static_cast<long long>(v.nz()))v(i,j,k)+=value;else if(k<0&&rank_>0){if(k<-(long long)depth)throw std::out_of_range("Quintic lower current collar");lower_[a][(depth+k)*plane+j*v.nx()+i]+=value;}else if(k>=static_cast<long long>(v.nz())&&rank_+1<size_){if(k>=static_cast<long long>(v.nz()+depth))throw std::out_of_range("Quintic upper current collar");upper_[a][(k-v.nz())*plane+j*v.nx()+i]+=value;}},shape_);
+  return weights(g,origin,begin,end,[&](unsigned a,long long i,long long j,long long k,double w){
+   if(scale[a]==0.)return;
+   auto& v=component(a);
+   if(i<0 || i>=static_cast<long long>(v.nx())) {
+    if(smoothX_)return;
+    throw std::out_of_range("Transverse current support outside x grid");
+   }
+   if(j<0 || j>=static_cast<long long>(v.ny()))throw std::out_of_range("Transverse current support outside y grid");
+   const auto plane=v.nx()*v.ny();const double value=scale[a]*w;if(k>=0&&k<static_cast<long long>(v.nz()))v(i,j,k)+=value;else if(k<0&&rank_>0){if(k<-(long long)depth)throw std::out_of_range("Quintic lower current collar");lower_[a][(depth+k)*plane+j*v.nx()+i]+=value;}else if(k>=static_cast<long long>(v.nz())&&rank_+1<size_){if(k>=static_cast<long long>(v.nz()+depth))throw std::out_of_range("Quintic upper current collar");upper_[a][(k-v.nz())*plane+j*v.nx()+i]+=value;}},shape_,smoothX_);
  }
  void complete(){if(thin_){completeThin();return;}for(unsigned a=0;a<3;++a){auto& v=component(a);const auto plane=v.nx()*v.ny(),n=lower_[a].size();receive_.assign(n,0.);const int lo=rank_?rank_-1:MPI_PROC_NULL,hi=rank_+1<size_?rank_+1:MPI_PROC_NULL;
    MPI_Sendrecv(lower_[a].data(),n,MPI_DOUBLE,lo,22100+a,receive_.data(),n,MPI_DOUBLE,hi,22100+a,comm_,MPI_STATUS_IGNORE);

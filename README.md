@@ -2,17 +2,14 @@
 
 [中文说明](README.zh-CN.md)
 
-The release is **APRL 2.0.0**, tagged `v2.0.0`. The default and preferred baseline is
-**energy-conserving coupling with the longitudinal three-point kernel**
-(`conservative-source + linear-binomial3`). See the [release record](docs/releases/2.0.0.md)
-and [explicit configuration fragment](config/profiles/v2.0-three-point.yaml).
+The current release is **APRL 2.1.0** (`v2.1.0`). The default three-point profile smooths both x and z. The matched moving inlet centers the normal electric field on the entrance face. The supplied 100,000-electron example uses a four-side CPML startup with precomputed fields and memories. See the [release notes](docs/releases/2.1.0.md) and [beam example](examples/beam_cpml_100k/README.zh-CN.md).
 
 APRL is a C++/MPI program for accelerator-particle and radiation simulations
 in Lorentz-boosted frames. The primary executable is `aprl`. Electromagnetic
 evolution uses SI electric and magnetic fields directly; scalar and vector
 potentials are not part of the time-advance state.
 
-## Algorithms in 2.0
+## Algorithms in 2.1
 
 The installed solver accepts exactly two particle–field coupling algorithms:
 
@@ -32,6 +29,8 @@ mesh:
   field_solver: cowan-z
   particle_coupling: conservative-source
   longitudinal_shape: linear-binomial3  # or quintic-compensated
+  # Omit transverse_x_shape to select the matching default for each longitudinal_shape.
+  # transverse_x_shape: linear-binomial3
   current_filter: none
   self_field_feedback: true
 ```
@@ -65,12 +64,12 @@ you intend to report. Retain signed field ports, side flux, time caps, particle
 transport and recorded source/numerical channels when checking energy; a closed
 boost-frame discrete sum is not proof of laboratory physical closure.
 
-See [release notes](docs/releases/2.0.0.md), [acceptance procedure](docs/RELEASE_ACCEPTANCE_2.0.md)
+See [release notes](docs/releases/2.1.0.md), [acceptance procedure](docs/releases/2.1.0.md#构建与核验)
 and [release audit](docs/RELEASE_AUDIT.md) for scope and reproduction.
 
 ## Scope
 
-Version 2.0 retains and provides the following computation paths:
+Version 2.1 retains and provides the following computation paths:
 
 - self-consistent relativistic particle and Maxwell evolution;
 - Cowan/CKC controlled-dispersion propagation along the configured z axis;
@@ -219,12 +218,12 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_CXX_COMPILER=mpic++ -DBUILD_TESTING=ON
 cmake --build build -j
 cmake --build build --target verify_required
-mkdir demo-2.0
-cp config/example.yaml demo-2.0/run.yaml
-./build/uniform_lab_plane_bunch_generator --output demo-2.0/particles.h5 \
+mkdir demo-2.1
+cp config/example.yaml demo-2.1/run.yaml
+./build/uniform_lab_plane_bunch_generator --output demo-2.1/particles.h5 \
   --length-m 1e-6 --current-A 0.001 --central-momentum-MeV-c 2 \
   --emit-x-m 1e-12 --emit-y-m 1e-12 --beta-x-m 1 --beta-y-m 1 --sigma-dp 0
-(cd demo-2.0 && ../build/aprl run.yaml)
+(cd demo-2.1 && ../build/aprl run.yaml)
 ```
 
 Parallel HDF5 is required by default for multi-rank particle input. Complete

@@ -88,7 +88,7 @@ bool Simulation::maybeBalanceParticles() {
   movingWindow_->particleHalo.reset(new EBParticleFieldHalo(localGeometry_,communicator_));
   if(config_.mesh.movingWindow.inletChargeMatch)
     movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],
-      config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3));
+      config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.transverseXBinomial3));
   if(detectors_)detectors_->updateGridPartition(slabCuts_,globalOriginBox_,localOriginBox_);
   const unsigned long long localCounts[2]={static_cast<unsigned long long>(particles_.size()),static_cast<unsigned long long>(pmlCarriers_.size())};
   unsigned long long countsBefore[2]={},countsAfter[2]={};

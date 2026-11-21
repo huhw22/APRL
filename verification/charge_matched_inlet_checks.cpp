@@ -22,5 +22,27 @@ int main(){try {
   require(f.ez()(6,6,1)==retained&&f.ex()(6,6,0)==tangent,"Completion changed retained/tangential fields");
   require(same(p.position,oldPosition)&&same(p.properVelocity,oldMomentum),"Completion changed source phase space");
   require(std::isfinite(r.nativeWorkJ)&&r.maxDeltaEz>0.,"Layer energy report invalid");
+  // The x-smoothed charge in the new layer must match the same convolution
+  // of three independent linear-x source deposits, including fractional x.
+  EBFieldGrid expected(g),actual(g);
+  ChargeMatchedInlet smoothed(g,2,2,false,false,true,true);
+  ChargeMatchedInlet original(g,2,2,false,false,true);
+  original.begin(origin);
+  smoothed.begin(origin);
+  smoothed.particle(p);
+  for(int dx=-1;dx<=1;++dx) {
+    auto shifted=p;
+    shifted.position[0]+=dx*g.dx;
+    shifted.charge*=dx==0?.5:.25;
+    original.particle(shifted);
+  }
+  original.complete(expected,true);
+  const auto smoothedReport=smoothed.complete(actual,true);
+  require(smoothedReport.particles==1 && smoothedReport.maxAfter<1.e-26,
+          "Smoothed inlet did not match Gauss on the new face");
+  for(std::size_t j=0;j<actual.ez().ny();++j)
+    for(std::size_t i=0;i<actual.ez().nx();++i)
+      require(std::abs(actual.ez()(i,j,0)-expected.ez()(i,j,0))<1.e-15,
+              "Inlet rho and particle current use different x shapes");
   std::cout<<"CHARGE_MATCHED_INLET_PASS\n";
 }catch(const std::exception& e){std::cerr<<e.what()<<'\n';return 1;}return 0;}

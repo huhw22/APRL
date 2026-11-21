@@ -7,6 +7,7 @@
 #include "eb_field.h"
 #include "eb_particles.h"
 #include "longitudinal_shape.h"
+#include "transverse_source_shape.h"
 namespace aprl {
 // A generator-independent completion of the NEW inlet layer only. The
 // supplied background may be approximate; the incoming particle states and
@@ -15,10 +16,12 @@ namespace aprl {
 class ChargeMatchedInlet {
 public:
   struct Report {long double nativeWorkJ=0.;double maxBefore=0.,maxAfter=0.,maxDeltaEz=0.;std::size_t particles=0;};
-  ChargeMatchedInlet(const EBGridGeometry& g,std::size_t gx,std::size_t gy,bool quintic=false,bool linearNotch=false,bool linearBinomial3=false)
-    :g_(g),gx_(gx),gy_(gy),quintic_(quintic||linearNotch||linearBinomial3),linearNotch_(linearNotch),linearBinomial3_(linearBinomial3),rho_((g.nx+1)*(g.ny+1),0.) {
+  ChargeMatchedInlet(const EBGridGeometry& g,std::size_t gx,std::size_t gy,bool quintic=false,bool linearNotch=false,bool linearBinomial3=false,bool transverseXBinomial3=false)
+    :g_(g),gx_(gx),gy_(gy),quintic_(quintic||linearNotch||linearBinomial3),linearNotch_(linearNotch),linearBinomial3_(linearBinomial3),xBinomial_(transverseXBinomial3),rho_((g.nx+1)*(g.ny+1),0.) {
     if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)
       throw std::invalid_argument("Ambiguous charge-matched inlet source shape");
+    if(xBinomial_ && !linearBinomial3_)
+      throw std::invalid_argument("Transverse three-point inlet requires longitudinal linear-binomial3");
     if(g.nz<2 || gx+1>=g.nx-gx || gy+1>=g.ny-gy)
       throw std::invalid_argument("Charge-matched inlet needs an interior physical aperture");
   }
@@ -31,12 +34,21 @@ public:
     const double x=(p.position[0]-origin_[0])/g_.dx,y=(p.position[1]-origin_[1])/g_.dy;
     if(!std::isfinite(x)||!std::isfinite(y)||!std::isfinite(z)||!std::isfinite(p.charge))
       throw std::runtime_error("Nonfinite charge-matched inlet source");
-    if(x<0.||x>g_.nx||y<0.||y>g_.ny)return;
-    const auto i=static_cast<std::size_t>(std::floor(x)),j=static_cast<std::size_t>(std::floor(y));
-    const double fx=x-i,fy=y-j,scale=p.charge*(1./(g_.dx*g_.dy*g_.dz));
-    for(unsigned b=0;b<2;++b)for(unsigned a=0;a<2;++a)
-      if(i+a<=g_.nx&&j+b<=g_.ny)
-        rho_[(j+b)*(g_.nx+1)+i+a]+=scale*(a?fx:1.-fx)*(b?fy:1.-fy)*wz;
+    if(y<0. || y>g_.ny)return;
+    // The wider x shape can overlap a native node before its centre enters.
+    if(xBinomial_ ? (x<=-2. || x>=g_.nx+2.) : (x<0. || x>g_.nx))return;
+    const long long ix=static_cast<long long>(std::floor(x));
+    const auto j=static_cast<std::size_t>(std::floor(y));
+    const double fx=x-ix,fy=y-j,scale=p.charge*(1./(g_.dx*g_.dy*g_.dz));
+    const auto wx=xBinomial_ ? transverse_source_shape::nodeWeights(fx) :
+                               std::array<double,4>{{1.-fx,fx,0.,0.}};
+    const unsigned nX=xBinomial_?4:2;
+    const auto first=ix-(xBinomial_?1:0);
+    for(unsigned b=0;b<2;++b)for(unsigned a=0;a<nX;++a){
+      const auto i=first+a;
+      if(i>=0 && i<=static_cast<long long>(g_.nx) && j+b<=g_.ny)
+        rho_[(j+b)*(g_.nx+1)+static_cast<std::size_t>(i)]+=scale*wx[a]*(b?fy:1.-fy)*wz;
+    }
     ++particles_;
   }
   Report complete(EBFieldGrid& f,bool audit) {
@@ -61,6 +73,7 @@ public:
 private:
   EBGridGeometry g_;std::size_t gx_,gy_,particles_=0;FieldVector<Double> origin_;
   bool quintic_,linearNotch_,linearBinomial3_;
+  const bool xBinomial_;
   std::vector<double> rho_;
 };
 }

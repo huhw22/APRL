@@ -96,7 +96,10 @@ public:
   // Optional completion of the newly inserted global-left layer, before the
   // inserted/remap energies are measured. It must leave retained nodes intact.
   using NewLayerCompletion = void (*)(void*, EBFieldGrid&, std::size_t, std::ptrdiff_t);
-  void setNewLayerCompletion(NewLayerCompletion completion,void* context);
+  // With centered normal matching, the two Ez half-cells have the same
+  // face average as the reference after completion of the interior half-cell.
+  void setNewLayerCompletion(NewLayerCompletion completion,void* context,
+                             bool centerNormalReference = false);
   using StageObserver = void (*)(void*, const char*, const EBFieldGrid&);
   void setStageObserver(StageObserver observer, void* context);
   using DiscreteObserver = void (*)(void*, const char*, const EBFieldGrid&,

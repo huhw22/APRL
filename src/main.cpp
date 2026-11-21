@@ -30,7 +30,9 @@ int main(int argc, char** argv)
         "Particle algorithms (mesh.longitudinal_shape):\n"
         "  linear-binomial3     energy-conserving three-point (default)\n"
         "  quintic-compensated  energy-conserving quintic compensation\n"
-        "Both use particle_coupling: conservative-source.\n";
+        "Both use particle_coupling: conservative-source.\n"
+        "The three-point kernel also smooths x by default (mesh.transverse_x_shape).\n"
+        "Moving-window CPML startup: standard, osiris or left-20056 (prepared inputs).\n";
       return 0;
     }
   int providedThreadLevel = MPI_THREAD_SINGLE;

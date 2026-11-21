@@ -1,4 +1,4 @@
-# APRL 2.0 minimal moving-window bending example (not a convergence card).
+# APRL 2.1 minimal moving-window bending example (not a convergence card).
 # Generate particles.h5 in the same directory; see README quick start.
 units: {length: micrometer, time: femtosecond}
 runtime: {mode: throughput, resource_monitor: {enabled: false}}

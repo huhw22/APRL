@@ -1,6 +1,8 @@
 #include "blocked_cowan_reference.h"
+#include "transverse_source_shape.h"
 #include "longitudinal_shape.h"
 #include "compute_threads.h"
+#include "open_transverse_trace.h"
 
 #include <algorithm>
 #include <array>
@@ -210,6 +212,11 @@ struct BlockedCowanReference::Impl {
     std::vector<Double> values;
   };
   bool quintic=false,linearNotch=false,linearBinomial3=false;
+  const bool xBinomial;
+  const bool openSides;
+  OpenTransverseTrace side;
+  Double ellipticStencil[3][3][3]={};
+  std::size_t physicalGuards[3]={};
   EBGridGeometry g;
   FieldVector<Double> origin;
   Double beta,translation,upperWeight,lowerWeight,magneticScale;
@@ -229,8 +236,8 @@ struct BlockedCowanReference::Impl {
   Impl(const EBGridGeometry& geometry,const FieldVector<Double>& where,
        const std::vector<RelativisticParticleSI>& particles,Double velocity,
        const std::size_t guards[3],std::size_t block,const std::string& dir,
-       MPI_Comm communicator,bool shaped,bool notch,bool binomial3)
-    : quintic(shaped),linearNotch(notch),linearBinomial3(binomial3),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
+       MPI_Comm communicator,bool shaped,bool notch,bool binomial3,bool transverseXBinomial3,bool openTransverse)
+    : quintic(shaped),linearNotch(notch),linearBinomial3(binomial3),xBinomial(transverseXBinomial3),openSides(openTransverse),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
       lowerWeight(0.),magneticScale(0.),requestedBlockLayers(block),blockLayers(block),
       area(0),fullArea(0),directory(dir) {
     const auto start=Clock::now();
@@ -246,6 +253,7 @@ struct BlockedCowanReference::Impl {
     phiFile.create(directory+"/phi.bin");
     stats.particles=particles.size();
     if(quintic||linearNotch||linearBinomial3)depositQuintic(particles);else deposit(particles);
+    if(openSides) prepareOpenSides();
     solve(diagonal,offDiagonal);
     validateFileLengths();
     // Publish completion only after data have reached the shared filesystem.
@@ -260,8 +268,8 @@ struct BlockedCowanReference::Impl {
 
   Impl(const EBGridGeometry& geometry,const FieldVector<Double>& where,
        Double velocity,const std::size_t guards[3],std::size_t block,
-       const std::string& dir,MPI_Comm communicator,bool shaped,bool notch,bool binomial3)
-    : quintic(shaped),linearNotch(notch),linearBinomial3(binomial3),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
+       const std::string& dir,MPI_Comm communicator,bool shaped,bool notch,bool binomial3,bool transverseXBinomial3,bool openTransverse)
+    : quintic(shaped),linearNotch(notch),linearBinomial3(binomial3),xBinomial(transverseXBinomial3),openSides(openTransverse),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
       lowerWeight(0.),magneticScale(0.),requestedBlockLayers(block),blockLayers(block),
       area(0),fullArea(0),directory(dir) {
     const auto start=Clock::now();
@@ -271,6 +279,13 @@ struct BlockedCowanReference::Impl {
     rhoFile.openReadOnly(directory+"/rho.bin");
     checkpointFile.openReadOnly(directory+"/checkpoints.bin");
     phiFile.openReadOnly(directory+"/phi.bin");
+    if(openSides) {
+      DiskFile file;
+      file.openReadOnly(directory+"/side-potential.bin");
+      if(file.size()!=bytes(side.values.size())) throw std::runtime_error("Wrong open reference boundary file length");
+      file.read(side.values.data(),side.values.size(),0,stats.bytesRead);
+      for(double value:side.values) if(!std::isfinite(value)) throw std::runtime_error("Nonfinite prepared wall potential");
+    }
     validateFileLengths();
     stats.preparedReader=true;
     stats.openSeconds=seconds(start);
@@ -280,7 +295,19 @@ struct BlockedCowanReference::Impl {
   }
 
   void configure(const std::size_t guards[3],MPI_Comm communicator) {
-    validate(guards,communicator);
+    if(xBinomial && !linearBinomial3)
+      throw std::invalid_argument("Transverse three-point reference requires longitudinal linear-binomial3");
+    if(!guards) throw std::invalid_argument("Missing reference guards");
+    for(unsigned d=0;d<3;++d) physicalGuards[d]=guards[d];
+    if(openSides) {
+      if(guards[2]!=0 || guards[0]==0 || guards[1]==0)
+        throw std::invalid_argument("Open transverse reference requires only transverse CPML");
+      for(auto n:{g.nx,g.ny,g.nz}) if(n>=std::size_t(std::numeric_limits<int>::max()/4))
+        throw std::overflow_error("Open transverse reference dimensions exceed supported indices");
+    }
+    const std::size_t solveGuards[3]={openSides?0:guards[0],openSides?0:guards[1],guards[2]};
+    validate(solveGuards,communicator);
+    if(openSides) {side.configure(g);stats.openTraceBytes=bytes(side.values.size());}
     coefficient=EBCowanCoefficients::forZDispersion(g.dx,g.dy,g.dz);
     const Double speed=beta*SI::c;
     translation=speed*speed*SI::epsilon0*SI::mu0;
@@ -379,8 +406,11 @@ struct BlockedCowanReference::Impl {
       << doubleBits(upperWeight) << ' ' << doubleBits(magneticScale)
       << "\nsource_bytes " << bytes(product(area,nodes[2]))
       << "\ncheckpoint_bytes " << bytes(product(product(stats.blocks,area),2))
-      << "\npotential_bytes " << bytes(product(area,nodes[2]))
-      << "\nEND_CONTRACT\n";
+      << "\npotential_bytes " << bytes(product(area,nodes[2]));
+    if(openSides) out<<"\nopen_transverse free-rho-coulomb-outer-ghost-d7-v1\nphysical_cpml "
+                     <<physicalGuards[0]<<' '<<physicalGuards[1]<<' '<<physicalGuards[2];
+    if(xBinomial)out<<"\ntransverse_x_source linear-binomial3-cos2-three-point-v1";
+    out<<"\nEND_CONTRACT\n";
     if(quintic)out<<"longitudinal_source quintic-continuum-seven-point-v1\n";
     if(linearNotch)out<<"longitudinal_source linear-notch-sin6-seven-point-v1\n";
     if(linearBinomial3)out<<"longitudinal_source linear-binomial3-cos2-three-point-v1\n";
@@ -480,6 +510,8 @@ struct BlockedCowanReference::Impl {
     const Double translationZ=translation/(g.dz*g.dz);
     stencil[1][1][1]-=2.*translationZ;
     stencil[0][1][1]+=translationZ; stencil[2][1][1]+=translationZ;
+    for(int z=0;z<3;++z)for(int y=0;y<3;++y)for(int x=0;x<3;++x)
+      ellipticStencil[z][y][x]=stencil[z][y][x];
     stats.minimumModeEigenvalue=std::numeric_limits<Double>::infinity();
     const Double pi=std::acos(-1.);
     for(std::size_t j=0;j<nodes[1];++j) for(std::size_t i=0;i<nodes[0];++i) {
@@ -519,8 +551,23 @@ struct BlockedCowanReference::Impl {
     for(std::size_t b=0;b<stats.blocks;++b){const auto count=product(layers(b),area);std::fill(block.begin(),block.begin()+count,0.);
       const auto first=b?b-1:0,last=std::min(stats.blocks,b+2);
       for(std::size_t n=offsets[first];n<offsets[last];++n){const auto& p=particles[order[n]];const double x=(p.position[0]-origin[0])/g.dx,y=(p.position[1]-origin[1])/g.dy,z=(p.position[2]-origin[2])/g.dz;const long long ix=static_cast<long long>(std::floor(x)),iy=static_cast<long long>(std::floor(y));const double fx=x-ix,fy=y-iy,scale=p.charge/(g.dx*g.dy*g.dz);const auto weights=longitudinal_shape::basis(z,false,linearBinomial3?longitudinal_shape::Shape::LinearBinomial3:(linearNotch?longitudinal_shape::Shape::LinearNotch:longitudinal_shape::Shape::QuinticCompensated));
-       for(unsigned c=0;c<weights.count;++c){const auto k=weights.first+c;if(weights.v[c]==0.)continue;
-        for(unsigned j=0;j<2;++j)for(unsigned i=0;i<2;++i){const double value=scale*(i?fx:1.-fx)*(j?fy:1.-fy)*weights.v[c];if(value==0.)continue;if(k<0||ix<0||iy<0||!interior(ix+i,iy+j,k))throw std::invalid_argument("Quintic reference support touches Dirichlet surface");const std::size_t kk=k-lower[2]-1;if(kk/blockLayers!=b)continue;block[(kk%blockLayers)*area+(iy+j-lower[1]-1)*nodes[0]+ix+i-lower[0]-1]+=value;}
+       const auto wx=xBinomial ? transverse_source_shape::nodeWeights(fx) :
+                                  std::array<double,4>{{1.-fx,fx,0.,0.}};
+       const long long firstX=ix-(xBinomial?1:0);
+       const unsigned nX=xBinomial?4:2;
+       for(unsigned c=0;c<weights.count;++c){
+         const auto k=weights.first+c;
+         if(weights.v[c]==0.)continue;
+         for(unsigned j=0;j<2;++j)for(unsigned i=0;i<nX;++i){
+           const double value=scale*wx[i]*(j?fy:1.-fy)*weights.v[c];
+           if(value==0.)continue;
+           const auto nodeX=firstX+i,nodeY=iy+j;
+           if(k<0 || nodeX<0 || nodeY<0 || !interior(nodeX,nodeY,k))
+             throw std::invalid_argument("Reference charge support touches Dirichlet surface");
+           const std::size_t kk=k-lower[2]-1;
+           if(kk/blockLayers==b)
+             block[(kk%blockLayers)*area+(nodeY-lower[1]-1)*nodes[0]+nodeX-lower[0]-1]+=value;
+         }
        }
       }
       for(std::size_t j=0;j<count;++j){if(!std::isfinite(block[j]))throw std::runtime_error("Nonfinite quintic reference density");deposited+=(long double)block[j]*g.dx*g.dy*g.dz;}
@@ -596,6 +643,47 @@ struct BlockedCowanReference::Impl {
     stats.sourceSeconds=seconds(started);
   }
 
+  void prepareOpenSides() {
+    const auto started=Clock::now();
+    OpenTransverseTrace::Sources source;
+    const double gamma=1./std::sqrt(1.-translation);
+    const double scale=gamma*g.dx*g.dy*g.dz/(4.*std::acos(-1.)*SI::epsilon0);
+    std::vector<double> rho(product(blockLayers,area));
+    for(std::size_t b=0;b<stats.blocks;++b) {
+      const std::size_t count=layers(b);
+      rhoFile.read(rho.data(),product(count,area),b*blockLayers*area,stats.bytesRead);
+      for(std::size_t p=0;p<count;++p) for(std::size_t j=0;j<nodes[1];++j) for(std::size_t i=0;i<nodes[0];++i) {
+        const double density=rho[p*area+j*nodes[0]+i]; if(density==0.)continue;
+        if(i+1<=physicalGuards[0] || i+1>=g.nx-physicalGuards[0] ||
+           j+1<=physicalGuards[1] || j+1>=g.ny-physicalGuards[1])
+          throw std::runtime_error("Open reference charge overlaps original deposition guard");
+        source.x.push_back((i+1)*g.dx);source.y.push_back((j+1)*g.dy);
+        source.z.push_back((b*blockLayers+p+1)*g.dz*gamma);source.q.push_back(density*scale);
+      }
+    }
+    side.build(source,g,gamma);
+    stats.openTraceChecks=side.directChecks;stats.openTraceMaxRelativeError=side.maxRelativeError;
+    DiskFile file; file.create(directory+"/side-potential.bin");
+    file.write(side.values.data(),side.values.size(),0,stats.bytesWritten);file.synchronize();
+    stats.openTraceSeconds=seconds(started);
+  }
+
+  // A phi = rho/eps. Known nodal transverse-face contributions enter the
+  // original sine-transform/Thomas solver as -A(interior,boundary)*phi_boundary.
+  void liftOpenSides(Double* rhs,int k) const {
+    const int nx=static_cast<int>(g.nx),ny=static_cast<int>(g.ny);
+    const auto lift=[&](int i,int j) {
+      double value=0.;
+      for(int dz=-1;dz<=1;++dz)for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx) {
+        const int x=i+dx,y=j+dy;
+        if(x==0 || x==nx || y==0 || y==ny) value+=ellipticStencil[dz+1][dy+1][dx+1]*side.at(x,y,k+dz);
+      }
+      rhs[(j-1)*nodes[0]+i-1]-=value;
+    };
+    for(int i=1;i<nx;++i){lift(i,1);if(ny>2)lift(i,ny-1);}
+    for(int j=2;j<ny-1;++j){lift(1,j);if(nx>2)lift(nx-1,j);}
+  }
+
   void solve(const std::vector<Double>& diagonal,const std::vector<Double>& off) {
     PlaneDST transform(nodes[0],nodes[1]);
     std::vector<Double> rhs(product(blockLayers,area)),cprev(area,0.),dprev(area,0.);
@@ -652,7 +740,10 @@ struct BlockedCowanReference::Impl {
     const std::size_t count=product(layers(block),area);
     rhoFile.read(rhs.data(),count,product(block*blockLayers,area),stats.bytesRead);
     for(std::size_t q=0;q<count;++q) rhs[q]/=SI::epsilon0;
-    for(std::size_t k=0;k<layers(block);++k) transform.transform(rhs.data()+k*area);
+    for(std::size_t k=0;k<layers(block);++k) {
+      if(openSides) liftOpenSides(rhs.data()+k*area,static_cast<int>(block*blockLayers+k+1));
+      transform.transform(rhs.data()+k*area);
+    }
   }
 
   void memoryReport() {
@@ -663,7 +754,7 @@ struct BlockedCowanReference::Impl {
     stats.potentialCacheCapacityBytes=std::max(stats.potentialCacheCapacityBytes,potentialBytes);
     stats.sourceCacheCapacityBytes=std::max(stats.sourceCacheCapacityBytes,sourceBytes);
     stats.fieldCacheCapacityBytes=std::max(stats.fieldCacheCapacityBytes,fieldBytes);
-    stats.residentArrayBytes=potentialBytes+sourceBytes+fieldBytes;
+    stats.residentArrayBytes=potentialBytes+sourceBytes+fieldBytes+stats.openTraceBytes;
   }
   const std::vector<Double>& potentialBlock(std::size_t block) {
     for(auto& p:phiCache) if(p.block==block) {
@@ -687,7 +778,11 @@ struct BlockedCowanReference::Impl {
   }
   Double scalar(std::size_t i,std::size_t j,std::size_t k,bool source) {
     vertexBounds(i,j,k);
-    if(!interior(i,j,k)) return 0.;
+    if(!interior(i,j,k)) {
+      if(!source && openSides && (i==0 || j==0 || i==g.nx || j==g.ny))
+        return side.at(static_cast<int>(i),static_cast<int>(j),static_cast<int>(k));
+      return 0.;
+    }
     const std::size_t z=k-lower[2]-1,b=z/blockLayers;
     const std::size_t q=(z%blockLayers)*area+(j-lower[1]-1)*nodes[0]+i-lower[0]-1;
     if(!source) return potentialBlock(b)[q];
@@ -722,6 +817,26 @@ struct BlockedCowanReference::Impl {
     }
     return value-(axis==2?translation*phi[q]:0.);
   }
+  // Evaluate the same normal-difference transverse smooth even on the outer
+  // transverse faces. All physical indices, including the single external
+  // ghost, use one coordinate system. Longitudinal boundaries retain zero.
+  Double smoothOnWall(const std::vector<Double>& phi,unsigned axis,int i,int j,
+                      std::size_t p,int k) const {
+    const unsigned ta=(axis+1)%3,tb=(axis+2)%3;
+    double value=0.;
+    for(int a=-1;a<=1;++a) for(int b=-1;b<=1;++b) {
+      int d[3]={0,0,0}; d[ta]=a; d[tb]=b;
+      const int x=i+d[0],y=j+d[1],z=k+d[2];
+      const auto row=static_cast<std::size_t>(static_cast<std::ptrdiff_t>(p)+d[2]);
+      const double v=(x<=0 || y<=0 || x>=int(g.nx) || y>=int(g.ny)) ?
+          side.at(x,y,z) : phi[row*fullArea+std::size_t(y)*(g.nx+1)+x];
+      const double w=a==0?(b==0?coefficient.alpha[axis]:coefficient.beta[tb]):
+                           (b==0?coefficient.beta[ta]:deltaFor(coefficient,axis));
+      value+=w*v;
+    }
+    return value-(axis==2?translation*side.at(i,j,k):0.);
+  }
+
   void ensureField(std::size_t requestedK) {
     if(requestedK>=fieldStart && requestedK<fieldStop) return;
     const auto started=Clock::now();
@@ -739,6 +854,12 @@ struct BlockedCowanReference::Impl {
       if(global<=static_cast<std::ptrdiff_t>(lower[2]) || global>=static_cast<std::ptrdiff_t>(upper[2])) continue;
       const std::size_t local=static_cast<std::size_t>(global)-lower[2]-1;
       const auto& slab=potentialBlock(local/blockLayers);
+      if(openSides) {
+        double* plane=phi.data()+p*fullArea;
+        const int k=static_cast<int>(global),nx=static_cast<int>(g.nx),ny=static_cast<int>(g.ny);
+        for(int j=0;j<=ny;++j){plane[j*(nx+1)]=side.at(0,j,k);plane[j*(nx+1)+nx]=side.at(nx,j,k);}
+        for(int i=1;i<nx;++i){plane[i]=side.at(i,0,k);plane[ny*(nx+1)+i]=side.at(i,ny,k);}
+      }
       for(std::size_t j=lower[1]+1;j<upper[1];++j)
         std::copy(slab.data()+(local%blockLayers)*area+(j-lower[1]-1)*nodes[0],
           slab.data()+(local%blockLayers)*area+(j-lower[1])*nodes[0],
@@ -756,6 +877,21 @@ struct BlockedCowanReference::Impl {
       for(std::size_t i=lower[0]+1;i<upper[0];++i) {
         const std::size_t q=p*fullArea+j*(g.nx+1)+i;
         for(unsigned axis=0;axis<3;++axis) filtered[axis][q]=smooth(phi,axis,i,j,p+1);
+      }
+    }
+    if(openSides) {
+      const int nx=static_cast<int>(g.nx),ny=static_cast<int>(g.ny);
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel for num_threads(threads) if(threads>1)
+#endif
+      for(std::size_t p=0;p<count+1;++p) {
+        const int k=static_cast<int>(start+p);if(k<=0 || k>=int(g.nz)) continue;
+        const auto fillWall=[&](int i,int j) {
+          const std::size_t q=p*fullArea+std::size_t(j)*(g.nx+1)+i;
+          for(unsigned axis=0;axis<3;++axis)filtered[axis][q]=smoothOnWall(phi,axis,i,j,p+1,k);
+        };
+        for(int j=0;j<=ny;++j){fillWall(0,j);fillWall(nx,j);}
+        for(int i=1;i<nx;++i){fillWall(i,0);fillWall(i,ny);}
       }
     }
     const Double spacing[3]={g.dx,g.dy,g.dz};
@@ -834,16 +970,16 @@ struct BlockedCowanReference::Impl {
 BlockedCowanReference::BlockedCowanReference(const EBGridGeometry& g,
     const FieldVector<Double>& origin,const std::vector<RelativisticParticleSI>& particles,
     Double beta,const std::size_t guards[3],std::size_t block,const std::string& directory,
-    MPI_Comm communicator,bool shaped,bool notch,bool binomial3)
-  :impl_(new Impl(g,origin,particles,beta,guards,block,directory,communicator,shaped,notch,binomial3)) {}
+    MPI_Comm communicator,bool shaped,bool notch,bool binomial3,bool transverseXBinomial3,bool openTransverse)
+  :impl_(new Impl(g,origin,particles,beta,guards,block,directory,communicator,shaped,notch,binomial3,transverseXBinomial3,openTransverse)) {}
 BlockedCowanReference::BlockedCowanReference(std::unique_ptr<Impl> implementation)
   :impl_(std::move(implementation)) {}
 std::unique_ptr<BlockedCowanReference> BlockedCowanReference::openPrepared(
     const EBGridGeometry& g,const FieldVector<Double>& origin,Double beta,
     const std::size_t guards[3],std::size_t block,const std::string& directory,
-    MPI_Comm communicator,bool shaped,bool notch,bool binomial3) {
+    MPI_Comm communicator,bool shaped,bool notch,bool binomial3,bool transverseXBinomial3,bool openTransverse) {
   return std::unique_ptr<BlockedCowanReference>(new BlockedCowanReference(
-    std::unique_ptr<Impl>(new Impl(g,origin,beta,guards,block,directory,communicator,shaped,notch,binomial3))));
+    std::unique_ptr<Impl>(new Impl(g,origin,beta,guards,block,directory,communicator,shaped,notch,binomial3,transverseXBinomial3,openTransverse))));
 }
 BlockedCowanReference::~BlockedCowanReference() = default;
 Double BlockedCowanReference::field(unsigned c,std::size_t i,std::size_t j,std::size_t k) {
@@ -872,6 +1008,11 @@ void BlockedCowanReference::writeReport(const std::string& path) const {
 #define REPORT_MEMBER(name) text << "  \"" #name "\": " << r.name << ",\n"
   REPORT_MEMBER(particles); REPORT_MEMBER(blockLayers); REPORT_MEMBER(blocks); REPORT_MEMBER(beta);
   REPORT_MEMBER(openSeconds);
+  if(impl_->openSides) {
+    text << "  \"referenceBoundary\": \"open transverse Coulomb data / finite longitudinal zero ends\",\n";
+    REPORT_MEMBER(openTraceSeconds); REPORT_MEMBER(openTraceBytes);
+    REPORT_MEMBER(openTraceChecks); REPORT_MEMBER(openTraceMaxRelativeError);
+  }
   REPORT_MEMBER(sourceCharge); REPORT_MEMBER(depositedCharge); REPORT_MEMBER(minimumPivot);
   REPORT_MEMBER(minimumModeEigenvalue); REPORT_MEMBER(preparationSeconds); REPORT_MEMBER(sourceSeconds);
   REPORT_MEMBER(forwardSeconds); REPORT_MEMBER(reconstructionSeconds); REPORT_MEMBER(querySeconds);

@@ -117,6 +117,53 @@ void stateRemap(int rank,int size,bool reset) {
     }
   }
 }
+void normalInletHalo(int rank,int size,bool centered) {
+  const auto cpml=parameters();
+  EBFieldGrid fields(geometry(NZ/size));
+  MovingWindowReference ref;
+  ref.value=marker;
+  MovingWindowFields window(fields.geometry(),NZ,NZ/size*rank,MPI_COMM_WORLD,cpml,ref);
+  window.installBoundary(fields);
+  // Manufacture signed and zero departures after the real remap, including
+  // outside the aperture to expose an accidental change to the CPML halo.
+  window.setNewLayerCompletion([](void*, EBFieldGrid& f, std::size_t, std::ptrdiff_t) {
+    auto& ez=f.ez();
+    for(std::size_t j=0;j<ez.ny();++j)
+      for(std::size_t i=0;i<ez.nx();++i)
+        ez(i,j,0)+=static_cast<int>((i+2*j)%3)-1;
+  },nullptr,centered);
+  constexpr std::ptrdiff_t start=100;
+  if(rank==0) {
+    auto& ez=fields.ez();
+    for(std::size_t j=0;j<ez.ny();++j)
+      for(std::size_t i=0;i<ez.nx();++i)
+        ez(i,j,0)=marker(nullptr,2,i,j,start,0);
+  }
+  window.beginStep(fields,0,start);
+  EBZSlabHaloExchange mpi(MPI_COMM_WORLD);
+  mpi.advanceMagnetic(fields,window.physicalElectricHalos(fields,0));
+  mpi.advanceElectric(fields);
+  window.shift(fields,1,start-1);
+  window.beginStep(fields,1,start-1);
+  const auto halo=window.physicalElectricHalos(fields,1);
+  if(rank!=0) {
+    require(!halo.lowerEx&&!halo.lowerEy&&!halo.lowerEz,"Interior slab acquired a physical inlet halo");
+    return;
+  }
+  const Double* lower[3]={halo.lowerEx,halo.lowerEy,halo.lowerEz};
+  for(unsigned a=0;a<3;++a) {
+    const auto& c=component(fields,a);
+    require(lower[a]!=nullptr,"Physical inlet halo missing");
+    for(std::size_t j=0;j<c.ny();++j)for(std::size_t i=0;i<c.nx();++i) {
+      const Double departure=a==2 ? static_cast<int>((i+2*j)%3)-1 : 0;
+      require(equal(c(i,j,0),marker(nullptr,a,i,j,start-1,1)+departure),
+              "Reading the inlet halo changed the inserted field");
+      const bool inAperture=i>cpml.cells[0]&&i<NX-cpml.cells[0]&&j>cpml.cells[1]&&j<NY-cpml.cells[1];
+      const Double expected=marker(nullptr,a,i,j,start-2,1)-(centered&&inAperture ? departure : 0);
+      require(equal(lower[a][j*c.nx()+i],expected),"Incorrect post-remap physical inlet ghost");
+    }
+  }
+}
 void current(EBFieldGrid& f,std::size_t local,std::ptrdiff_t offset,std::size_t n,int rank,int size) {
   f.clearCurrent();
   for(unsigned a=6;a<9;++a) {
@@ -403,6 +450,7 @@ int main(int argc,char** argv) {
   try {
     configureComputeThreads(provided);require(size==1||size==2||size==4,"Use 1, 2 or 4 MPI ranks");
     stateRemap(rank,size,false);stateRemap(rank,size,true);propagation(rank,size);causality(rank,size);
+    normalInletHalo(rank,size,false);normalInletHalo(rank,size,true);
     energyAccounting(rank,size,false);energyAccounting(rank,size,true);
     unsigned long long local[3]={checked,causalChecked,poisonDifferences},global[3]={};
     MPI_Allreduce(local,global,3,MPI_UNSIGNED_LONG_LONG,MPI_SUM,MPI_COMM_WORLD);

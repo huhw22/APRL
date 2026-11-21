@@ -14,9 +14,9 @@ public:
   struct Work {long double signedJ=0.,absoluteJ=0.;};
   static void prepare(const std::string& file,
       verification::BlockedCowanReference& reference,const EBGridGeometry& g,
-      const std::size_t guards[3],double solverBeta);
+      const std::size_t guards[3],double solverBeta,bool transverseXBinomial3=false);
   TransverseReferenceCurrent(const std::string& file,const EBGridGeometry& reference,
-      const std::size_t guards[3],double solverBeta,const std::string& workFile);
+      const std::size_t guards[3],double solverBeta,const std::string& workFile,bool transverseXBinomial3=false);
   ~TransverseReferenceCurrent();
   void apply(EBFieldGrid& fields,std::ptrdiff_t sourceOffset,std::size_t step,
              double translationBeta,bool collectWork);

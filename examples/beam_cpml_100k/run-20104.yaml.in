@@ -1,0 +1,196 @@
+units:
+  length: m
+  time: s
+runtime:
+  mode: throughput
+  resource_monitor:
+    enabled: true
+    progress_interval_steps: 50
+    calibration_steps: 5
+    memory_safety_factor: 1.25
+    time_safety_factor: 1.25
+  shutdown_watchdog:
+    enabled: true
+    timeout_seconds: 600
+    finalize_timeout_seconds: 60
+output:
+  overwrite: false
+  manifest: run-manifest.yaml
+mesh:
+  field_solver: cowan-z
+  current_filter: none
+  ballistic_outside_transverse: false
+  cells:
+  - 416
+  - 140
+  - 2816
+  cell_size:
+  - 1.6666666666666669e-06
+  - 5.0e-06
+  - 1.2543262415359034e-06
+  center:
+  - 0.00015
+  - 0.0
+  - 0.0
+  duration: 1.9251547078169243e-12
+  boost_gamma: 929.1305492858543
+  particle_steps_per_undulator_period: 1024
+  maximum_particle_substeps: 4096
+  moving_window:
+    enabled: true
+    lower_guard_cells: 864
+    upper_guard_cells: 288
+    block_layers: 32
+    reference_directory: reference
+    reference_surface_current: false
+    inlet_charge_match: true
+    cells: 1457
+    reference_through_cpml: true
+    open_transverse_reference: true
+    cpml_startup: '@METHOD@'
+    cpml_startup_directory: '@ARRAY_DIR@'
+  particle_coupling: conservative-source
+  longitudinal_shape: linear-binomial3
+  self_field_feedback: true
+  one_way_source_diagnostic: false
+  transverse_x_shape: linear-binomial3
+radiation_resolution:
+  enabled: true
+  maximum_photon_energy_eV: 12.0
+  warning_grid_points_per_wavelength: 8.0
+  warning_maxwell_samples_per_cycle: 8.0
+  warning_detector_samples_per_cycle: 8.0
+boundary:
+  type: cpml
+  cells:
+  - 16
+  - 16
+  - 0
+  polynomial_order: 3.0
+  target_reflection: 1.0e-08
+  kappa_max: 1.0
+  alpha_fraction: 0.0
+initial_self_field:
+  enabled: true
+  model: cowan-relativistic-poisson
+  include_transverse_cpml_particles: false
+  relative_tolerance: 1.0e-08
+  maximum_mean_transverse_beta: 3.0e-05
+  maximum_iterations: 10000
+beam:
+  reference:
+    input_plane_z: 0.0
+    initial_center_z: 1.3261762081128143e-07
+    frozen_lab_plane_injection: true
+    hold_transverse_until_activation: true
+    activation_plane_z: 0.0
+  input:
+    type: hdf5
+    file: '@BEAM_FILE@'
+    electrons: 100000.0
+    position_offset:
+    - 0.0
+    - 0.0
+    - 0.0
+sources:
+  incident_waves: []
+  magnetic_elements:
+  - type: uniform-dipole
+    entrance_z: 0.05
+    length: 0.0024
+    field_T: 0.6671281551090835
+    polarization_angle_rad: 1.5707963267948966
+  - type: planar-undulator
+    entrance_z: 0.02
+    period: 0.009
+    periods: 1
+    strength_parameter: 0.0
+    gaussian_fringe: false
+detectors:
+  enabled: true
+  directory: detectors
+  field_planes:
+  - name: z0060
+    z: 0.06
+    rhythm: 4.503115285175053e-18
+    buffer_samples: 8
+    compression: 0
+    particle_background:
+      enabled: false
+  - name: z0200
+    z: 0.2
+    rhythm: 4.503115285175053e-18
+    buffer_samples: 8
+    compression: 0
+    particle_background:
+      enabled: false
+  - name: z03524
+    z: 0.3524
+    rhythm: 4.503115285175053e-18
+    buffer_samples: 8
+    compression: 0
+    particle_background:
+      enabled: false
+  - name: zupstream
+    z: -0.005
+    rhythm: 4.503115285175053e-18
+    buffer_samples: 8
+    compression: 0
+    particle_background:
+      enabled: false
+  - name: zinlet
+    z: 0.0
+    rhythm: 4.503115285175053e-18
+    buffer_samples: 8
+    compression: 0
+    particle_background:
+      enabled: false
+  - name: zdrift
+    z: 0.025
+    rhythm: 4.503115285175053e-18
+    buffer_samples: 8
+    compression: 0
+    particle_background:
+      enabled: false
+  particle_planes:
+  - name: entry
+    z: 0.0
+    buffer_records: 8192
+    compression: 0
+  - name: magnet-entry
+    z: 0.05
+    buffer_records: 8192
+    compression: 0
+  - name: bend-exit
+    z: 0.0524
+    buffer_records: 8192
+    compression: 0
+  - name: z0060-particles
+    z: 0.06
+    buffer_records: 8192
+    compression: 0
+  - name: exit
+    z: 0.3524
+    buffer_records: 8192
+    compression: 0
+  energy_planes: []
+stop:
+  mode: reference-center-z
+  z: 0.44296013020954406
+trajectory:
+  enabled: true
+  directory: events
+  basename: crossings
+  rhythm: 1.0e-09
+  buffer_records: 16384
+energy_ledger:
+  enabled: true
+  directory: ledger
+  filename: energy-ledger.h5
+  sample_interval_steps: 10
+  buffer_records: 128
+  compression: 0
+  warning_relative_tolerance: 0.05
+  discrete_operator_audit: true
+particle_retirement:
+  enabled: false

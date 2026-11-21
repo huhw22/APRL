@@ -22,6 +22,7 @@ aprl::SimulationConfig load(const std::string& source,
 }
 void check(const aprl::MeshConfig& mesh, bool quintic) {
   require(mesh.conservativeSourceCoupling, "Coupling fell back to Boris");
+  require(mesh.transverseXBinomial3 == !quintic, "Unexpected default transverse kernel");
   require(!mesh.longitudinalNotch, "Retired seven-point kernel enabled");
   require(mesh.longitudinalQuintic == quintic &&
           mesh.longitudinalBinomial3 == !quintic,
@@ -50,18 +51,23 @@ int main(int argc, char** argv) {
     check(load(source, "  particle_coupling: conservative-source\n"
                        "  longitudinal_shape: linear-binomial3\n").mesh, false);
     check(load(source, "  longitudinal_shape: quintic-compensated\n").mesh, true);
+    require(!load(source, "  transverse_x_shape: linear\n").mesh.transverseXBinomial3,
+            "Explicit linear x basis was ignored");
+    reject(source, "  transverse_x_shape: invalid\n", "transverse_x_shape must be");
+    reject(source, "  longitudinal_shape: quintic-compensated\n  transverse_x_shape: linear-binomial3\n",
+           "requires conservative-source and longitudinal_shape");
     reject(source, "  particle_coupling: boris\n", "no longer supported");
-    reject(source, "  particle_coupling: invalid\n", "APRL 2.0 supports only");
+    reject(source, "  particle_coupling: invalid\n", "APRL 2.1 supports only");
     reject(source, "  longitudinal_shape: linear\n", "no longer supported");
     reject(source, "  longitudinal_shape: linear-notch\n", "no longer supported");
-    reject(source, "  longitudinal_shape: invalid\n", "APRL 2.0 longitudinal_shape");
+    reject(source, "  longitudinal_shape: invalid\n", "APRL 2.1 longitudinal_shape");
     std::string filtered = source;
     const std::size_t at = filtered.find("current_filter: none");
     require(at != std::string::npos, "Missing filter in policy fixture");
     filtered.replace(at, std::string("current_filter: none").size(),
                      "current_filter: compensated-bilinear");
-    reject(filtered, "", "APRL 2.0 requires current_filter: none");
-    std::cout << "APRL 2.0 algorithm defaults, both supported choices, and retired-option rejection passed\n";
+    reject(filtered, "", "APRL 2.1 requires current_filter: none");
+    std::cout << "APRL 2.1 algorithm defaults, both supported choices, and retired-option rejection passed\n";
     return 0;
   } catch (const std::exception& error) {
     std::cerr << error.what() << '\n';

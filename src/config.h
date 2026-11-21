@@ -57,6 +57,9 @@ namespace aprl
     bool referenceThroughCpml;
     bool referenceSurfaceCurrent;
     bool inletChargeMatch;
+    bool openTransverseReference;
+    std::string cpmlStartup;
+    std::string cpmlStartupDirectory;
     std::string referenceDirectory;
 
     MovingWindowConfig();
@@ -94,6 +97,7 @@ namespace aprl
     bool longitudinalQuintic;
     bool longitudinalNotch;
     bool longitudinalBinomial3;
+    bool transverseXBinomial3;
     bool wideLongitudinalSource() const {return longitudinalQuintic || longitudinalNotch || longitudinalBinomial3;}
     /* Experimental finite-window boundary injection: particles outside the
      * transverse physical region remain ballistic until they enter it. */

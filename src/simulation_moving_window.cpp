@@ -10,6 +10,7 @@
 #include <type_traits>
 #ifdef APRL_HAS_MOVING_WINDOW
 #include "blocked_cowan_reference.h"
+#include "beam_cpml_start.h"
 #endif
 
 namespace aprl {
@@ -58,7 +59,8 @@ void Simulation::initializeMovingWindow() {
   w.referenceGeometry=globalGeometry_;w.referenceOrigin=globalOriginBox_;
   for(unsigned a=0;a<3;++a)w.guards[a]=config_.boundary.cpml.cells[a];
   if(config_.mesh.movingWindow.referenceThroughCpml) {
-    w.guards[0]=w.guards[1]=0;
+    // The open reference uses the true particle guards and extends the potential to the outer face.
+    if (!config_.mesh.movingWindow.openTransverseReference) w.guards[0]=w.guards[1]=0;
     logRoot(communicator_,
       "Reference transverse boundary: extends through CPML to outer termination; active field geometry and CPML update unchanged.");
   }
@@ -134,7 +136,7 @@ void Simulation::initializeMovingWindow() {
     // Stable identity order makes the reference independent of slab ownership.
     std::sort(source.begin(),source.end(),[](const RelativisticParticleSI& a,const RelativisticParticleSI& b){return a.id<b.id;});
     w.reference.reset(new verification::BlockedCowanReference(w.referenceGeometry,w.referenceOrigin,
-        source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3));
+        source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.transverseXBinomial3,cfg.openTransverseReference));
     w.reference->writeReport(cfg.referenceDirectory+"/preparation.json");
   } else {
     for(std::size_t n=0;n<particles_.size();n+=batch) {
@@ -144,14 +146,14 @@ void Simulation::initializeMovingWindow() {
   }
   MPI_Barrier(communicator_);
   if(rank_!=0)w.reference=verification::BlockedCowanReference::openPrepared(w.referenceGeometry,w.referenceOrigin,
-      w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3);
+      w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.transverseXBinomial3,cfg.openTransverseReference);
   if(cfg.referenceSurfaceCurrent) {
     const std::string currentFile=cfg.referenceDirectory+"/transverse-current.bin";
-    if(rank_==0)TransverseReferenceCurrent::prepare(currentFile,*w.reference,w.referenceGeometry,w.guards,w.solverBeta);
+    if(rank_==0)TransverseReferenceCurrent::prepare(currentFile,*w.reference,w.referenceGeometry,w.guards,w.solverBeta,config_.mesh.transverseXBinomial3);
     MPI_Barrier(communicator_);
     std::ostringstream workName;
     if(config_.energyLedger.enabled)workName<<cfg.referenceDirectory<<"/transverse-source-work-rank-"<<std::setw(5)<<std::setfill('0')<<rank_<<".csv";
-    w.referenceCurrent.reset(new TransverseReferenceCurrent(currentFile,w.referenceGeometry,w.guards,w.solverBeta,workName.str()));
+    w.referenceCurrent.reset(new TransverseReferenceCurrent(currentFile,w.referenceGeometry,w.guards,w.solverBeta,workName.str(),config_.mesh.transverseXBinomial3));
     logRoot(communicator_,"Reference transverse surface current: prescribed from reference B at four interfaces; outgoing perturbations keep original CPML; work is included in boundary_source_work_J.");
   }
   config_.mesh.cells[2]=cells;config_.mesh.extent[2]=cells*globalGeometry_.dz;
@@ -296,14 +298,14 @@ void Simulation::installMovingWindowBoundary() {
   movingWindow_->fields->installBoundary(*fields_);
   movingWindow_->fields->enableEnergyLedger(config_.energyLedger.enabled);
   if(config_.mesh.movingWindow.inletChargeMatch) {
-    movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3));
-    movingWindow_->fields->setNewLayerCompletion(&Simulation::completeMovingInletLayer,this);
+    movingWindow_->inletCompletion.reset(new ChargeMatchedInlet(localGeometry_,config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.transverseXBinomial3));
+    movingWindow_->fields->setNewLayerCompletion(&Simulation::completeMovingInletLayer,this,true);
     if(rank_==0&&config_.energyLedger.enabled) {
       movingWindow_->inletCompletionLedger.open(config_.mesh.movingWindow.referenceDirectory+"/inlet-charge-match.csv");
       if(!movingWindow_->inletCompletionLedger)throw std::runtime_error("Cannot create inlet charge-match ledger");
       movingWindow_->inletCompletionLedger<<std::setprecision(21)<<"step,source_particles,max_gauss_before_C_per_m3,max_gauss_after_C_per_m3,max_delta_Ez_V_per_m,native_layer_energy_change_J\n";
     }
-    logRoot(communicator_,"Inlet charge completion: approximate background retained; new normal-E layer matches actual CIC charge and adjacent evolved fields; all exchange included in remap energy.");
+    logRoot(communicator_,"Inlet charge completion: new normal E matches charge and adjacent fields. Its deviation from the reference is extended oddly across the inlet for the Cowan magnetic update.");
   }
   movingWindow_->particleHalo.reset(new EBParticleFieldHalo(localGeometry_,communicator_));
 }
@@ -323,6 +325,11 @@ void Simulation::initializeMovingWindowFields() {
 #ifdef APRL_HAS_MOVING_WINDOW
   movingWindow_->reference->fill(*fields_,static_cast<std::size_t>(movingWindow_->offset)+localZOffset_);
   movingWindow_->reference->clearCache();
+  const auto& w=*movingWindow_;
+  beam_cpml_start::initialize(config_,w.referenceGeometry,w.referenceOrigin,w.solverBeta,
+      *fields_,localZOffset_,globalGeometry_.nz,w.offset,rank_,communicator_);
+  if(config_.mesh.movingWindow.cpmlStartup!="standard")
+    logRoot(communicator_,"[cpml-startup] loaded "+config_.mesh.movingWindow.cpmlStartup+" fields and histories before step 0");
 #else
   throw std::logic_error("Moving reference not compiled");
 #endif
