@@ -1,5 +1,12 @@
 # 构建、粒子转换与运行
 
+移动窗开启 `open_transverse_reference: true` 时，开放边界参考电势的采样会自动
+分给当前所有 MPI 进程，每个进程再使用 `OMP_NUM_THREADS` 指定的线程数。
+例如 16 进程 × 8 线程可在这一阶段利用分配的 128 核，无需修改输入卡。
+电荷沉积和后续分块模态求解仍由主进程完成；每次都按本次网格和束团重新准备。
+各进程的采样工作量、源点数和直接重算次数见 `reference/preparation.json`，
+实现范围与计时口径见[性能说明](../PERFORMANCE.md#open-transverse-reference-preparation)。
+
 ## 依赖
 
 - APRL 本体需要 CMake 3.16 或更新；联网依赖引导构建 HDF5 1.14.6 时使用 3.18，版本不足会自动准备私有新版；

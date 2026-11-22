@@ -31,6 +31,9 @@ struct BlockedCowanReferenceReport {
   double openTraceSeconds = 0.;
   std::size_t openTraceBytes = 0, openTraceChecks = 0;
   double openTraceMaxRelativeError = 0.;
+  std::size_t openTraceSourceNodes = 0, openTraceCoarsePoints = 0, openTraceFallbackTiles = 0;
+  std::uint64_t openTraceMinRankEvaluations = 0, openTraceMaxRankEvaluations = 0;
+  int openTraceRanks = 1, openTraceThreadsPerRank = 1;
   double forwardSeconds = 0.;
   double reconstructionSeconds = 0.;
   double querySeconds = 0.;
@@ -53,8 +56,9 @@ struct BlockedCowanReferenceReport {
   std::size_t residentArrayBytes = 0;
 };
 
-// Fixed common-beta finite Dirichlet reference. Preparation is serial within a
-// singleton communicator; MPI_COMM_SELF permits one writer in a multi-rank job.
+// Fixed common-beta finite Dirichlet reference. The constructor uses a singleton
+// communicator; MPI_COMM_SELF permits one writer in a multi-rank job.
+// prepareCollective additionally shares open-wall potential targets over MPI.
 // No CPML-source padding or moving/time-dependent source is implemented.
 // The caller supplies the same mass-weighted beta used by the CG initializer.
 // Construction refuses an existing work directory and leaves rho.bin,
@@ -78,6 +82,19 @@ public:
       const std::vector<RelativisticParticleSI>& particles,
       Double beta, const std::size_t guards[3], std::size_t blockLayers,
       const std::string& directory, MPI_Comm communicator = MPI_COMM_WORLD,bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false,
+      bool transverseXBinomial3 = false,bool openTransverse = false);
+  // All ranks call with identical arguments except rootParticles. Rank zero
+  // supplies the complete, identity-ordered source
+  // and owns deposition, the blocked solve, and all output files. Open-wall
+  // potential targets are shared across communicator ranks and their OpenMP
+  // threads. Each target retains the serial source summation order. Other
+  // ranks return independent read-only handles after atomic completion.
+  static std::unique_ptr<BlockedCowanReference> prepareCollective(
+      const EBGridGeometry& globalGeometry, const FieldVector<Double>& globalOrigin,
+      const std::vector<RelativisticParticleSI>& rootParticles, Double beta,
+      const std::size_t guards[3], std::size_t blockLayers,
+      const std::string& directory, MPI_Comm communicator,
+      bool longitudinalQuintic = false,bool linearNotch = false,bool linearBinomial3 = false,
       bool transverseXBinomial3 = false,bool openTransverse = false);
   // Open an already completed shared reference without modifying files or
   // allocating source/solver arrays. All parameters must match the writer

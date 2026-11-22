@@ -236,15 +236,30 @@ struct BlockedCowanReference::Impl {
   Impl(const EBGridGeometry& geometry,const FieldVector<Double>& where,
        const std::vector<RelativisticParticleSI>& particles,Double velocity,
        const std::size_t guards[3],std::size_t block,const std::string& dir,
-       MPI_Comm communicator,bool shaped,bool notch,bool binomial3,bool transverseXBinomial3,bool openTransverse)
+       MPI_Comm communicator,bool shaped,bool notch,bool binomial3,bool transverseXBinomial3,bool openTransverse,
+       bool deferred=false)
     : quintic(shaped),linearNotch(notch),linearBinomial3(binomial3),xBinomial(transverseXBinomial3),openSides(openTransverse),g(geometry),origin(where),beta(velocity),translation(0.),upperWeight(0.),
       lowerWeight(0.),magneticScale(0.),requestedBlockLayers(block),blockLayers(block),
       area(0),fullArea(0),directory(dir) {
-    const auto start=Clock::now();
     if(static_cast<unsigned>(quintic)+static_cast<unsigned>(linearNotch)+static_cast<unsigned>(linearBinomial3)>1)throw std::invalid_argument("Ambiguous reference source shape");
     configure(guards,communicator);
-    // Validate the discrete operator before any filesystem mutation.
+    if(deferred) return;
+    const auto start=Clock::now();
     std::vector<Double> diagonal(area),offDiagonal(area);
+    beginPreparation(particles,diagonal,offDiagonal);
+    if(openSides) {
+      const auto started=Clock::now();
+      const auto source=openSources();
+      side.build(source,g,1./std::sqrt(1.-translation));
+      finishOpenSides(started);
+    }
+    finishPreparation(diagonal,offDiagonal,start);
+  }
+
+  void beginPreparation(const std::vector<RelativisticParticleSI>& particles,
+                        std::vector<Double>& diagonal,std::vector<Double>& offDiagonal) {
+    // Validate the discrete operator before any filesystem mutation.
+    diagonal.resize(area);offDiagonal.resize(area);
     makeModes(diagonal,offDiagonal);
     if (::mkdir(directory.c_str(),0700)!=0)
       throw ioError("Cannot create new blocked reference directory",directory);
@@ -253,11 +268,14 @@ struct BlockedCowanReference::Impl {
     phiFile.create(directory+"/phi.bin");
     stats.particles=particles.size();
     if(quintic||linearNotch||linearBinomial3)depositQuintic(particles);else deposit(particles);
-    if(openSides) prepareOpenSides();
+  }
+
+  void finishPreparation(const std::vector<Double>& diagonal,const std::vector<Double>& offDiagonal,
+                         Clock::time_point start) {
     solve(diagonal,offDiagonal);
     validateFileLengths();
     // Publish completion only after data have reached the shared filesystem.
-    // MPI synchronization is owned by the caller, not by this serial module.
+    // Readers are released by the collective caller only after publication.
     rhoFile.synchronize();
     checkpointFile.synchronize();
     phiFile.synchronize();
@@ -643,8 +661,7 @@ struct BlockedCowanReference::Impl {
     stats.sourceSeconds=seconds(started);
   }
 
-  void prepareOpenSides() {
-    const auto started=Clock::now();
+  OpenTransverseTrace::Sources openSources() {
     OpenTransverseTrace::Sources source;
     const double gamma=1./std::sqrt(1.-translation);
     const double scale=gamma*g.dx*g.dy*g.dz/(4.*std::acos(-1.)*SI::epsilon0);
@@ -661,8 +678,15 @@ struct BlockedCowanReference::Impl {
         source.z.push_back((b*blockLayers+p+1)*g.dz*gamma);source.q.push_back(density*scale);
       }
     }
-    side.build(source,g,gamma);
+    return source;
+  }
+
+  void finishOpenSides(Clock::time_point started) {
     stats.openTraceChecks=side.directChecks;stats.openTraceMaxRelativeError=side.maxRelativeError;
+    stats.openTraceSourceNodes=side.sourceNodes;stats.openTraceCoarsePoints=side.coarsePoints;
+    stats.openTraceFallbackTiles=side.fallbackTiles;stats.openTraceRanks=side.computeRanks;
+    stats.openTraceThreadsPerRank=computeThreadCount();
+    stats.openTraceMinRankEvaluations=stats.openTraceMaxRankEvaluations=side.localPotentialEvaluations;
     DiskFile file; file.create(directory+"/side-potential.bin");
     file.write(side.values.data(),side.values.size(),0,stats.bytesWritten);file.synchronize();
     stats.openTraceSeconds=seconds(started);
@@ -974,6 +998,57 @@ BlockedCowanReference::BlockedCowanReference(const EBGridGeometry& g,
   :impl_(new Impl(g,origin,particles,beta,guards,block,directory,communicator,shaped,notch,binomial3,transverseXBinomial3,openTransverse)) {}
 BlockedCowanReference::BlockedCowanReference(std::unique_ptr<Impl> implementation)
   :impl_(std::move(implementation)) {}
+std::unique_ptr<BlockedCowanReference> BlockedCowanReference::prepareCollective(
+    const EBGridGeometry& g,const FieldVector<Double>& origin,
+    const std::vector<RelativisticParticleSI>& particles,Double beta,
+    const std::size_t guards[3],std::size_t block,const std::string& directory,
+    MPI_Comm comm,bool shaped,bool notch,bool binomial3,bool transverseXBinomial3,bool openTransverse) {
+  int initialized=0,finished=0;
+  MPI_Initialized(&initialized);if(initialized)MPI_Finalized(&finished);
+  if(!initialized || finished) throw std::invalid_argument("Collective reference requires live MPI");
+  if(comm==MPI_COMM_NULL) throw std::invalid_argument("Null reference preparation communicator");
+  int rank=0;MPI_Comm_rank(comm,&rank);
+  const auto started=Clock::now();
+  std::unique_ptr<Impl> writer;
+  std::vector<Double> diagonal,offDiagonal;
+  reference_detail::collectively(comm,[&] {
+    if(rank!=0) return;
+    writer.reset(new Impl(g,origin,particles,beta,guards,block,directory,MPI_COMM_SELF,
+                         shaped,notch,binomial3,transverseXBinomial3,openTransverse,true));
+    writer->beginPreparation(particles,diagonal,offDiagonal);
+  });
+  if(openTransverse) {
+    const auto traceStart=Clock::now();
+    OpenTransverseTrace::Sources source;
+    OpenTransverseTrace worker;
+    reference_detail::collectively(comm,[&] {if(rank==0)source=writer->openSources();});
+    auto& trace=rank==0?writer->side:worker;
+    // Use the exact native translation coefficient, including the same SI
+    // constants as the singleton writer, rather than replacing it by beta^2.
+    double gamma=rank==0?1./std::sqrt(1.-writer->translation):0.;
+    MPI_Bcast(&gamma,1,MPI_DOUBLE,0,comm);
+    trace.build(source,g,gamma,comm);
+    reference_detail::collectively(comm,[&] {if(rank==0)writer->finishOpenSides(traceStart);});
+    const std::uint64_t local=trace.localPotentialEvaluations;
+    std::uint64_t minimum=0,maximum=0;
+    MPI_Reduce(&local,&minimum,1,MPI_UINT64_T,MPI_MIN,0,comm);
+    MPI_Reduce(&local,&maximum,1,MPI_UINT64_T,MPI_MAX,0,comm);
+    if(rank==0) {
+      writer->stats.openTraceMinRankEvaluations=minimum;
+      writer->stats.openTraceMaxRankEvaluations=maximum;
+    }
+  }
+  reference_detail::collectively(comm,[&] {
+    if(rank==0)writer->finishPreparation(diagonal,offDiagonal,started);
+  });
+  std::unique_ptr<BlockedCowanReference> result;
+  reference_detail::collectively(comm,[&] {
+    if(rank==0)result.reset(new BlockedCowanReference(std::move(writer)));
+    else result=openPrepared(g,origin,beta,guards,block,directory,MPI_COMM_SELF,
+                             shaped,notch,binomial3,transverseXBinomial3,openTransverse);
+  });
+  return result;
+}
 std::unique_ptr<BlockedCowanReference> BlockedCowanReference::openPrepared(
     const EBGridGeometry& g,const FieldVector<Double>& origin,Double beta,
     const std::size_t guards[3],std::size_t block,const std::string& directory,
@@ -997,7 +1072,7 @@ const BlockedCowanReferenceReport& BlockedCowanReference::report() const { retur
 void BlockedCowanReference::writeReport(const std::string& path) const {
   const auto& r=impl_->stats;
   std::ostringstream text;
-  text << std::setprecision(17) << "{\n  \"scope\": \"blocked Cowan reference; singleton preparation/reader communicator; shared-file readers do not imply a distributed solve\",\n"
+  text << std::setprecision(17) << "{\n  \"scope\": \"blocked Cowan reference; open-wall potential targets use MPI/OpenMP; deposition and blocked modal solve stay on rank zero; independent singleton readers\",\n"
     << "  \"directory\": " << jsonString(impl_->directory) << ",\n"
     << "  \"files\": {\"source\": \"rho.bin\", \"checkpoints\": \"checkpoints.bin\", \"potential\": \"phi.bin\", \"completion\": \"metadata.txt\"},\n"
     << "  \"layout\": \"native-endian double, interior x-fast/y/z; checkpoint cprime,dprime at each block start\",\n"
@@ -1012,6 +1087,9 @@ void BlockedCowanReference::writeReport(const std::string& path) const {
     text << "  \"referenceBoundary\": \"open transverse Coulomb data / finite longitudinal zero ends\",\n";
     REPORT_MEMBER(openTraceSeconds); REPORT_MEMBER(openTraceBytes);
     REPORT_MEMBER(openTraceChecks); REPORT_MEMBER(openTraceMaxRelativeError);
+    REPORT_MEMBER(openTraceSourceNodes);REPORT_MEMBER(openTraceCoarsePoints);REPORT_MEMBER(openTraceFallbackTiles);
+    REPORT_MEMBER(openTraceRanks);REPORT_MEMBER(openTraceThreadsPerRank);
+    REPORT_MEMBER(openTraceMinRankEvaluations);REPORT_MEMBER(openTraceMaxRankEvaluations);
   }
   REPORT_MEMBER(sourceCharge); REPORT_MEMBER(depositedCharge); REPORT_MEMBER(minimumPivot);
   REPORT_MEMBER(minimumModeEigenvalue); REPORT_MEMBER(preparationSeconds); REPORT_MEMBER(sourceSeconds);

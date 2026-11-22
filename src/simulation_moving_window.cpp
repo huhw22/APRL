@@ -135,18 +135,18 @@ void Simulation::initializeMovingWindow() {
     }
     // Stable identity order makes the reference independent of slab ownership.
     std::sort(source.begin(),source.end(),[](const RelativisticParticleSI& a,const RelativisticParticleSI& b){return a.id<b.id;});
-    w.reference.reset(new verification::BlockedCowanReference(w.referenceGeometry,w.referenceOrigin,
-        source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.transverseXBinomial3,cfg.openTransverseReference));
-    w.reference->writeReport(cfg.referenceDirectory+"/preparation.json");
   } else {
     for(std::size_t n=0;n<particles_.size();n+=batch) {
       const auto take=std::min(batch,particles_.size()-n);
       MPI_Send(particles_.data()+n,static_cast<int>(take*sizeof(RelativisticParticleSI)),MPI_BYTE,0,810,communicator_);
     }
   }
-  MPI_Barrier(communicator_);
-  if(rank_!=0)w.reference=verification::BlockedCowanReference::openPrepared(w.referenceGeometry,w.referenceOrigin,
-      w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,MPI_COMM_SELF,config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,config_.mesh.transverseXBinomial3,cfg.openTransverseReference);
+  logRoot(communicator_,"Reference preparation: open-wall potential targets distributed over "+std::to_string(size_)+" MPI ranks; source sums preserve order; deposition/modal solve on rank zero.");
+  w.reference=verification::BlockedCowanReference::prepareCollective(w.referenceGeometry,w.referenceOrigin,
+      source,w.solverBeta,w.guards,cfg.blockLayers,cfg.referenceDirectory,communicator_,
+      config_.mesh.longitudinalQuintic,config_.mesh.longitudinalNotch,config_.mesh.longitudinalBinomial3,
+      config_.mesh.transverseXBinomial3,cfg.openTransverseReference);
+  if(rank_==0)w.reference->writeReport(cfg.referenceDirectory+"/preparation.json");
   if(cfg.referenceSurfaceCurrent) {
     const std::string currentFile=cfg.referenceDirectory+"/transverse-current.bin";
     if(rank_==0)TransverseReferenceCurrent::prepare(currentFile,*w.reference,w.referenceGeometry,w.guards,w.solverBeta,config_.mesh.transverseXBinomial3);

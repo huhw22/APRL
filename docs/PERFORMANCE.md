@@ -8,6 +8,43 @@ Grid/CPML updates and independent particle preparation may run on multiple CPU t
 
 Profiling is off unless requested. Stage reports distinguish `field_total`, `particle_prepare`, `particle_deposit`, `particle_migration_total`, `diagnostics`, `control`, `field_communication` and `particle_communication`. The two communication measurements are nested within the corresponding totals. `particle_deposit` also includes per-particle boundary and detector-event handling; `diagnostics` covers event collection/HDF5 and scheduled sampling. Communication time can include waiting for a slower rank. Do not sum parent and child stages, subtract maxima taken on different ranks, or interpret MPI-call time as pure network bandwidth. A synchronization after reporting prevents the report's logging cost leaking into the next measurement interval. Use profiling to locate work; use profiling-off runs for throughput conclusions.
 
+## Open transverse reference preparation
+
+Moving-window runs with `open_transverse_reference: true` automatically distribute
+the Coulomb boundary-potential targets across the simulation's MPI communicator.
+Each rank uses its configured OpenMP threads. This includes the coarse potential
+table, independent interpolation checks, and full native-node fallback when a
+tile fails the existing interpolation tolerance. No input-card switch is needed.
+For example, 16 MPI ranks with 8 threads each can use all 128 allocated cores in
+this stage. Keep the existing per-rank CPU affinity and `OMP_NUM_THREADS`; do not
+give every rank the node's full thread count.
+
+Each target retains the original source summation order. Ranks replicate the four
+arrays of nonzero deposited mesh charges (32 bytes per source node) and return
+potential values to rank zero in target order. There is no floating-point MPI
+sum over sources. Deposition, interpolation, the blocked modal solve and file
+publication remain on rank zero; only the expensive direct potential targets
+are distributed. Each worker subsequently opens its own read-only reference.
+Every run still prepares a fresh reference for its actual geometry and beam.
+
+`reference/preparation.json` reports `openTraceRanks`,
+`openTraceThreadsPerRank`, `openTraceSourceNodes`, `openTraceCoarsePoints`,
+`openTraceFallbackTiles`, and the minimum/maximum per-rank potential evaluations.
+These counters distinguish useful potential work from MPI waiting. The existing
+`openTraceSeconds` includes source extraction, communication and boundary-file
+completion; `preparationSeconds` also includes the remaining preparation stages.
+The blocked solve has not become a distributed solve, and whole-initialization
+speedup must be measured separately.
+
+The required `reference.parallel-*` checks compare binary source, potential,
+checkpoint and boundary files plus all native E/B values against singleton
+preparation. They also cover two thread counts, all source shapes used here,
+signed-source fallback, empty sources, failures and subcommunicators.
+`aprl_reference_trace_benchmark` is an optional-use timing executable built with
+the moving-window verification targets. A shortened target interval is useful
+for a bounded kernel check; its timing must not be reported as a full production
+reference speedup.
+
 ## Small repeatable SASE-loading harness
 
 `verification/performance/run.py` makes one seeded HDF5-v2 input with the existing `sase_bunch_generator`, then runs an unchanged baseline and candidate in separate directories. All input cards are byte-identical. This is a short coupled-particle/field computational check with a small undulator, **not** a realistic SASE gain or radiation-convergence experiment. It does not enable held startup, which requires HDF5-v4 plane events; the dedicated frozen-plane regressions cover that path.

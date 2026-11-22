@@ -35,6 +35,23 @@ option(APRL_BUILD_HELD_CUT_PROBE
 option(APRL_BUILD_BLOCKED_COWAN_REFERENCE
   "Build the verification-only disk-backed modal Cowan reference generator" OFF)
 if(APRL_ENABLE_MOVING_WINDOW)
+  add_executable(aprl_reference_parallel_checks reference_parallel_checks.cpp)
+  target_link_libraries(aprl_reference_parallel_checks PRIVATE direct_eb_core)
+  add_executable(aprl_reference_trace_benchmark performance/reference_trace_benchmark.cpp)
+  target_link_libraries(aprl_reference_trace_benchmark PRIVATE direct_eb_core)
+  set(APRL_REFERENCE_TEST_THREADS 1)
+  if(APRL_ENABLE_OPENMP AND OpenMP_CXX_FOUND)
+    list(APPEND APRL_REFERENCE_TEST_THREADS 2)
+  endif()
+  foreach(threads IN LISTS APRL_REFERENCE_TEST_THREADS)
+    add_test(NAME required.reference.parallel-${threads}-threads
+      COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} 4 ${MPIEXEC_PREFLAGS}
+              $<TARGET_FILE:aprl_reference_parallel_checks>
+              "${CMAKE_CURRENT_BINARY_DIR}/reference-parallel-${threads}" ${MPIEXEC_POSTFLAGS})
+    set_tests_properties(required.reference.parallel-${threads}-threads PROPERTIES
+      LABELS "required;mpi;moving_window;parallel" TIMEOUT 120 PROCESSORS 8
+      ENVIRONMENT "OMP_NUM_THREADS=${threads};OMP_DYNAMIC=FALSE")
+  endforeach()
   add_executable(aprl_beam_cpml_start_checks beam_cpml_start_checks.cpp)
   target_link_libraries(aprl_beam_cpml_start_checks PRIVATE direct_eb_core)
   add_test(NAME required.initial-field.beam-cpml-start
@@ -942,4 +959,7 @@ foreach(target IN LISTS APRL_INTERNAL_TARGETS)
   endif()
 endforeach()
 add_dependencies(verify_required aprl_reference_checks)
+if(TARGET aprl_reference_parallel_checks)
+  add_dependencies(verify_required aprl_reference_parallel_checks)
+endif()
 add_dependencies(verify_required_no_mpi aprl_reference_checks)
