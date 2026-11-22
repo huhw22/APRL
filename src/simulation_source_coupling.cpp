@@ -1,4 +1,5 @@
 #include "simulation.h"
+#include "runtime_util.h"
 #include <algorithm>
 #include <array>
 #include <stdexcept>
@@ -36,18 +37,22 @@ void Simulation::solveConservativeSourceStep() {
  auto savedScreen=std::move(radiationScreen_);
  auto savedDetectors=std::move(detectors_);config_.energyLedger.enabled=false;config_.trajectory.enabled=false;
  bool converged=false;unsigned iterations=0;Double force=0.,work=0.;
+ const unsigned maximumIterations=32;
+ std::array<Double,32> forceHistory{},workHistory{};
  try {
-  for(unsigned n=0;n<8;++n){if(n)coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();coupling.beginTrial();coupling.exchangeCandidate();pushDepositAndMigrate();coupling.completeCurrent();
+  for(unsigned n=0;n<maximumIterations;++n){if(n)coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();coupling.beginTrial();coupling.exchangeCandidate();pushDepositAndMigrate();coupling.completeCurrent();
    if(config_.mesh.movingWindow.referenceSurfaceCurrent){applyMovingTransverseReferenceCurrent();finishMovingTransverseReferenceCurrent();}
    halo_->sumSharedTangentialCurrent(*fields_);coupling.applyCurrentSource(-1.);coupling.exchangeCandidate();
    const Double residualStart=performanceNow();const auto r=coupling.localResidual();performanceSeconds_[CouplingResidualStage]+=performanceNow()-residualStart;const Double local[3]={r[1],r[2],r[3]};Double total[3]={};
    MPI_Allreduce(&r[0],&force,1,MPI_DOUBLE,MPI_MAX,communicator_);MPI_Allreduce(local,total,3,MPI_DOUBLE,MPI_SUM,communicator_);
    work=total[2]==0.?0.:(total[1]>0.?total[0]/total[1]:total[0]);iterations=n+1;
+   forceHistory[n]=force;workHistory[n]=work;
    if(iterations>=(config_.mesh.oneWaySourceDiagnostic?1u:(total[2]>0.?2u:1u))&&force<1e-13&&work<1e-8){converged=true;break;}
   }
  }catch(...){config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);radiationScreen_=std::move(savedScreen);throw;}
  config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);radiationScreen_=std::move(savedScreen);
- if(!converged){std::ostringstream message;message<<"Conservative source coupling failed at step "<<step_+1<<": force="<<force<<" work="<<work<<" iterations="<<iterations;throw std::runtime_error(message.str());}
+ if(!converged){std::ostringstream message;message<<"Conservative source coupling failed at step "<<step_+1<<": force="<<force<<" work="<<work<<" iterations="<<iterations<<" history(force/work)=";for(unsigned n=0;n<iterations;++n)message<<' '<<forceHistory[n]<<'/'<<workHistory[n];throw std::runtime_error(message.str());}
+ if(iterations>8 && (step_<64 || (step_+1)%100==0)){std::ostringstream message;message<<"[source-coupling] step="<<step_+1<<" iterations="<<iterations<<" force="<<force<<" work="<<work<<" unchanged tolerances: force<1e-13, work<1e-8";logRoot(communicator_,message.str());}
  // Remove the trial current, retain the zero-current wave by swapping it into
  // the old-E buffer, and replay the converged substeps against the real old E.
  coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();movingWindow_->particleHalo->clear(*fields_);coupling.swapElectric();movingWindow_->particleHalo->exchangeAndInstall(*fields_);

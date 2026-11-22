@@ -39,6 +39,14 @@ source shape, field reconstruction, or boundary data. The generic CG path keeps
 its existing criterion. Coarse-grid regressions separately enumerate the full
 three-dimensional sine spectrum and check native `div(E)=rho/epsilon0`.
 
+Conservative particle/source coupling permits up to 32 fixed-point trials per
+Maxwell step and still stops at the first trial meeting the existing force and
+work tolerances (`1e-13` and `1e-8`). Coarse steps can need more than the former
+eight trials. No unconverged step is committed: failures report the residual
+history, and selected steps that use more than eight trials report their
+converged residuals. Cases converging within eight trials keep their original
+iteration sequence.
+
 `reference/preparation.json` reports `openTraceRanks`,
 `openTraceThreadsPerRank`, `openTraceSourceNodes`, `openTraceCoarsePoints`,
 `openTraceFallbackTiles`, and the minimum/maximum per-rank potential evaluations.
