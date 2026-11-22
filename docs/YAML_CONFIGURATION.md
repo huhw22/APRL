@@ -1048,6 +1048,16 @@ ranks never compete for a shared detector file. Detector output uses
 throughput buffering and is finalized after trajectory files, keeping the two
 I/O paths independent. See [DETECTOR_OUTPUT_HDF5.md](DETECTOR_OUTPUT_HDF5.md).
 
+## Finite-distance radiation screen
+
+The optional top-level `radiation_screen` records the laboratory vacuum acceleration field from committed particle substeps. Define the plane with `nx`, `ny`, `x0_m`, `y0_m`, `dx_m`, `dy_m` and `z_m`. Set `output_file` and the arrival-time grid using `time_start_s` (first bin edge), `time_step_s` and `time_bins`. The optional `time_origin_s` specifies the Fourier phase reference. The output datasets `E_time` (V/m) and `B_time` (T) contain the bin means in `[time,y,x,xyz]` order. Legacy `frequencies_hz` entries are saved as suggestions for offline processing. A card that previously specified only a spectrum needs an arrival-time grid.
+
+Run the following on an analysis machine with NumPy and h5py to obtain selected complex field spectra from the saved waveform. Frequencies are in Hz.
+
+```shell
+finite_screen_spectrum.py radiation.h5 spectrum.h5 --frequencies-hz 0 1e12
+```
+
 ## Trajectory output
 
 ```yaml

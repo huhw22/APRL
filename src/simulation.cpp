@@ -45,6 +45,32 @@ namespace aprl
     const int RETIREMENT_LOWER_DATA = 721;
     const Double PLANCK_EV_SECOND = 4.135667696e-15;
 
+    // Resolve an output that may not exist yet, including already-existing
+    // symlinked parent directories, for collision checks before any file opens.
+    std::string outputPathKey(const std::string& path)
+    {
+      char resolved[PATH_MAX];
+      if (::realpath(path.c_str(),resolved)) return resolved;
+      if (path.empty() || path==".")
+        {
+          if (!::realpath(".",resolved))
+            throw std::runtime_error("Cannot resolve current output directory");
+          return resolved;
+        }
+      const auto separator=path.find_last_of('/');
+      const std::string leaf=separator==std::string::npos ? path : path.substr(separator+1);
+      std::string parent=separator==std::string::npos ? "." :
+                         (separator==0 ? "/" : path.substr(0,separator));
+      parent=outputPathKey(parent);
+      if (leaf.empty() || leaf==".") return parent;
+      if (leaf=="..")
+        {
+          const auto end=parent.find_last_of('/');
+          return end==0 ? "/" : parent.substr(0,end);
+        }
+      return joinPath(parent,leaf);
+    }
+
     /* Clip one straight Maxwell-step orbit to the transverse field aperture.
      * The omitted part is a field-free external particle; its first in-box
      * segment is a prescribed boundary source, not a periodic image. */
@@ -621,6 +647,7 @@ namespace aprl
 
     logTeardownTrace("detector-close-enter");
     if (detectors_) detectors_->close(completed);
+    if (radiationScreen_) radiationScreen_->close(completed);
     logTeardownTrace("detector-close-complete");
 
     logTeardownTrace("ledger-close-enter");
@@ -919,7 +946,7 @@ namespace aprl
 
   void Simulation::preflightOutputPaths() const
   {
-    if (config_.output.overwrite) return;
+    if (config_.output.overwrite && config_.radiationScreenFile.empty()) return;
     std::vector<std::string> paths;
     if (rank_ == 0)
       {
@@ -955,6 +982,29 @@ namespace aprl
         paths.push_back(joinPath(config_.trajectory.directory, name.str()));
       }
 
+    if (!config_.radiationScreenFile.empty())
+      {
+        const std::string candidate=outputPathKey(config_.radiationScreenFile);
+        std::vector<std::string> reserved(paths);
+        if (rank_==0)
+          {
+            reserved.push_back(config_.configurationPath);
+            if (!config_.beam.file.empty()) reserved.push_back(config_.beam.file);
+            if (config_.detectors.substepParticlePlanes)
+              for (const auto& plane : config_.detectors.particlePlanes)
+                reserved.push_back(joinPath(config_.detectors.directory,plane.name+"-substeps.h5"));
+          }
+        int collision=0;
+        for (const auto& other : reserved)
+          if (!other.empty() && candidate==outputPathKey(other)) collision=1;
+        int anyCollision=0;
+        MPI_Allreduce(&collision,&anyCollision,1,MPI_INT,MPI_MAX,communicator_);
+        if (anyCollision)
+          throw std::runtime_error("radiation_screen output_file collides with an input or another output: "+
+                                   config_.radiationScreenFile);
+        if (rank_==0) paths.push_back(config_.radiationScreenFile);
+      }
+    if (config_.output.overwrite) return;
     std::string conflict;
     for (std::size_t i = 0; i < paths.size(); ++i)
       {
@@ -3234,6 +3284,9 @@ namespace aprl
 
   void Simulation::initializeDetectorOutput()
   {
+    if (!config_.radiationScreenFile.empty())
+      radiationScreen_.reset(new RadiationScreenOutput(config_.radiationScreen,
+        config_.radiationScreenFile, config_.output.overwrite, communicator_));
     if (!detectorConfig_.enabled()) return;
     detectors_.reset(new LabDetectorManager(
       detectorConfig_, globalGeometry_,
@@ -4876,11 +4929,11 @@ namespace aprl
             "the inlet guard did not contain its release event");
         result.prescribedWork = 0.0;
         const bool transportAudit = detectors_ && (detectors_->hasEnergyPlanes() || detectors_->hasSubstepParticlePlanes());
-        const bool auditEnabled = config_.energyLedger.enabled || transportAudit;
+        const bool auditEnabled = config_.energyLedger.enabled || transportAudit || radiationScreen_;
         if (auditEnabled) {
           result.borisWork.clear();
           result.auditTrace.reset(frame_, transportAudit ? detectors_.get() : NULL,
-                                  config_.energyLedger.enabled);
+                                  config_.energyLedger.enabled, bool(radiationScreen_));
           if(particleWorkGeometry_)result.auditTrace.geometry.reset(fields_.get(),localOriginBox_,
             config_.boundary.cpml.cells[0],config_.boundary.cpml.cells[1],!particle.frozen,particleWorkGeometry_->halo());
         }
@@ -5272,6 +5325,9 @@ namespace aprl
                     ++energyLedgerRemovedMacroparticles_;
                   }
               }
+            if (radiationScreen_ && hasActiveSegment)
+              radiationScreen_->append(result.auditTrace.radiationBox,
+                hasTerminalEvent ? diagnosticTime : std::numeric_limits<Double>::infinity(), frame_);
             if (config_.energyLedger.enabled)
               energyLedgerBorisWork_.add(hasTerminalEvent && !fullLongitudinalHandoff ? result.auditTrace.prefix(
                 diagnosticTime, &energyLedgerPartialWorkSubsteps_) : result.borisWork);
@@ -5379,11 +5435,11 @@ namespace aprl
             (1.0 - transfer.activationKinkFraction) * globalGeometry_.dt;
           Double prescribedWork = 0.0;
           const bool transportAudit = detectors_ && (detectors_->hasEnergyPlanes() || detectors_->hasSubstepParticlePlanes());
-          const bool auditEnabled = config_.energyLedger.enabled || transportAudit;
+          const bool auditEnabled = config_.energyLedger.enabled || transportAudit || radiationScreen_;
           BorisWork borisWork;
           ParticleEnergyTrace auditTrace;
           if (auditEnabled) auditTrace.reset(frame_,
-            transportAudit ? detectors_.get() : NULL, config_.energyLedger.enabled);
+            transportAudit ? detectors_.get() : NULL, config_.energyLedger.enabled, bool(radiationScreen_));
           if (remaining > 0.0)
             {
               if (config_.mesh.ballisticOutsideTransverse &&
@@ -5422,6 +5478,9 @@ namespace aprl
             if (auditTerminal) auditStop=activeStartTime+fraction*remaining;
             fullLongitudinalHandoff=auditTerminal&&conservativeLongitudinalHandoff(auditHit,activeEnd.position);
           }
+          if (radiationScreen_)
+            radiationScreen_->append(auditTrace.radiationBox,
+              auditTerminal ? auditStop : std::numeric_limits<Double>::infinity(), frame_);
           if (config_.energyLedger.enabled) {
             energyLedgerPrescribedWork_ += prescribedWork;
             energyLedgerBorisWork_.add(auditTerminal && !fullLongitudinalHandoff ? auditTrace.prefix(

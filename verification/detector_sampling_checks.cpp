@@ -15,6 +15,7 @@
 #include <mpi.h>
 #include <hdf5.h>
 #include "lab_detectors.h"
+#include "radiation_screen_output.h"
 
 namespace
 {
@@ -36,6 +37,31 @@ namespace
   void mkdirChecked(const std::string& path)
   { require(::mkdir(path.c_str(), 0775) == 0 || errno == EEXIST,
       "Cannot create fixture output directory: " + path); }
+
+  void checkRadiationScreenOutput(const std::string& directory, int rank)
+  {
+    aprl::RadiationScreenSpec spec;
+    spec.nx=spec.ny=1; spec.dx=spec.dy=1.; spec.z=.5;
+    spec.nt=4; spec.timeStep=1.e-15; spec.frequenciesHz={0.,1.e12};
+    const std::string path=directory+"/radiation-waveform.h5";
+    aprl::RadiationScreenOutput writer(spec,path,true,MPI_COMM_WORLD);
+    writer.close(true);
+    if (rank!=0) return;
+    hid_t file=H5Fopen(path.c_str(),H5F_ACC_RDONLY,H5P_DEFAULT);
+    require(file>=0,"Cannot read the radiation waveform");
+    for (const char* name:{"time_s","E_time","B_time","requested_frequency_hz"})
+      require(H5Lexists(file,name,H5P_DEFAULT)>0,"Missing waveform item: "+std::string(name));
+    for (const char* name:{"frequency_hz","E_spectrum","B_spectrum"})
+      require(H5Lexists(file,name,H5P_DEFAULT)==0,"Unexpected online spectrum: "+std::string(name));
+    hid_t hints=H5Dopen2(file,"requested_frequency_hz",H5P_DEFAULT);
+    hid_t space=H5Dget_space(hints);
+    require(H5Sget_simple_extent_ndims(space)==1 && H5Sget_simple_extent_npoints(space)==2,
+            "Offline frequency list changed shape");
+    double frequencies[2];
+    require(H5Dread(hints,H5T_NATIVE_DOUBLE,H5S_ALL,H5S_ALL,H5P_DEFAULT,frequencies)>=0 &&
+            frequencies[0]==0. && frequencies[1]==1.e12,"Offline frequency list lost its order or units");
+    H5Sclose(space); H5Dclose(hints); H5Fclose(file);
+  }
 
   std::size_t offset(std::size_t nz, int rank, int size)
   { return (nz / size) * rank + std::min<std::size_t>(rank, nz % size); }
@@ -318,7 +344,11 @@ int main(int argc,char** argv)
       if(rank==0) mkdirChecked(argv[1]);
       MPI_Barrier(MPI_COMM_WORLD);
       Errors errors;
-      if(!sweepOnly) boundaries(argv[1],rank,size,errors);
+      if(!sweepOnly)
+        {
+          checkRadiationScreenOutput(argv[1],rank);
+          boundaries(argv[1],rank,size,errors);
+        }
       sweep(argv[1],rank,size,errors);
       int failed=0;
       if(rank==0)

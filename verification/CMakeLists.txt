@@ -221,6 +221,35 @@ add_executable(aprl_detector_sampling_checks detector_sampling_checks.cpp)
 target_link_libraries(aprl_detector_sampling_checks PRIVATE direct_eb_core)
 target_compile_options(aprl_detector_sampling_checks PRIVATE
   $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+add_executable(aprl_finite_radiation_screen_checks finite_radiation_screen_checks.cpp)
+target_link_libraries(aprl_finite_radiation_screen_checks PRIVATE direct_eb_core)
+target_compile_options(aprl_finite_radiation_screen_checks PRIVATE
+  $<$<CXX_COMPILER_ID:GNU,Clang>:-O2;-Wall;-Wextra;-Wpedantic>)
+add_test(NAME required.detectors.finite-radiation-screen COMMAND aprl_finite_radiation_screen_checks)
+set_tests_properties(required.detectors.finite-radiation-screen PROPERTIES
+  LABELS "required;detectors" ENVIRONMENT "OMP_NUM_THREADS=2")
+if(APRL_BUILD_POSTPROCESSORS)
+  find_package(Python3 QUIET COMPONENTS Interpreter)
+  if(Python3_Interpreter_FOUND)
+    add_test(NAME required.postprocess.finite-screen-spectrum
+      COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/finite_screen_spectrum_checks.py"
+        "${PROJECT_SOURCE_DIR}/postprocess/finite_screen_spectrum.py")
+    set_tests_properties(required.postprocess.finite-screen-spectrum PROPERTIES
+      LABELS "required;postprocess" SKIP_RETURN_CODE 77 TIMEOUT 90
+      ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+    if(TARGET uniform_lab_plane_bunch_generator)
+      add_test(NAME required.detectors.finite-screen-pipeline
+        COMMAND "${Python3_EXECUTABLE}" -B "${CMAKE_CURRENT_SOURCE_DIR}/finite_screen_pipeline_checks.py"
+          $<TARGET_FILE:aprl> $<TARGET_FILE:uniform_lab_plane_bunch_generator>
+          "${CMAKE_CURRENT_SOURCE_DIR}/cards/release-algorithm.yaml.in"
+          "${PROJECT_SOURCE_DIR}/postprocess/finite_screen_spectrum.py"
+          "${APRL_VERIFY_WORK}/finite-screen-pipeline")
+      set_tests_properties(required.detectors.finite-screen-pipeline PROPERTIES
+        LABELS "required;functional;detectors" SKIP_RETURN_CODE 77 TIMEOUT 180
+        ENVIRONMENT "OMP_NUM_THREADS=1;OPENBLAS_NUM_THREADS=1")
+    endif()
+  endif()
+endif()
 foreach(ranks 1 2 4)
   add_test(NAME required.detector.sampling-${ranks}
     COMMAND ${MPIEXEC_EXECUTABLE} ${MPIEXEC_NUMPROC_FLAG} ${ranks}
@@ -873,7 +902,8 @@ endif()
 add_dependencies(verify_required aprl_threaded_fields aprl_mpi_overlap_checks)
 add_dependencies(verify_required aprl_algorithm_policy_checks aprl_boris_work_checks)
 add_dependencies(verify_required_no_mpi aprl_algorithm_policy_checks aprl_boris_work_checks)
-add_dependencies(verify_required aprl_detector_sampling_checks)
+add_dependencies(verify_required aprl_detector_sampling_checks aprl_finite_radiation_screen_checks)
+add_dependencies(verify_required_no_mpi aprl_finite_radiation_screen_checks)
 if(TARGET aprl_duration_close_delay)
   add_dependencies(verify_required aprl_duration_close_delay)
   add_dependencies(verify_required aprl_duration_barrier_fault)

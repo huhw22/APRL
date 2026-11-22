@@ -84,7 +84,7 @@ namespace aprl
     {
       validateMapKeys(root, "top level", {
         "units", "runtime", "mesh", "radiation_resolution", "boundary",
-        "initial_self_field", "beam", "sources", "detectors",
+        "initial_self_field", "beam", "sources", "detectors", "radiation_screen",
         "particle_retirement", "stop", "trajectory", "energy_ledger",
         "output", "checkpoint"
       });
@@ -331,6 +331,12 @@ namespace aprl
       const YAML::Node stop = root["stop"];
       if (stop)
         validateMapKeys(stop, "stop", {"mode", "z"});
+
+      if (root["radiation_screen"])
+        validateMapKeys(root["radiation_screen"], "radiation_screen", {
+          "enabled", "output_file", "nx", "ny", "x0_m", "y0_m", "dx_m", "dy_m",
+          "z_m", "frequencies_hz", "time_origin_s", "time_start_s", "time_step_s", "time_bins"
+        });
 
       const YAML::Node trajectory = root["trajectory"];
       if (trajectory)
@@ -1904,6 +1910,54 @@ namespace aprl
     else
       throw configError(stop["mode"],
         "stop mode must be after-last-element or reference-center-z");
+
+    const YAML::Node screen = root["radiation_screen"];
+    if (screen && (!screen["enabled"] || screen["enabled"].as<bool>()))
+      {
+        if (result.checkpoint.enabled() || !result.checkpoint.restartFrom.empty())
+          throw configError(screen, "radiation_screen does not support checkpoint/restart");
+        if (result.mesh.ballisticOutsideTransverse)
+          throw configError(screen, "radiation_screen requires terminal physical exits; ballistic_outside_transverse is unsupported");
+        result.radiationScreenFile = checkpointPath(required(screen, "output_file"),
+          "radiation_screen output_file");
+        if (result.radiationScreenFile.back()=='/')
+          throw configError(screen, "radiation_screen output_file requires a filename");
+        RadiationScreenSpec& spec = result.radiationScreen;
+        spec.nx = positiveSize(required(screen, "nx"), "radiation_screen nx");
+        spec.ny = positiveSize(required(screen, "ny"), "radiation_screen ny");
+        spec.x0 = finiteDouble(required(screen, "x0_m"), "radiation_screen x0_m");
+        spec.y0 = finiteDouble(required(screen, "y0_m"), "radiation_screen y0_m");
+        spec.dx = finiteDouble(required(screen, "dx_m"), "radiation_screen dx_m");
+        spec.dy = finiteDouble(required(screen, "dy_m"), "radiation_screen dy_m");
+        spec.z = finiteDouble(required(screen, "z_m"), "radiation_screen z_m");
+        if (spec.dx <= 0 || spec.dy <= 0)
+          throw configError(screen, "radiation_screen pixel pitches must be positive");
+        if (screen["time_origin_s"])
+          spec.phaseOrigin = finiteDouble(screen["time_origin_s"], "radiation_screen time_origin_s");
+        const YAML::Node frequencies = screen["frequencies_hz"];
+        if (frequencies)
+          {
+            if (!frequencies.IsSequence())
+              throw configError(frequencies, "radiation_screen frequencies_hz requires a sequence");
+            std::set<double> unique;
+            for (const auto& node : frequencies)
+              {
+                const double f = finiteDouble(node, "radiation_screen frequency");
+                if (f < 0 || !unique.insert(f).second)
+                  throw configError(frequencies, "radiation_screen frequencies must be nonnegative and distinct");
+                spec.frequenciesHz.push_back(f);
+              }
+          }
+        if (!screen["time_start_s"] || !screen["time_step_s"] || !screen["time_bins"])
+          throw configError(screen, "radiation_screen requires time_start_s, time_step_s and time_bins "
+            "to record the arrival-time waveform. Choose a window covering the pulse and compute "
+            "spectra afterwards from E_time and B_time; frequencies_hz is an optional postprocessing hint.");
+        spec.timeStart = finiteDouble(screen["time_start_s"], "radiation_screen time_start_s");
+        spec.timeStep = finiteDouble(screen["time_step_s"], "radiation_screen time_step_s");
+        spec.nt = positiveSize(screen["time_bins"], "radiation_screen time_bins");
+        if (spec.timeStep <= 0)
+          throw configError(screen, "radiation_screen time_step_s must be positive");
+      }
 
     const YAML::Node trajectory = root["trajectory"];
     if (trajectory)

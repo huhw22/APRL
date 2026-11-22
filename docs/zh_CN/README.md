@@ -35,6 +35,7 @@
 - [粒子本底场重构](FIELD_RECONSTRUCTION.md)
 - [场探测面频谱与相干性分析](FIELD_PLANE_ANALYSIS.md)
 - [粒子轨迹到远场辐射工具](TRAJECTORY_RADIATION.md)
+- [从实际受力子步计算有限距离辐射屏](FINITE_RADIATION_SCREEN.md)
 - [粒子退休与匹配功率比较](FIELD_POWER_COMPARISON.md)
 
 ## 能量诊断与物理解释

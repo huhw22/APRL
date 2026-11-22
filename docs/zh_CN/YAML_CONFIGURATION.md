@@ -504,6 +504,10 @@ reference_z = detector_z - reference_length.
 
 省略 `detectors`、列表为空或 `enabled: false` 时，不构造管理器、不分配缓冲、不打开文件、不进入探测 MPI。启用时只有当前拥有场面的 rank 采样，粒子事件有界批量发送，rank 0 独占追加 HDF5，详见[探测器输出](DETECTOR_OUTPUT_HDF5.md)。
 
+## 有限距离辐射屏
+
+顶层 `radiation_screen` 可独立启用实验室固定屏，直接从已提交的物理粒子受力子步生成时域 E、B 波形。可从屏文件在后处理中提取所需频点的复场。像素中心坐标用米，到达时窗用实验室秒。完整输入示例与 HDF5 维度见[有限距离辐射屏](FINITE_RADIATION_SCREEN.md)。
+
 ## 轨迹输出
 
 ```yaml

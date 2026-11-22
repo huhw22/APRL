@@ -33,6 +33,7 @@ void Simulation::solveConservativeSourceStep() {
  auto restore=[&](){particles_=originalParticles;pmlCarriers_=originalCarriers;localLostParticles_=lost;ballisticBoundaryEntries_=ballistic;frozenPlaneActivations_=activations;crossRankActivationPushes_=crossings;peakPmlCarriers_=peak;movingWindow_->exits=exits;movingWindow_->exitCharge=exitCharge;
   std::copy(cpml.begin(),cpml.end(),cpmlEntryCount_);std::copy(direct.begin(),direct.end(),directOuterCount_);std::copy(carrier.begin(),carrier.end(),carrierOuterCount_);std::copy(cpmlCharge.begin(),cpmlCharge.end(),cpmlEntryCharge_);std::copy(directCharge.begin(),directCharge.end(),directOuterCharge_);std::copy(carrierCharge.begin(),carrierCharge.end(),carrierOuterCharge_);particleBoundary_->restoreCumulative(boundaryCounts,boundaryCharges);particleBoundary_->beginStep();};
  const bool ledgerEnabled=config_.energyLedger.enabled,trajectoryEnabled=config_.trajectory.enabled;
+ auto savedScreen=std::move(radiationScreen_);
  auto savedDetectors=std::move(detectors_);config_.energyLedger.enabled=false;config_.trajectory.enabled=false;
  bool converged=false;unsigned iterations=0;Double force=0.,work=0.;
  try {
@@ -44,8 +45,8 @@ void Simulation::solveConservativeSourceStep() {
    work=total[2]==0.?0.:(total[1]>0.?total[0]/total[1]:total[0]);iterations=n+1;
    if(iterations>=(config_.mesh.oneWaySourceDiagnostic?1u:(total[2]>0.?2u:1u))&&force<1e-13&&work<1e-8){converged=true;break;}
   }
- }catch(...){config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);throw;}
- config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);
+ }catch(...){config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);radiationScreen_=std::move(savedScreen);throw;}
+ config_.energyLedger.enabled=ledgerEnabled;config_.trajectory.enabled=trajectoryEnabled;detectors_=std::move(savedDetectors);radiationScreen_=std::move(savedScreen);
  if(!converged){std::ostringstream message;message<<"Conservative source coupling failed at step "<<step_+1<<": force="<<force<<" work="<<work<<" iterations="<<iterations;throw std::runtime_error(message.str());}
  // Remove the trial current, retain the zero-current wave by swapping it into
  // the old-E buffer, and replay the converged substeps against the real old E.

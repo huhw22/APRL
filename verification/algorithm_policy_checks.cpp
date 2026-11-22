@@ -37,6 +37,22 @@ void reject(const std::string& source, const std::string& options,
   }
   require(rejected, "Retired/invalid algorithm did not produce the expected error: " + options);
 }
+
+void checkScreenWindow(const std::string& source) {
+  const std::string screen=source+"\nradiation_screen:\n"
+    "  output_file: wave.h5\n  nx: 1\n  ny: 1\n  x0_m: 0\n  y0_m: 0\n"
+    "  dx_m: 1\n  dy_m: 1\n  z_m: 0.5\n";
+  const std::string frequencies="  frequencies_hz: [0, 1.0e12]\n";
+  const std::string window="  time_start_s: 0\n  time_step_s: 1.0e-15\n  time_bins: 32\n";
+  const auto wave=load(screen+window,"").radiationScreen;
+  const auto oldCard=load(screen+frequencies+window,"").radiationScreen;
+  require(wave.nt==32 && wave.frequenciesHz.empty(),"Time-only screen card failed");
+  require(oldCard.nt==wave.nt && oldCard.frequenciesHz==std::vector<double>({0.,1.e12}),
+          "Existing screen card lost its offline frequency requests");
+  reject(screen+frequencies,"","requires time_start_s, time_step_s and time_bins");
+  require(load(screen+frequencies+"  enabled: false\n","").radiationScreenFile.empty(),
+          "Disabled screen unexpectedly requires an arrival window");
+}
 }
 
 int main(int argc, char** argv) {
@@ -46,6 +62,7 @@ int main(int argc, char** argv) {
     require(bool(in), "Cannot open policy fixture");
     const std::string source((std::istreambuf_iterator<char>(in)),
                              std::istreambuf_iterator<char>());
+    checkScreenWindow(source);
     check(aprl::MeshConfig(), false);
     check(load(source, "").mesh, false);
     check(load(source, "  particle_coupling: conservative-source\n"

@@ -7,6 +7,7 @@
 #include "eb_particles.h"
 #include "lab_detectors.h"
 #include "particle_work_geometry.h"
+#include "finite_radiation_screen.h"
 
 namespace aprl {
 
@@ -68,14 +69,17 @@ public:
   const BoostFrameTransform* frame = NULL;
   const LabDetectorManager* detectors = NULL;
   bool recordWork = false;
+  bool recordRadiation = false;
+  std::vector<RadiationSegment> radiationBox;
   bool recordSubstepParticles = false;
   unsigned observedSubsteps = 0;
   std::vector<Segment> segments;
   std::vector<EnergyPlaneCrossing> crossings;
   std::vector<SubstepParticleCrossing> substepCrossings;
   ParticleWorkGeometry geometry;
-  void reset(const BoostFrameTransform& f, const LabDetectorManager* d, bool work) {
+  void reset(const BoostFrameTransform& f, const LabDetectorManager* d, bool work, bool radiation=false) {
     frame=&f; detectors=d; recordWork=work;
+    recordRadiation=radiation; radiationBox.clear();
     recordSubstepParticles=d&&d->hasSubstepParticlePlanes();
     segments.clear(); crossings.clear(); substepCrossings.clear(); observedSubsteps=0;
     geometry.fields=NULL;
@@ -84,6 +88,15 @@ public:
                const RelativisticParticleSI& after, Double begin, Double end,
                const BorisWork* work) override {
     ++observedSubsteps;
+    if (recordRadiation) {
+      RadiationSegment segment;
+      segment.t0=begin; segment.t1=end; segment.charge=before.charge;
+      for (unsigned a=0; a<3; ++a) {
+        segment.x0[a]=before.position[a]; segment.x1[a]=after.position[a];
+        segment.u0[a]=before.properVelocity[a]; segment.u1[a]=after.properVelocity[a];
+      }
+      radiationBox.push_back(segment);
+    }
     if (geometry.fields) geometry.observe(before,after,work);
     if (detectors)
       {

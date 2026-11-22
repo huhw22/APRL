@@ -20,6 +20,7 @@
 #include "energy_ledger.h"
 #include "particle_energy_audit.h"
 #include "lab_detectors.h"
+#include "radiation_screen_output.h"
 #include "longitudinal_mesh.h"
 #include "particle_boundary.h"
 #include "run_metadata.h"
@@ -182,6 +183,7 @@ namespace aprl
     std::vector<ParticleCPMLCarrier> retirementCarriers_;
     std::unique_ptr<ParticleOpenBoundary> particleBoundary_;
     std::unique_ptr<LabDetectorManager> detectors_;
+    std::unique_ptr<RadiationScreenOutput> radiationScreen_;
     std::unique_ptr<ParticleWorkGeometryWriter> particleWorkGeometry_;
     std::unique_ptr<ConservativeSourceCoupling> sourceCoupling_;
 

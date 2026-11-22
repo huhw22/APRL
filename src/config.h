@@ -9,6 +9,7 @@
 #include "eb_cpml.h"
 #include "eb_sources.h"
 #include "fieldvector.h"
+#include "finite_radiation_screen.h"
 
 namespace aprl
 {
@@ -458,6 +459,8 @@ namespace aprl
     EnergyLedgerConfig energyLedger;
     ParticleRetirementConfig particleRetirement;
     DetectorConfig detectors;
+    std::string radiationScreenFile;
+    RadiationScreenSpec radiationScreen;
   };
 
   class YamlConfigLoader

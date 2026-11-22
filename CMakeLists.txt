@@ -128,6 +128,8 @@ set(DIRECT_EB_SOURCES
   src/eb_sources.cpp
   src/energy_ledger.cpp
   src/lab_detectors.cpp
+  src/finite_radiation_screen.cpp
+  src/radiation_screen_output.cpp
   src/longitudinal_mesh.cpp
   src/moving_window_fields.cpp
   src/particle_field_halo.cpp
@@ -371,6 +373,7 @@ install(DIRECTORY postprocess/
   FILES_MATCHING PATTERN "example.yaml")
 
 if(APRL_BUILD_POSTPROCESSORS)
+  install(PROGRAMS postprocess/finite_screen_spectrum.py DESTINATION bin)
   add_subdirectory(postprocess/trajectory_radiation)
   add_subdirectory(postprocess/field_reconstruction)
   add_subdirectory(postprocess/field_plane_analysis)
