@@ -37,8 +37,8 @@ void Simulation::solveConservativeSourceStep() {
  auto savedScreen=std::move(radiationScreen_);
  auto savedDetectors=std::move(detectors_);config_.energyLedger.enabled=false;config_.trajectory.enabled=false;
  bool converged=false;unsigned iterations=0;Double force=0.,work=0.;
- const unsigned maximumIterations=32;
- std::array<Double,32> forceHistory{},workHistory{};
+ const unsigned maximumIterations=64;
+ std::array<Double,maximumIterations> forceHistory{},workHistory{};
  try {
   for(unsigned n=0;n<maximumIterations;++n){if(n)coupling.applyCurrentSource(1.);fields_->clearCurrent();restore();coupling.beginTrial();coupling.exchangeCandidate();pushDepositAndMigrate();coupling.completeCurrent();
    if(config_.mesh.movingWindow.referenceSurfaceCurrent){applyMovingTransverseReferenceCurrent();finishMovingTransverseReferenceCurrent();}
