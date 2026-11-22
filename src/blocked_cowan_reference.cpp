@@ -508,13 +508,11 @@ struct BlockedCowanReference::Impl {
     for(unsigned axis=0;axis<3;++axis) {
       const unsigned ta=(axis+1)%3,tb=(axis+2)%3;
       const Double delta=deltaFor(coefficient,axis);
-      Double minimum=std::numeric_limits<Double>::infinity();
-      for(int a=-1;a<=1;a+=2) for(int b=-1;b<=1;b+=2)
-        minimum=std::min(minimum,coefficient.alpha[axis]+
-          2.*coefficient.beta[ta]*a+2.*coefficient.beta[tb]*b+4.*delta*a*b);
-      if(axis==2) minimum-=translation;
-      if(!(minimum>64.*std::numeric_limits<Double>::epsilon()))
-        throw std::invalid_argument("Blocked Cowan operator fails production sufficient SPD bound");
+      // Individual directional terms need not be positive for their sum to
+      // be SPD. The finite Dirichlet operator is diagonalized in x/y below;
+      // every resulting symmetric z tridiagonal has constant diagonal/off-
+      // diagonal entries. Its exact smallest eigenvalue is checked before
+      // any file is created. Keep that full-operator test for coarse grids.
       const Double inverse=1./(spacing[axis]*spacing[axis]);
       for(int a=-1;a<=1;++a) for(int b=-1;b<=1;++b) {
         const Double weight=a==0 ? (b==0?coefficient.alpha[axis]:coefficient.beta[tb]) :
@@ -1102,7 +1100,7 @@ void BlockedCowanReference::writeReport(const std::string& path) const {
   REPORT_MEMBER(fieldCacheCapacityBytes); REPORT_MEMBER(queryWorkspaceBytes); REPORT_MEMBER(residentArrayBytes);
 #undef REPORT_MEMBER
   text << "  \"accounting\": \"bytesRead/Written count binary scalar data only; completion metadata and report IO excluded; capacities/workspaces are array accounting, not RSS; FFTW/MPI/runtime private allocation excluded; querySeconds measures cache builds, not cache-hit or copy time; readers inherit particle/charge history but not preparation timers or binary IO; preparation includes completion fsync/publication\",\n"
-    << "  \"limitations\": \"finite Dirichlet common-beta source; no padding or distributed preparation; all sources must remain available on the writer during preparation; scalar disk data and checkpoints grow with longitudinal length; global forward/backward pass remains necessary; shared filesystem and cross-rank failure/synchronization are caller responsibilities; metadata has a checksum but scalar data only have length/short-read/finite checks; Gauss/PIC/held comparison belongs to independent checks\"\n}\n";
+    << "  \"limitations\": \"finite Dirichlet common-beta source; open-wall potential targets use MPI, deposition and modal solve stay on rank zero; no source padding; all sources must remain available on the writer during preparation; scalar disk data and checkpoints grow with longitudinal length; global forward/backward pass remains necessary; shared filesystem required; metadata has a checksum but scalar data only have length/short-read/finite checks; Gauss/PIC/held comparison belongs to independent checks\"\n}\n";
   const std::string serialized=text.str();
   DiskFile out;
   out.create(path);

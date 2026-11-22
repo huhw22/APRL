@@ -27,6 +27,18 @@ publication remain on rank zero; only the expensive direct potential targets
 are distributed. Each worker subsequently opens its own read-only reference.
 Every run still prepares a fresh reference for its actual geometry and beam.
 
+The blocked reference validates positive definiteness using the actual finite
+grid: after the transverse sine transform, each longitudinal block has constant
+diagonal `d` and off-diagonal `o`; its least eigenvalue is
+`d - 2*abs(o)*cos(pi/(n_z+1))`. Every block must have a finite positive minimum
+before files are created, and every elimination pivot is still checked. The
+stronger per-direction sufficient condition used by the generic CG initializer
+is not necessary for this modal solver and rejects some positive coarse-grid
+operators. This changes admissibility checking, not the potential equation,
+source shape, field reconstruction, or boundary data. The generic CG path keeps
+its existing criterion. Coarse-grid regressions separately enumerate the full
+three-dimensional sine spectrum and check native `div(E)=rho/epsilon0`.
+
 `reference/preparation.json` reports `openTraceRanks`,
 `openTraceThreadsPerRank`, `openTraceSourceNodes`, `openTraceCoarsePoints`,
 `openTraceFallbackTiles`, and the minimum/maximum per-rank potential evaluations.
