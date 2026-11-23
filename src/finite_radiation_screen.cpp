@@ -37,7 +37,7 @@ namespace aprl
     struct Source
     {
       const RadiationSegment* segment;
-      Vec midpoint,du;
+      Vec midpoint,du,meanBeta;
       double gamma0,gamma1;
       long double binBase0, binBase1;
     };
@@ -83,7 +83,15 @@ namespace aprl
           for (unsigned d=0;d<6;++d) output[6*bin+d]+=area[d]/spec.timeStep;
           return;
         }
-      const auto first=static_cast<std::size_t>(std::max(0.L,std::floor(left)));
+      const auto first=static_cast<std::size_t>(std::max(0.L,left));
+      // A whole segment inside one bin has overlap/(right-left) exactly one.
+      // Keep clipped segments on the general path, including the left edge.
+      if (left>=0.L && right<=static_cast<long double>(first+1))
+        {
+          const double scale=1./spec.timeStep;
+          for (unsigned d=0;d<6;++d) output[6*first+d]+=area[d]*scale;
+          return;
+        }
       const auto past=static_cast<std::size_t>(std::min(
           static_cast<long double>(spec.nt),std::ceil(right)));
       for (std::size_t i=first;i<past;++i)
@@ -155,6 +163,8 @@ namespace aprl
         s.gamma1=std::sqrt(1.+dot(segment.u1,segment.u1));
         if (!std::isfinite(s.gamma0) || !std::isfinite(s.gamma1))
           throw std::invalid_argument("Proper velocity outside the radiation kernel's numeric range");
+        for (unsigned i=0;i<3;++i)
+          s.meanBeta[i]=(segment.u0[i]+segment.u1[i])/(s.gamma0+s.gamma1);
         s.binBase0=baseTime(segment.t0,spec_.z-segment.x0[2],spec_.timeStart);
         s.binBase1=baseTime(segment.t1,spec_.z-segment.x1[2],spec_.timeStart);
         sources.push_back(s);
@@ -185,7 +195,7 @@ namespace aprl
             // two large field factors when consecutive momenta nearly agree.
             Vec meanMinusN;
             for (unsigned d=0;d<3;++d)
-              meanMinusN[d]=(seg.u0[d]+seg.u1[d])/(s.gamma0+s.gamma1)-n[d];
+              meanMinusN[d]=s.meanBeta[d]-n[d];
             const double deltaDen=dot(meanMinusN,s.du);
             Vec crossKick=cross(n,s.du);
             const double scale=(seg.charge*lwScale/distance)*inv1;

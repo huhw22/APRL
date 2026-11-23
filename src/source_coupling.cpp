@@ -1,9 +1,11 @@
 #include "source_coupling.h"
 #include "source_coupling_math.h"
+#include "compute_threads.h"
 #include "longitudinal_shape.h"
 #include "particle_momentum_probe.h"
 #include "particle_force_probe.h"
 #include <fstream>
+#include <exception>
 #include <iomanip>
 #include <unordered_map>
 #include <sstream>
@@ -100,7 +102,61 @@ void ConservativeSourceCoupling::push(RelativisticParticleSI& p,const SIFieldSou
  }
  if(s.replay){q.replayed=true;p=q.last;for(unsigned n=0;n<steps;++n){if(work)work->add(q.works[n]);if(prescribed)*prescribed+=static_cast<Double>(q.works[n].prescribedWork);if(observer)observer->observe(q.states[n],q.states[n+1],time+n*(dt/steps),time+(n+1)*(dt/steps),&q.works[n]);}if(ParticleMomentumProbe::selected(time))ParticleMomentumProbe::record(q.first,p,q.usedE,q.usedB,time,dt);if(ParticleForceProbe::selected(q.first.sourceId))ParticleForceProbe::record(s.completedStep+1,s.rank,q.first,p,q.usedE,q.usedB,time,dt,steps,q.states,q.works,sources,frame);}
 }
-std::array<Double,4> ConservativeSourceCoupling::localResidual(){auto& s=*impl_;Double force=0.,defect=0.,scale=0.,calls=0.;for(auto& q:s.slots)if(q.seen){calls+=1;if(s.oneWay)continue;const Vec e=s.electric(q.first.position,q.last.position);const Vec b=s.magnetic(q.first.position,q.last.position);q.nextE=e;q.nextB=b;q.nextReady=true;Vec de=e;de-=q.usedE;Vec db=b;db-=q.usedB;force=std::max(force,std::abs(q.first.charge/q.first.mass)*q.dt/SI::c*(std::sqrt(de.norm2())+SI::c*std::sqrt(db.norm2())));defect+=std::abs(chargeWork(q.first.charge,de,q.first.position,q.last.position));for(const auto& w:q.works)scale+=std::abs(w.gridWork);scale+=std::abs(chargeWork(q.first.charge,e,q.first.position,q.last.position));}return {{force,defect,scale,calls}};}
+std::array<Double,4> ConservativeSourceCoupling::localResidual() {
+  auto& s = *impl_;
+  Double force = 0., defect = 0., scale = 0., calls = 0.;
+  const auto gather = [&](Impl::Slot& slot) {
+    slot.nextE = s.electric(slot.first.position, slot.last.position);
+    slot.nextB = s.magnetic(slot.first.position, slot.last.position);
+    slot.nextReady = true;
+  };
+  const auto accumulate = [&](const Impl::Slot& slot) {
+    Vec de = slot.nextE, db = slot.nextB;
+    de -= slot.usedE;
+    db -= slot.usedB;
+    force = std::max(force, std::abs(slot.first.charge / slot.first.mass) *
+        slot.dt / SI::c * (std::sqrt(de.norm2()) + SI::c * std::sqrt(db.norm2())));
+    defect += std::abs(chargeWork(slot.first.charge, de, slot.first.position, slot.last.position));
+    for (const auto& work : slot.works) scale += std::abs(work.gridWork);
+    scale += std::abs(chargeWork(slot.first.charge, slot.nextE, slot.first.position, slot.last.position));
+  };
+
+  // Each gather reads the exchanged fields and writes only its particle slot.
+  // Sum the defects in particle and substep order to preserve the stopping test.
+  const bool parallel = !s.oneWay && s.slots.size() >= 32 && computeThreadCount() > 1;
+  if (parallel) {
+    std::exception_ptr gatherError;
+    std::size_t firstError = s.slots.size();
+#ifdef APRL_HAS_OPENMP
+#pragma omp parallel for schedule(static) num_threads(computeThreadCount())
+#endif
+    for (std::size_t i = 0; i < s.slots.size(); ++i) {
+      if (!s.slots[i].seen) continue;
+      try {
+        gather(s.slots[i]);
+      } catch (...) {
+#ifdef APRL_HAS_OPENMP
+#pragma omp critical(aprl_residual_gather_error)
+#endif
+        {
+          if (i < firstError) {
+            firstError = i;
+            gatherError = std::current_exception();
+          }
+        }
+      }
+    }
+    if (gatherError) std::rethrow_exception(gatherError);
+  }
+  for (auto& slot : s.slots) {
+    if (!slot.seen) continue;
+    calls += 1;
+    if (s.oneWay) continue;
+    if (!parallel) gather(slot);
+    accumulate(slot);
+  }
+  return {{force, defect, scale, calls}};
+}
 void ConservativeSourceCoupling::recordConstraint(const Vec& a,const Vec& b,Double charge,bool carrier){impl_->constraints.push_back({a,b,charge,carrier});}
 void ConservativeSourceCoupling::recordActiveSegment(const Vec& a,const Vec& b,Double charge){auto& s=*impl_;if(s.exitAudit.is_open()||s.oneWay)s.activeSegments.push_back({a,b,charge,false});}
 void ConservativeSourceCoupling::recordLongitudinalHandoff(std::uint64_t id,const Vec& crossing,bool carrier){
