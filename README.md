@@ -2,7 +2,7 @@
 
 [中文说明](README.zh-CN.md)
 
-The current release is **APRL 2.1.0** (`v2.1.0`). The default three-point profile smooths both x and z. The matched moving inlet centers the normal electric field on the entrance face. The supplied 100,000-electron example uses a four-side CPML startup with precomputed fields and memories. See the [release notes](docs/releases/2.1.0.md) and [beam example](examples/beam_cpml_100k/README.zh-CN.md).
+The current release is **APRL 2.1.1** (`v2.1.1`). A virtual screen records the time-domain electric and magnetic fields from particle acceleration for offline spectral analysis. MPI distributes the open-boundary reference potential calculation, and OpenMP parallelizes field sampling for the self-consistent residual. See the [release notes](docs/releases/2.1.1.md) and [100,000-electron beam example](examples/beam_cpml_100k/README.zh-CN.md).
 
 APRL is a C++/MPI program for accelerator-particle and radiation simulations
 in Lorentz-boosted frames. The primary executable is `aprl`. Electromagnetic
@@ -64,7 +64,7 @@ you intend to report. Retain signed field ports, side flux, time caps, particle
 transport and recorded source/numerical channels when checking energy; a closed
 boost-frame discrete sum is not proof of laboratory physical closure.
 
-See [release notes](docs/releases/2.1.0.md), [acceptance procedure](docs/releases/2.1.0.md#构建与核验)
+See [release notes](docs/releases/2.1.1.md), [acceptance procedure](docs/releases/2.1.0.md#构建与核验)
 and [release audit](docs/RELEASE_AUDIT.md) for scope and reproduction.
 
 ## Scope

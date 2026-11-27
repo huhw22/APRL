@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-当前发行版为 **APRL 2.1.0**（`v2.1.0`）。默认三点核在 x 和 z 方向配对平滑。移动窗的电荷匹配入口在几何面上居中法向电场。随版十万电子算例默认加载四侧 CPML 的场和卷积记忆初值。[2.1 发行说明](docs/releases/2.1.0.md) · [束团启动示例](examples/beam_cpml_100k/README.zh-CN.md)
+当前发行版为 **APRL 2.1.1**（`v2.1.1`）。虚拟屏记录粒子加速度辐射的时域电场和磁场，频谱可离线计算。开放边界参考电势由多个 MPI 进程分担，自洽残差所需的逐粒子取场由 OpenMP 线程并行计算。[发行说明](docs/releases/2.1.1.md) · [十万电子束团启动示例](examples/beam_cpml_100k/README.zh-CN.md)
 
 APRL 的英文全称为 **Accelerator Particles and Radiation in Lorentz
 Frames**。APRL 是采用 C++/MPI 实现的加速器粒子与辐射模拟程序，主可执行
@@ -54,7 +54,7 @@ mesh:
 w≈355仅是当前测试的资源取舍，不能宣称保留一电子一宏粒子的噪声。完整收支必须保留有符号端口、侧流、
 时间端盖、粒子输运及实记源/数值通道；计算系离散加和闭合不等于lab物理闭合。
 
-版本范围与复现入口见[发行说明](docs/releases/2.1.0.md)、[发布验收](docs/releases/2.1.0.md#构建与核验)和[发布审计](docs/zh_CN/RELEASE_AUDIT.md)。
+版本范围与复现入口见[发行说明](docs/releases/2.1.1.md)、[发布验收](docs/releases/2.1.0.md#构建与核验)和[发布审计](docs/zh_CN/RELEASE_AUDIT.md)。
 
 ## 适用范围
 
